@@ -1,0 +1,4 @@
+data/*
+.DS_Store
+src/__pycache__
+Implementation_plan.md
