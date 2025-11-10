@@ -3,7 +3,7 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder  # pyright: ignore
 import scipy.sparse as sp
 import torch
 from torch.utils.data import DataLoader
-import pytorch_lightning as pl
+import pytorch_lightning as pl  # pyright: ignore[reportMissingImports]
 
 
 def to_tensor(X):
@@ -20,10 +20,11 @@ class ScDataset(Dataset):
         super().__init__()
         self.adata = adata
         self.sparse = sp.issparse(adata.X)
-        if encoder == "LabelEncoder":
+        self.encoder = encoder
+        if self.encoder == "LabelEncoder":
             self.classes = LabelEncoder().fit_transform(\
                 adata.obs[label_key].values.reshape(-1, 1))
-        elif encoder == "OneHotEncoder":
+        elif self.encoder == "OneHotEncoder":
             self.classes = OneHotEncoder(sparse=False).fit_transform(\
                 adata.obs[label_key].values.reshape(-1, 1))
         else:
@@ -56,6 +57,7 @@ class ScDataModule(pl.LightningDataModule):
         self.label_key = label_key
         self.batch_size = batch_size
         self.val_split = val_split
+        self.encoder = encoder
 
     def setup(self, stage=None):
         full = ScDataset(self.adata, self.label_key, self.encoder)
