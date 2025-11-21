@@ -3,3 +3,7 @@ data/*
 src/__pycache__
 Implementation_plan.md
 lightning_logs/
+checkpoints/
+data/
+checkpoints/*
+data/*
