@@ -7,3 +7,5 @@ checkpoints/
 data/
 checkpoints/*
 data/*
+tests/__pycache__/test_diffusion_components.cpython-312-pytest-9.0.1.pyc
+*.pyc

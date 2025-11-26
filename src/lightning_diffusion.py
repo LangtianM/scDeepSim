@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl  # pyright: ignore[reportMissingImports]
 
-from diffusion_core import DiffusionProcess
+from diffusion_core import GaussianDiffusion
 from diffusion_model import DenoisingUNet
 
 
@@ -60,14 +60,7 @@ class LightningDiffusion(pl.LightningModule):
         """
         super().__init__()
         self.save_hyperparameters()
-        
-        # Diffusion process
-        self.diffusion = DiffusionProcess(
-            num_timesteps=num_timesteps,
-            beta_schedule=beta_schedule,
-            predict_epsilon=predict_epsilon
-        )
-        
+
         # Denoising model
         self.model = DenoisingUNet(
             input_dim=input_dim,
@@ -76,6 +69,17 @@ class LightningDiffusion(pl.LightningModule):
             dropout=dropout,
             use_classifier_free_guidance=use_classifier_free_guidance,
             guidance_dropout=guidance_dropout
+        )
+
+        # Diffusion process wrapper (operates directly on self.model)
+        if not predict_epsilon:
+            raise ValueError("GaussianDiffusion currently only supports noise-prediction (predict_epsilon=True).")
+        self.diffusion = GaussianDiffusion(
+            model=self.model,
+            input_dim=input_dim,
+            timesteps=num_timesteps,
+            beta_schedule=beta_schedule,
+            objective="pred_noise",
         )
         
         # EMA model (optional)
@@ -111,12 +115,9 @@ class LightningDiffusion(pl.LightningModule):
             loss
         """
         x, labels = batch
+        labels = self._format_labels(labels, x.shape[0])
         
-        # Sample random timesteps
-        t = torch.randint(0, self.hparams.num_timesteps, (x.shape[0],), device=self.device)
-        
-        # Compute loss
-        loss = self.diffusion.training_losses(self.model, x, t, labels)
+        loss = self._compute_diffusion_loss(self.model, x, labels)
         
         # Log
         self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=x.size(0))
@@ -128,13 +129,11 @@ class LightningDiffusion(pl.LightningModule):
         Validation step.
         """
         x, labels = batch
+        labels = self._format_labels(labels, x.shape[0])
         
-        # Sample random timesteps
-        t = torch.randint(0, self.hparams.num_timesteps, (x.shape[0],), device=self.device)
-        
-        # Compute loss
         model_to_eval = self.ema_model if self.ema_model is not None else self.model
-        loss = self.diffusion.training_losses(model_to_eval, x, t, labels)
+        with torch.no_grad():
+            loss = self._compute_diffusion_loss(model_to_eval, x, labels)
         
         # Log
         self.log("val_loss", loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=x.size(0))
@@ -200,41 +199,22 @@ class LightningDiffusion(pl.LightningModule):
         """
         model = self.ema_model if (use_ema and self.ema_model is not None) else self.model
         model.eval()
-        
+        labels = self._format_labels(labels, num_samples)
+
         guidance_scale = guidance_scale or self.hparams.guidance_scale
-        
-        # Start from noise
-        x = torch.randn(num_samples, self.hparams.input_dim, device=self.device)
-        
-        # Reverse diffusion
-        timesteps = list(range(self.hparams.num_timesteps))[::-1]
-        if progress:
-            from tqdm import tqdm
-            timesteps = tqdm(timesteps, desc="Sampling")
-        
-        for t_idx in timesteps:
-            t = torch.full((num_samples,), t_idx, device=self.device, dtype=torch.long)
-            
-            # Get model prediction
-            if self.hparams.use_classifier_free_guidance and guidance_scale != 1.0 and labels is not None:
-                # Classifier-free guidance
-                model_output_cond, model_output_uncond = model(x, t, labels, use_guidance=True)
-                model_output = model_output_uncond + guidance_scale * (model_output_cond - model_output_uncond)
-            else:
-                # Regular sampling
-                model_output = model(x, t, labels, use_guidance=False)
-            
-            # Compute mean and variance
-            mean, log_variance = self.diffusion.p_mean_variance(model_output, x, t, clip_denoised=True)
-            
-            # Sample
-            if t_idx > 0:
-                noise = torch.randn_like(x)
-                x = mean + torch.exp(0.5 * log_variance) * noise
-            else:
-                x = mean
-        
-        return x
+
+        original_model = self.diffusion.model
+        self.diffusion.model = model
+        try:
+            samples = self.diffusion.sample(
+                classes=labels,
+                cond_scale=guidance_scale,
+                rescaled_phi=0.7,
+            )
+        finally:
+            self.diffusion.model = original_model
+
+        return samples
     
     @torch.no_grad()
     def encode_to_latent(self, x: torch.Tensor, num_steps: Optional[int] = None) -> torch.Tensor:
@@ -248,9 +228,31 @@ class LightningDiffusion(pl.LightningModule):
         Returns:
             noisy latent representation
         """
-        num_steps = num_steps or self.hparams.num_timesteps
-        t = torch.full((x.shape[0],), num_steps - 1, device=x.device, dtype=torch.long)
+        total_steps = num_steps or self.diffusion.num_timesteps
+        total_steps = min(total_steps, self.diffusion.num_timesteps)
+        t = torch.full((x.shape[0],), total_steps - 1, device=x.device, dtype=torch.long)
         return self.diffusion.q_sample(x, t)
+
+    def _compute_diffusion_loss(self, model_to_eval: nn.Module, x: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Dispatch GaussianDiffusion loss using the requested backbone."""
+        t = torch.randint(0, self.diffusion.num_timesteps, (x.shape[0],), device=x.device, dtype=torch.long)
+        original_model = self.diffusion.model
+        self.diffusion.model = model_to_eval
+        try:
+            loss = self.diffusion.p_losses(x, t, classes=labels).mean()
+        finally:
+            self.diffusion.model = original_model
+        return loss
+
+    def _format_labels(self, labels: Optional[torch.Tensor], batch_size: int) -> torch.Tensor:
+        """Ensure labels exist, live on the right device, and use the dtype the UNet expects."""
+        if labels is None:
+            labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
+        else:
+            labels = labels.to(self.device)
+            if labels.dim() == 1 and labels.dtype != torch.long:
+                labels = labels.long()
+        return labels
 
 
 # ===========================

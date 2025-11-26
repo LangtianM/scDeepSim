@@ -118,9 +118,9 @@ class LabelEmbedding(nn.Module):
         Returns:
             [B, hidden_dim] embeddings 
         """
-        if not self.use_one_hot_input and labels.dim() == 1:
-            # Convert integer labels to one-hot
-            labels = F.one_hot(labels, num_classes=self.num_classes).float()
+        if labels.dim() == 1 or labels.dtype not in (torch.float32, torch.float64):
+            # Convert integer labels (or float scalars) to one-hot regardless of configuration
+            labels = F.one_hot(labels.long(), num_classes=self.num_classes).float()
         return self.net(labels)
 
 
@@ -297,7 +297,7 @@ class DenoisingUNet(nn.Module):
             self.training and
             self.use_classifier_free_guidance
         ):
-            drop_prob = self.cond_drop_prob if cond_drop_prob is None else cond_drop_prob
+            drop_prob = self.guidance_dropout if cond_drop_prob is None else cond_drop_prob
             if drop_prob > 0.0:
                 # keep_mask ~ Bernoulli(1 - drop_prob)
                 keep_mask = torch.rand(batch, device=device) > drop_prob  # [B], bool
@@ -402,12 +402,25 @@ class DenoisingUNet(nn.Module):
     ):
         """
         Forward pass with classifier-free guidance.
+        
+        Parameters:
+            x: the input data
+            t: the timestep
+            labels: the labels
+            cond_scale: the scale of the classifier-free guidance
+            rescaled_phi: the rescaled phi in CFG++
+            remove_parallel_component: whether to remove the parallel component
+            keep_parallel_frac: the fraction of the parallel component to keep
+
+        Returns:
+            the logits
+            the null logits
         """
         logits = self.forward(x, t, labels)
 
-        if cond_scale ==1:
-            return logits
-        
+        if (not self.use_classifier_free_guidance) or (labels is None):
+            return logits, logits
+
         null_logits = self.forward(
             x = x,
             t = t,
@@ -421,7 +434,7 @@ class DenoisingUNet(nn.Module):
             parallel, orthogonal = project(update, null_logits)
             update = orthogonal + parallel * keep_parallel_frac
         
-        scaled_logits = null_logits + update * (cond_scale - 1.0)
+        scaled_logits = null_logits + update * cond_scale
         
         std_fn = partial(
             torch.std,

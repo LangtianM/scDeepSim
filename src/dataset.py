@@ -21,12 +21,13 @@ class ScDataset(Dataset):
         self.adata = adata
         self.sparse = sp.issparse(adata.X)
         self.encoder = encoder
+        raw_labels = adata.obs[label_key].values
         if self.encoder == "LabelEncoder":
-            self.classes = LabelEncoder().fit_transform(\
-                adata.obs[label_key].values.reshape(-1, 1))
+            self.classes = LabelEncoder().fit_transform(raw_labels)
         elif self.encoder == "OneHotEncoder":
-            self.classes = OneHotEncoder(sparse=False).fit_transform(\
-                adata.obs[label_key].values.reshape(-1, 1))
+            self.classes = OneHotEncoder(sparse=False).fit_transform(
+                raw_labels.reshape(-1, 1)
+            )
         else:
             raise ValueError(f"Invalid encoder: {encoder}")
         
@@ -45,7 +46,10 @@ class ScDataset(Dataset):
             x = to_tensor(x.toarray())
         else:
             x = to_tensor(x)
-        classes = torch.tensor(self.classes[idx], dtype=torch.float32)
+        if self.encoder == "LabelEncoder":
+            classes = torch.tensor(self.classes[idx], dtype=torch.long)
+        else:
+            classes = torch.tensor(self.classes[idx], dtype=torch.float32)
         return x, classes
         
         

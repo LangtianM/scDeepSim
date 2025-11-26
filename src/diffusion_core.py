@@ -4,16 +4,17 @@ Simplified and cleaned version for single-cell data.
 """
 from collections import namedtuple
 import math
-from typing import Tuple, Optional, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-from .diffusion_model import DenoisingUNet
-from einops import rearrange, reduce, repeat, pack, unpack
+try:
+    from .diffusion_model import DenoisingUNet
+except ImportError:
+    # Fallback for direct module execution (e.g., tests adding src/ to sys.path)
+    from diffusion_model import DenoisingUNet
+from einops import reduce
 from functools import partial
 from tqdm.auto import tqdm
-
 ModelPrediction =  namedtuple('ModelPrediction', ['pred_noise', 'pred_x_start'])
 
 # ===========================
@@ -27,80 +28,9 @@ def default(val, d):
     if exists(val):
         return val
     return d() if callable(d) else d
-def exists(x):
-    return x is not None
-
-def default(val, d):
-    if exists(val):
-        return val
-    return d() if callable(d) else d
 
 def identity(t, *args, **kwargs):
     return t
-
-def cycle(dl):
-    while True:
-        for data in dl:
-            yield data
-
-def has_int_squareroot(num):
-    return (math.sqrt(num) ** 2) == num
-
-def num_to_groups(num, divisor):
-    groups = num // divisor
-    remainder = num % divisor
-    arr = [divisor] * groups
-    if remainder > 0:
-        arr.append(remainder)
-    return arr
-
-def convert_image_to_fn(img_type, image):
-    if image.mode != img_type:
-        return image.convert(img_type)
-    return image
-
-def pack_one_with_inverse(x, pattern):
-    packed, packed_shape = pack([x], pattern)
-
-    def inverse(x, inverse_pattern = None):
-        inverse_pattern = default(inverse_pattern, pattern)
-        return unpack(x, packed_shape, inverse_pattern)[0]
-
-    return packed, inverse
-
-# normalization functions
-
-def normalize_to_neg_one_to_one(img):
-    return img * 2 - 1
-
-def unnormalize_to_zero_to_one(t):
-    return (t + 1) * 0.5
-
-# classifier free guidance functions
-
-def uniform(shape, device):
-    return torch.zeros(shape, device = device).float().uniform_(0, 1)
-
-def prob_mask_like(shape, prob, device):
-    if prob == 1:
-        return torch.ones(shape, device = device, dtype = torch.bool)
-    elif prob == 0:
-        return torch.zeros(shape, device = device, dtype = torch.bool)
-    else:
-        return torch.zeros(shape, device = device).float().uniform_(0, 1) < prob
-
-def project(x, y):
-    x, inverse = pack_one_with_inverse(x, 'b *')
-    y, _ = pack_one_with_inverse(y, 'b *')
-
-    dtype = x.dtype
-    x, y = x.double(), y.double()
-    unit = F.normalize(y, dim = -1)
-
-    parallel = (x * unit).sum(dim = -1, keepdim = True) * unit
-    orthogonal = x - parallel
-
-    return inverse(parallel).to(dtype), inverse(orthogonal).to(dtype)
 
 def extract(a: torch.Tensor, t: torch.Tensor, x_shape: tuple):
     # extract the values of a at the indices t and reshape to the shape of x_shape
@@ -121,20 +51,7 @@ def linear_beta_schedule(timesteps):
 
 def cosine_beta_schedule(timesteps, s = 0.008):
     """
-    cosine schedule
-    as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
-    """
-    steps = timesteps + 1
-    x = torch.linspace(0, timesteps, steps, dtype = torch.float64)
-    alphas_cumprod = torch.cos(((x / timesteps) + s) / (1 + s) * math.pi * 0.5) ** 2
-    alphas_cumprod = alphas_cumprod / alphas_cumprod[0]
-    betas = 1 - (alphas_cumprod[1:] / alphas_cumprod[:-1])
-    return torch.clip(betas, 0, 0.999)
-
-def cosine_beta_schedule(timesteps, s = 0.008):
-    """
-    cosine schedule
-    as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
+    Cosine schedule as proposed in https://openreview.net/forum?id=-NEXDKk8gZ
     """
     steps = timesteps + 1
     x = torch.linspace(0, timesteps, steps, dtype = torch.float64)
@@ -255,6 +172,8 @@ class GaussianDiffusion(nn.Module):
             betas = cosine_beta_schedule(timesteps)
         else:
             raise ValueError(f"Unsupported beta schedule: {beta_schedule}")
+
+        betas = betas.float().clamp(min=1e-5, max=0.999)
         
         alphas = 1. - betas
         # define \bar{\alpha}_t: the cumulative product of alphas
@@ -266,6 +185,10 @@ class GaussianDiffusion(nn.Module):
         self.num_timesteps = int(timesteps)
         self.use_cfg_plus_plus = use_cfg_plus_plus
         self.sampling_timesteps = default(sampling_timesteps, self.num_timesteps)
+        if self.sampling_timesteps > self.num_timesteps:
+            raise ValueError("sampling_timesteps must be <= timesteps.")
+        self.is_ddim_sampling = self.sampling_timesteps < self.num_timesteps
+        self.ddim_sampling_eta = ddim_sampling_eta
         
         register_buffer = lambda name, val: self.register_buffer(name, val)
         
@@ -314,13 +237,13 @@ class GaussianDiffusion(nn.Module):
         return self.betas.device
     
     def predict_start_from_noise(self, x_t, t, noise):
-        """
+        r"""
         Predict x_0 from x_t and noise.
 
         Args:
             x_t: the noisy data at time t
             t: the timestep
-            noise: the cumulatiev noise \tilde{\epsilon}_t
+            noise: the cumulative noise \tilde{\epsilon}_t
 
         Returns:
             the predicted x_0
@@ -332,7 +255,7 @@ class GaussianDiffusion(nn.Module):
         )
         
     def predict_noise_from_start(self, x_t, t, x0):
-        """
+        r"""
         Predict the noise \tilde{\epsilon}_t from x_0 and x_t.
 
         Args:
@@ -350,14 +273,14 @@ class GaussianDiffusion(nn.Module):
         
 
     def predict_v(self, x_start, t, noise):
-        """
+        r"""
         Predict v, a mixture of x_0 and \tilde{\epsilon}_t. If the objective is "pred_v", 
         then we are learning a function to predict v_t from x_t and t.
         
         Args:
             x_start: the clean data
             t: the timestep
-            noise: the cumulatiev noise \tilde{\epsilon}_
+            noise: the cumulative noise \tilde{\epsilon}_t
         """
         return (
             extract(self.sqrt_alphas_cumprod, t, x_start.shape) * noise -
@@ -441,7 +364,7 @@ class GaussianDiffusion(nn.Module):
     def p_sample(self, x, t, classes, cond_scale = 6., rescaled_phi = 0.7, clip_denoised = True):
         """Sample from the posterior distribution of x_{t-1} | x_t
         """
-        b, *_, device = *x.shape, x.
+        b, *_, device = *x.shape, x.device
         batched_times = torch.full((b, ), t, device = device, dtype = torch.long)
         model_mean, posterior_variance, posterior_log_variance, x_start = self.p_mean_variance(x, batched_times, classes, cond_scale, rescaled_phi, clip_denoised)
         noise = torch.randn_like(x) if t > 0 else 0.
@@ -468,9 +391,10 @@ class GaussianDiffusion(nn.Module):
     def ddim_sample(self, classes, shape, cond_scale = 6., rescaled_phi = 0.7, clip_denoised = True):
         """Sample from the posterior distribution of x_{t-1} | x_t using DDIM.
         """
-        batch, device, total_timesteps,sampling_timesteps, eta, objective = \
-            shape[0], self.betas.device, self.num_timesteps, self.sampling_timesteps, \
-                self.ddim_sampling_eta, self.objective
+        batch, device = shape[0], self.betas.device
+        total_timesteps = self.num_timesteps
+        sampling_timesteps = self.sampling_timesteps
+        eta = self.ddim_sampling_eta
 
         times = torch.linspace(-1, total_timesteps - 1, steps = sampling_timesteps + 1)
         times = list(reversed(times.int().tolist()))
@@ -488,8 +412,8 @@ class GaussianDiffusion(nn.Module):
                 x = x_start
                 continue
             
-            alpha = self.cumprod_to_alpha(time)
-            alpha_next = self.cumprod_to_alpha(time_next)
+            alpha = self.alphas_cumprod[time]
+            alpha_next = self.alphas_cumprod[time_next]
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma ** 2).sqrt()
             noise = torch.randn_like(x)
@@ -507,17 +431,49 @@ class GaussianDiffusion(nn.Module):
     
     @torch.no_grad()
     def interpolate(self, x1, x2, classes, t = None, lam = 0.5):
-        
+        """Interpolate between two samples.
+
+        Args:
+            x1: the first sample (before add noise)
+            x2: the second sample (before add noise)
+            classes: the classes
+            t: the timestep
+            lam: the interpolation weight
+
+        Returns:
+            the interpolated sample
+        """
         b, *_, device = *x1.shape, x1.device
+        
+        t = default(t, self.num_timesteps - 1)
         
         assert x1.shape == x2.shape
         
-        t_batched = torch.stack([torch.full])
-        xt1, xt2 = map(lambda x: self.q_sample(x, t = t_batched), (x1, x2))
+        t_batched = torch.full((b, ), t, device = device)
+        xt1, xt2 = map(lambda x: self.q_sample(x, t = t_batched), (x1, x2)) # Get the noisy samples
         
-        x = (1 - lam) * xt1 + lam * xt2
+        x = (1 - lam) * xt1 + lam * xt2 # Interpolate the noisy samples
         
         for i in tqdm(reversed(range(0, t)), desc='interpolation sample time step', total=t):
-            x, _ = self.p_sample(x, t = i, classes = classes)
+            x, _ = self.p_sample(x, t = i, classes = classes) # Reverse diffusion to get the interpolated sample
         
         return x
+    
+    def q_sample(self, x_start, t, noise = None):
+        """
+        Sample from the forward diffusion process.
+        """
+        noise = default(noise, lambda: torch.randn_like(x_start))
+        return (extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
+                extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise)
+        
+    def p_losses(self, x_start, t, *, classes, noise = None):
+        """Compute the training loss for predicting noise."""
+        noise = default(noise, lambda: torch.randn_like(x_start))
+        x_t = self.q_sample(x_start, t, noise)
+        pred_noise = self.model(x_t, t, classes)
+        
+        loss = F.mse_loss(pred_noise, noise, reduction='none')
+        loss = reduce(loss, 'b d -> b', 'mean')
+        loss = loss * extract(self.loss_weight, t, loss.shape)
+        return loss
