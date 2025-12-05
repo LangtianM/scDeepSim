@@ -38,6 +38,7 @@ def project(x, y):
 
     parallel = (x * unit).sum(dim = -1, keepdim = True) * unit
     orthogonal = x - parallel
+    return parallel.to(dtype), orthogonal.to(dtype)
 
 # ===========================
 # Time Embedding
@@ -206,7 +207,7 @@ class ResidualBlock(nn.Module):
 
 class DenoisingUNet(nn.Module):
     """
-    U-Net style denoising model for single-cell data.
+    Simplified MLP U-Net style denoising model for single-cell data.
     Supports classifier-free guidance during inference.
     """
     def __init__(
@@ -362,8 +363,8 @@ class DenoisingUNet(nn.Module):
         t: torch.Tensor,
         labels: Optional[torch.Tensor] = None,
         cond_scale: float = 1.0,
-        rescaled_phi: float = 0.0,
-        remove_parallel_component: bool = False,
+        rescaled_phi: float = 0.7,
+        remove_parallel_component: bool = True,
         keep_parallel_frac: float = 0.0,
     ):
         """

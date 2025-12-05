@@ -29,7 +29,7 @@ class LightningDiffusion(pl.LightningModule):
         input_dim: int, # dimension of input data (number of genes)
         num_classes: int, # number of conditional classes
         hidden_dims: List[int] = [512, 512, 256, 128], # hidden dimensions for U-Net
-        dropout: float = 0.0, # dropout rate for U-Net
+        dropout: float = 0.1, # dropout rate for U-Net
         use_classifier_free_guidance: bool = True, # whether to use classifier-free guidance
         guidance_dropout: float = 0.1, # label dropout rate for training
         # diffusion process parameters

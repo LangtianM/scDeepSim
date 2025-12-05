@@ -72,7 +72,7 @@ class GaussianDiffusion(nn.Module):
     This class implements the core logic of a denoising diffusion probabilistic
     model (DDPM) and supports both DDPM and DDIM sampling. It handles noise
     schedules, forward diffusion (q), reverse denoising steps (p), classifier-free
-    guidance, v-parameterization, Min-SNR loss weighting, and optional CFG++.
+    guidance, v-parameterization, Min-SNR loss weighting, and CFG++ via rescaled_phi.
 
     Parameters
     ----------
@@ -90,18 +90,6 @@ class GaussianDiffusion(nn.Module):
 
     timesteps : int, optional
         Total number of diffusion steps T used during training. Defaults to 1000.
-
-    sampling_timesteps : int or None, optional
-        Number of steps used during inference. If `None`, it defaults to the
-        training timesteps. When `sampling_timesteps < timesteps`, DDIM sampling
-        is used. Defaults to None.
-
-    objective : {"pred_noise", "pred_x0", "pred_v"}, optional
-        Training objective describing what the model predicts:
-            - "pred_noise": predict epsilon (DDPM default)
-            - "pred_x0": predict the clean image x0
-            - "pred_v": v-parameterization (Imagen/Video)
-        Defaults to "pred_noise".
 
     beta_schedule : {"linear", "cosine"}, optional
         Type of schedule used to generate the beta_t noise coefficients.
@@ -124,17 +112,10 @@ class GaussianDiffusion(nn.Module):
     min_snr_gamma : float, optional
         Clipping value gamma used when applying Min-SNR weighting. Defaults to 5.
 
-    use_cfg_plus_plus : bool, optional
-        Whether to use CFG++ (Classifier-Free Guidance++), an improved variant
-        of standard classifier-free guidance for sampling. Defaults to False.
-
     Attributes
     ----------
     num_timesteps : int
         Number of diffusion steps used during training.
-
-    is_ddim_sampling : bool
-        Whether DDIM sampling is enabled based on `sampling_timesteps`.
 
     betas : torch.Tensor
         Noise schedule coefficients of shape (T,).
@@ -155,11 +136,10 @@ class GaussianDiffusion(nn.Module):
         sampling_timesteps: int|None = None,
         objective: str = "pred_noise",
         beta_schedule: str = "cosine",
-        ddim_sampling_eta: float = 1.0,
+        ddim_sampling_eta: float = 0.1,
         offset_noise_strength: float = 0.0,
         min_snr_loss_weight: bool = False,
         min_snr_gamma: float = 5.0,
-        use_cfg_plus_plus: bool = False,
     ):
         super().__init__()
         self.model = model if model else DenoisingUNet(input_dim = input_dim)
@@ -183,11 +163,6 @@ class GaussianDiffusion(nn.Module):
         
         timesteps, = betas.shape
         self.num_timesteps = int(timesteps)
-        self.use_cfg_plus_plus = use_cfg_plus_plus
-        self.sampling_timesteps = default(sampling_timesteps, self.num_timesteps)
-        if self.sampling_timesteps > self.num_timesteps:
-            raise ValueError("sampling_timesteps must be <= timesteps.")
-        self.is_ddim_sampling = self.sampling_timesteps < self.num_timesteps
         self.ddim_sampling_eta = ddim_sampling_eta
         
         def register_buffer(name, val):
@@ -341,7 +316,7 @@ class GaussianDiffusion(nn.Module):
         maybe_clip = partial(torch.clamp, min = -1., max = 1.)  if clip_x_start else identity
         
         if self.objective == "pred_noise":
-            pred_noise = model_output if not self.use_cfg_plus_plus else null_output
+            pred_noise = model_output
             x_start = self.predict_start_from_noise(x, t, pred_noise)
             x_start = maybe_clip(x_start)
         else:
@@ -349,7 +324,7 @@ class GaussianDiffusion(nn.Module):
         
         return ModelPrediction(pred_noise, x_start)
     
-    def p_mean_variance(self, x, t, classes, cond_scale, rescaled_phi, clip_denoised = True):
+    def p_mean_variance(self, x, t, classes, cond_scale, rescaled_phi, clip_denoised):
         """Predict the posterior mean and variance of x_{t-1} | x_t, x_0. with estimated x_0.
         """
         preds = self.model_predictions(x, t, classes, cond_scale, rescaled_phi)
@@ -378,7 +353,7 @@ class GaussianDiffusion(nn.Module):
         Sample x_0 from guassian noise by reverse diffusion process.
         """
         
-        batch, device = shape[0], self.betas.device
+        _batch, device = shape[0], self.betas.device
         
         x = torch.randn(shape, device = device)
         
@@ -389,12 +364,11 @@ class GaussianDiffusion(nn.Module):
         return x
     
     @torch.no_grad()
-    def ddim_sample(self, classes, shape, cond_scale = 6., rescaled_phi = 0.7, clip_denoised = True):
+    def ddim_sample(self, classes, shape, sampling_timesteps, cond_scale = 6., rescaled_phi = 0.7, clip_denoised = True):
         """Sample from the posterior distribution of x_{t-1} | x_t using DDIM.
         """
         batch, device = shape[0], self.betas.device
         total_timesteps = self.num_timesteps
-        sampling_timesteps = self.sampling_timesteps
         eta = self.ddim_sampling_eta
 
         times = torch.linspace(-1, total_timesteps - 1, steps = sampling_timesteps + 1)
@@ -423,14 +397,14 @@ class GaussianDiffusion(nn.Module):
         return x
     
     @torch.no_grad()
-    def sample(self, classes, cond_scale = 6., rescaled_phi = 0.7, shape = None):
+    def sample(self, classes, sampling_timesteps = None, cond_scale = 6., rescaled_phi = 0.7, shape = None):
         """
         Sample from the diffusion model.
 
         Args:
             classes: label tensor or None for unconditional sampling
             cond_scale: classifier-free guidance scale
-            rescaled_phi: CFG++ rescaling factor
+            rescaled_phi: CFG++ rescaling factor, default to 0.7
             shape: optional tuple (batch_size, input_dim); required when classes is None
         """
         if shape is None:
@@ -438,12 +412,18 @@ class GaussianDiffusion(nn.Module):
                 raise ValueError("shape must be provided when classes is None for unconditional sampling.")
             batch_size, input_dim = classes.shape[0], self.input_dim
             shape = (batch_size, input_dim)
-
-        sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn(classes, shape, cond_scale, rescaled_phi)
+    
+        if sampling_timesteps is None or sampling_timesteps == self.num_timesteps:
+            sampling_timesteps = self.num_timesteps
+            sample_fn = self.p_sample_loop
+        elif sampling_timesteps < self.num_timesteps:
+            sample_fn = self.ddim_sample
+        else:
+            raise ValueError(f"Invalid sampling_timesteps: {sampling_timesteps}")
+        return sample_fn(classes, shape, sampling_timesteps, cond_scale, rescaled_phi)
     
     @torch.no_grad()
-    def interpolate(self, x1, x2, classes, t = None, lam = 0.5):
+    def interpolate(self, x1, x2, classes, t = None, lam = 0.5, rescaled_phi = 0.7):
         """Interpolate between two samples.
 
         Args:
@@ -468,7 +448,7 @@ class GaussianDiffusion(nn.Module):
         x = (1 - lam) * xt1 + lam * xt2 # Interpolate the noisy samples
         
         for i in tqdm(reversed(range(0, t)), desc='interpolation sample time step', total=t):
-            x, _ = self.p_sample(x, t = i, classes = classes) # Reverse diffusion to get the interpolated sample
+            x, _ = self.p_sample(x, t = i, classes = classes, rescaled_phi = rescaled_phi) # Reverse diffusion to get the interpolated sample
         
         return x
     
