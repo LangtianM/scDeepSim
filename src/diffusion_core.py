@@ -190,7 +190,8 @@ class GaussianDiffusion(nn.Module):
         self.is_ddim_sampling = self.sampling_timesteps < self.num_timesteps
         self.ddim_sampling_eta = ddim_sampling_eta
         
-        register_buffer = lambda name, val: self.register_buffer(name, val)
+        def register_buffer(name, val):
+            return self.register_buffer(name, val)
         
         # Calculations for p(x_t | x_{t-1})
         register_buffer("betas", betas)
@@ -422,12 +423,24 @@ class GaussianDiffusion(nn.Module):
         return x
     
     @torch.no_grad()
-    def sample(self, classes, cond_scale = 6., rescaled_phi = 0.7):
-        """Sample from the diffusion model.
+    def sample(self, classes, cond_scale = 6., rescaled_phi = 0.7, shape = None):
         """
-        batch_size, input_dim = classes.shape[0], self.input_dim
+        Sample from the diffusion model.
+
+        Args:
+            classes: label tensor or None for unconditional sampling
+            cond_scale: classifier-free guidance scale
+            rescaled_phi: CFG++ rescaling factor
+            shape: optional tuple (batch_size, input_dim); required when classes is None
+        """
+        if shape is None:
+            if classes is None:
+                raise ValueError("shape must be provided when classes is None for unconditional sampling.")
+            batch_size, input_dim = classes.shape[0], self.input_dim
+            shape = (batch_size, input_dim)
+
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn(classes, (batch_size, input_dim), cond_scale, rescaled_phi)
+        return sample_fn(classes, shape, cond_scale, rescaled_phi)
     
     @torch.no_grad()
     def interpolate(self, x1, x2, classes, t = None, lam = 0.5):

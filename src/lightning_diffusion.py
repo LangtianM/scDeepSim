@@ -6,9 +6,8 @@ from typing import List, Optional, Union, Tuple
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl  # pyright: ignore[reportMissingImports]
-
-from diffusion_core import GaussianDiffusion
-from diffusion_model import DenoisingUNet
+from .diffusion_core import GaussianDiffusion
+from .diffusion_model import DenoisingUNet
 
 
 class LightningDiffusion(pl.LightningModule):
@@ -26,20 +25,24 @@ class LightningDiffusion(pl.LightningModule):
     
     def __init__(
         self,
-        input_dim: int,
-        num_classes: int,
-        hidden_dims: List[int] = [512, 512, 256, 128],
-        num_timesteps: int = 1000,
-        beta_schedule: str = "linear",
-        dropout: float = 0.0,
-        lr: float = 1e-4,
-        weight_decay: float = 1e-4,
-        use_ema: bool = True,
-        ema_decay: float = 0.9999,
-        use_classifier_free_guidance: bool = True,
-        guidance_dropout: float = 0.1,
-        guidance_scale: float = 1.0,
-        predict_epsilon: bool = True,
+        # U-Net parameters
+        input_dim: int, # dimension of input data (number of genes)
+        num_classes: int, # number of conditional classes
+        hidden_dims: List[int] = [512, 512, 256, 128], # hidden dimensions for U-Net
+        dropout: float = 0.0, # dropout rate for U-Net
+        use_classifier_free_guidance: bool = True, # whether to use classifier-free guidance
+        guidance_dropout: float = 0.1, # label dropout rate for training
+        # diffusion process parameters
+        num_timesteps: int = 1000, # number of diffusion steps
+        beta_schedule: str = "cosine", # beta schedule for diffusion
+        guidance_scale: float = 1.0, # guidance scale for inference
+        sampling_timesteps: int = 100, # number of sampling steps
+        # predict_epsilon: bool = True, # whether to predict noise (True) or x_0 (False)
+        ema_decay: float = 0.9999, # EMA decay rate
+        # training parameters
+        lr: float = 1e-4, # learning rate
+        weight_decay: float = 1e-4, # weight decay for optimizer
+        use_ema: bool = False, # whether to use EMA
     ):
         """
         Args:
@@ -48,7 +51,7 @@ class LightningDiffusion(pl.LightningModule):
             hidden_dims: list of hidden dimensions for U-Net
             num_timesteps: number of diffusion steps
             beta_schedule: 'linear' or 'cosine'
-            dropout: dropout rate
+            dropout: dropout rate for U-Net 
             lr: learning rate
             weight_decay: weight decay for optimizer
             use_ema: whether to use exponential moving average
@@ -71,14 +74,12 @@ class LightningDiffusion(pl.LightningModule):
             guidance_dropout=guidance_dropout
         )
 
-        # Diffusion process wrapper (operates directly on self.model)
-        if not predict_epsilon:
-            raise ValueError("GaussianDiffusion currently only supports noise-prediction (predict_epsilon=True).")
         self.diffusion = GaussianDiffusion(
             model=self.model,
             input_dim=input_dim,
             timesteps=num_timesteps,
             beta_schedule=beta_schedule,
+            sampling_timesteps=sampling_timesteps,
             objective="pred_noise",
         )
         
@@ -189,7 +190,7 @@ class LightningDiffusion(pl.LightningModule):
         
         Args:
             num_samples: number of samples to generate
-            labels: conditional labels [num_samples] or [num_samples, num_classes]
+        labels: conditional labels [num_samples] for LabelEncoder, [num_samples, num_classes] for OneHotEncoder
             use_ema: whether to use EMA model (if available)
             guidance_scale: classifier-free guidance scale (None = use default)
             progress: whether to show progress bar
@@ -210,6 +211,7 @@ class LightningDiffusion(pl.LightningModule):
                 classes=labels,
                 cond_scale=guidance_scale,
                 rescaled_phi=0.7,
+                shape=(num_samples, self.hparams.input_dim),
             )
         finally:
             self.diffusion.model = original_model
@@ -244,14 +246,17 @@ class LightningDiffusion(pl.LightningModule):
             self.diffusion.model = original_model
         return loss
 
-    def _format_labels(self, labels: Optional[torch.Tensor], batch_size: int) -> torch.Tensor:
-        """Ensure labels exist, live on the right device, and use the dtype the UNet expects."""
+    def _format_labels(self, labels: Optional[torch.Tensor], batch_size: int) -> Optional[torch.Tensor]:
+        """
+        Normalize label tensors while preserving the possibility of unconditional
+        generation (labels=None).
+        """
         if labels is None:
-            labels = torch.zeros(batch_size, dtype=torch.long, device=self.device)
-        else:
-            labels = labels.to(self.device)
-            if labels.dim() == 1 and labels.dtype != torch.long:
-                labels = labels.long()
+            return None
+
+        labels = labels.to(self.device)
+        if labels.dim() == 1 and labels.dtype != torch.long:
+            labels = labels.long()
         return labels
 
 

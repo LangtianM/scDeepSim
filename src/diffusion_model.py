@@ -334,35 +334,6 @@ class DenoisingUNet(nn.Module):
         # Label embedding with classifier-free guidance
         label_emb = self.get_label_embedding(labels, batch, device, cond_drop_prob)
         
-        # if labels is None:
-        #     # Unconditional generation
-        #     label_emb = torch.zeros_like(t_emb)
-        # else:
-        #     if use_guidance and self.use_classifier_free_guidance:
-        #         # Duplicate batch for conditional and unconditional
-        #         x = x.repeat(2, 1)
-        #         t_emb = t_emb.repeat(2, 1)
-                
-        #         # First half: conditional, second half: unconditional
-        #         labels_cond = labels.repeat(2, 1) if labels.dim() > 1 else labels.repeat(2)
-        #         label_emb = self.label_embedding(labels_cond)
-                
-        #         # Mask out second half (unconditional)
-        #         batch_size = x.shape[0] // 2
-        #         mask = torch.ones_like(labels_cond)
-        #         mask[batch_size:] = 0
-        #         label_emb = label_emb * mask
-        #     else:
-        #         # Regular forward (with optional dropout for training)
-        #         if self.training and self.use_classifier_free_guidance:
-        #             # Randomly drop out labels during training
-        #             mask = torch.bernoulli(
-        #                 torch.ones_like(labels if labels.dim() == 1 else labels[:, 0]) * (1 - self.guidance_dropout)
-        #             ).unsqueeze(-1)
-        #             label_emb = self.label_embedding(labels) * mask
-        #         else:
-        #             label_emb = self.label_embedding(labels)
-        
         # Input projection
         h = self.input_proj(x)
         
@@ -381,11 +352,6 @@ class DenoisingUNet(nn.Module):
         
         # Output projection
         out = self.output(h)
-        
-        # Split output for classifier-free guidance
-        # if use_guidance and self.use_classifier_free_guidance and not self.training:
-        #     out_cond, out_uncond = out.chunk(2, dim=0)
-        #     return out_cond, out_uncond
         
         return out
     
@@ -448,27 +414,3 @@ class DenoisingUNet(nn.Module):
         )
 
         return interpolated_rescaled_logits, null_logits
-
-
-# ===========================
-# Factory function
-# ===========================
-
-def create_denoising_model(
-    input_dim: int,
-    hidden_dims: List[int] = [512, 512, 256, 128],
-    num_classes: int = 10,
-    dropout: float = 0.0,
-    **kwargs
-) -> DenoisingUNet:
-    """
-    Factory function to create a denoising model.
-    """
-    return DenoisingUNet(
-        input_dim=input_dim,
-        hidden_dims=hidden_dims,
-        num_classes=num_classes,
-        dropout=dropout,
-        **kwargs
-    )
-

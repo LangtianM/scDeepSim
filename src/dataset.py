@@ -55,7 +55,7 @@ class ScDataset(Dataset):
         
 
 class ScDataModule(pl.LightningDataModule):
-    def __init__(self, adata, label_key, encoder = "LabelEncoder", batch_size=128, val_split=0.1):
+    def __init__(self, adata, label_key, encoder = "LabelEncoder", batch_size=128, val_split=0.2):
         super().__init__()
         self.adata = adata
         self.label_key = label_key
