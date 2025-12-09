@@ -98,7 +98,6 @@ def compare_umap(
         )
 
     n_samples1 = data1.shape[0]
-    n_samples2 = data2.shape[0]
 
     # Concatenate datasets for consistent UMAP transformation
     data_combined = np.vstack([data1, data2])

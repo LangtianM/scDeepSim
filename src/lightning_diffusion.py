@@ -3,8 +3,7 @@ PyTorch Lightning module for diffusion models on single-cell data.
 Clean, easy-to-use interface compatible with ScDataModule.
 """
 
-from typing import List, Optional, Union, Tuple
-from matplotlib.backend_bases import NonGuiException
+from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl  # pyright: ignore[reportMissingImports]
