@@ -3,6 +3,7 @@ PyTorch Lightning module for diffusion models on single-cell data.
 Clean, easy-to-use interface compatible with ScDataModule.
 """
 from typing import List, Optional, Union, Tuple
+from matplotlib.backend_bases import NonGuiException
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl  # pyright: ignore[reportMissingImports]
@@ -29,7 +30,7 @@ class LightningDiffusion(pl.LightningModule):
         input_dim: int, # dimension of input data (number of genes)
         num_classes: int, # number of conditional classes
         hidden_dims: List[int] = [512, 512, 256, 128], # hidden dimensions for U-Net
-        dropout: float = 0.1, # dropout rate for U-Net
+        dropout: float = 0.05, # dropout rate for U-Net
         use_classifier_free_guidance: bool = True, # whether to use classifier-free guidance
         guidance_dropout: float = 0.1, # label dropout rate for training
         # diffusion process parameters
@@ -180,21 +181,26 @@ class LightningDiffusion(pl.LightningModule):
     def sample(
         self,
         num_samples: int,
+        sampling_timesteps: Optional[int] = None,
         labels: Optional[torch.Tensor] = None,
-        use_ema: bool = True,
+        use_ema: bool = False,
         guidance_scale: Optional[float] = None,
-        progress: bool = True
+        progress: bool = True,
+        ddim_sampling_eta: Optional[float] = None,
+        clip_denoised: bool = True,
     ) -> torch.Tensor:
         """
         Generate samples from the diffusion model.
         
         Args:
             num_samples: number of samples to generate
-        labels: conditional labels [num_samples] for LabelEncoder, [num_samples, num_classes] for OneHotEncoder
+            sampling_timesteps: number of sampling steps (None = use max)
+            labels: conditional labels [num_samples] for LabelEncoder, [num_samples, num_classes] for OneHotEncoder
             use_ema: whether to use EMA model (if available)
             guidance_scale: classifier-free guidance scale (None = use default)
             progress: whether to show progress bar
-            
+            ddim_sampling_eta: eta parameter for DDIM sampling (None = use default)
+            clip_denoised: whether to clamp predicted x0 to [-1, 1]
         Returns:
             generated samples [num_samples, input_dim]
         """
@@ -209,8 +215,11 @@ class LightningDiffusion(pl.LightningModule):
         try:
             samples = self.diffusion.sample(
                 classes=labels,
+                sampling_timesteps=sampling_timesteps,
                 cond_scale=guidance_scale,
                 rescaled_phi=0.7,
+                ddim_sampling_eta=ddim_sampling_eta,
+                clip_denoised=clip_denoised,
                 shape=(num_samples, self.hparams.input_dim),
             )
         finally:
