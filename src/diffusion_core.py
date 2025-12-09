@@ -420,11 +420,19 @@ class GaussianDiffusion(nn.Module):
         eta = self.ddim_sampling_eta if ddim_sampling_eta is None else ddim_sampling_eta
         # Build a descending integer schedule without rounding collisions.
         times = torch.linspace(
-            0, total_timesteps - 1, steps=sampling_timesteps, device=device, dtype=torch.long
+            0,
+            total_timesteps - 1,
+            steps=sampling_timesteps,
+            device=device,
+            dtype=torch.long,
         )
-        times = torch.unique_consecutive(times)  # avoid duplicates when steps do not divide T
+        times = torch.unique_consecutive(
+            times
+        )  # avoid duplicates when steps do not divide T
         times = torch.flip(times, dims=[0])
-        times = torch.cat([times, times.new_tensor([-1])])  # sentinel for final x0 write
+        times = torch.cat(
+            [times, times.new_tensor([-1])]
+        )  # sentinel for final x0 write
         time_pairs = list(zip(times[:-1].tolist(), times[1:].tolist()))
 
         x = torch.randn(shape, device=device)

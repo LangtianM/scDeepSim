@@ -24,14 +24,14 @@ def compare_umap(
     alpha: float = 0.6,
     s: int = 10,
     save_path: Optional[str] = None,
-    dpi: int = 300
+    dpi: int = 300,
 ) -> Tuple[np.ndarray, np.ndarray, plt.Figure]:
     """
     Compare two datasets using UMAP visualization with consistent dimensionality reduction.
-    
+
     This function concatenates two datasets, applies UMAP transformation to ensure
     consistent dimensionality reduction, then creates side-by-side visualizations.
-    
+
     Parameters
     ----------
     data1 : array-like, shape (n_samples1, n_features)
@@ -66,7 +66,7 @@ def compare_umap(
         Path to save the figure. If None, figure is not saved.
     dpi : int, default=300
         DPI for saving the figure.
-    
+
     Returns
     -------
     embedding1 : np.ndarray, shape (n_samples1, 2)
@@ -75,7 +75,7 @@ def compare_umap(
         UMAP embedding for the second dataset.
     fig : matplotlib.figure.Figure
         The generated figure object.
-    
+
     Examples
     --------
     >>> data1 = np.random.randn(100, 50)
@@ -86,43 +86,45 @@ def compare_umap(
     # Convert to numpy arrays
     data1 = np.asarray(data1)
     data2 = np.asarray(data2)
-    
+
     # Validate input shapes
     if data1.ndim != 2 or data2.ndim != 2:
         raise ValueError("Both data1 and data2 must be 2D arrays")
-    
+
     if data1.shape[1] != data2.shape[1]:
         raise ValueError(
             f"Feature dimensions must match: data1 has {data1.shape[1]} features, "
             f"data2 has {data2.shape[1]} features"
         )
-    
+
     n_samples1 = data1.shape[0]
     n_samples2 = data2.shape[0]
-    
+
     # Concatenate datasets for consistent UMAP transformation
     data_combined = np.vstack([data1, data2])
-    
+
     # Perform UMAP on combined data
-    print(f"Performing UMAP on combined dataset ({data_combined.shape[0]} samples, "
-          f"{data_combined.shape[1]} features)...")
-    
+    print(
+        f"Performing UMAP on combined dataset ({data_combined.shape[0]} samples, "
+        f"{data_combined.shape[1]} features)..."
+    )
+
     reducer = umap.UMAP(
         n_neighbors=n_neighbors,
         min_dist=min_dist,
         metric=metric,
         random_state=random_state,
-        n_components=2
+        n_components=2,
     )
-    
+
     embedding_combined = reducer.fit_transform(data_combined)
-    
+
     # Split embeddings back into original datasets
     embedding1 = embedding_combined[:n_samples1]
     embedding2 = embedding_combined[n_samples1:]
-    
+
     print("UMAP completed. Generating visualizations...")
-    
+
     # Create side-by-side visualizations
     fig = _create_comparison_plot(
         embedding1=embedding1,
@@ -134,14 +136,14 @@ def compare_umap(
         figsize=figsize,
         cmap=cmap,
         alpha=alpha,
-        s=s
+        s=s,
     )
-    
+
     # Save figure if path is provided
     if save_path is not None:
-        fig.savefig(save_path, dpi=dpi, bbox_inches='tight')
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         print(f"Figure saved to {save_path}")
-    
+
     return embedding1, embedding2, fig
 
 
@@ -155,11 +157,11 @@ def _create_comparison_plot(
     figsize: Tuple[int, int] = (14, 6),
     cmap: str = "tab10",
     alpha: float = 0.6,
-    s: int = 10
+    s: int = 10,
 ) -> plt.Figure:
     """
     Create side-by-side UMAP comparison plots.
-    
+
     Parameters
     ----------
     embedding1 : np.ndarray, shape (n_samples1, 2)
@@ -182,14 +184,14 @@ def _create_comparison_plot(
         Transparency of points.
     s : int
         Size of points.
-    
+
     Returns
     -------
     fig : matplotlib.figure.Figure
         The generated figure object.
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
-    
+
     # Plot first dataset
     plot_umap(
         embedding=embedding1,
@@ -198,9 +200,9 @@ def _create_comparison_plot(
         ax=axes[0],
         cmap=cmap,
         alpha=alpha,
-        s=s
+        s=s,
     )
-    
+
     # Plot second dataset
     plot_umap(
         embedding=embedding2,
@@ -209,11 +211,11 @@ def _create_comparison_plot(
         ax=axes[1],
         cmap=cmap,
         alpha=alpha,
-        s=s
+        s=s,
     )
-    
+
     plt.tight_layout()
-    
+
     return fig
 
 
@@ -227,11 +229,11 @@ def plot_umap(
     s: int = 10,
     show_legend: bool = True,
     xlabel: str = "UMAP 1",
-    ylabel: str = "UMAP 2"
+    ylabel: str = "UMAP 2",
 ) -> plt.Axes:
     """
     Plot a single UMAP embedding.
-    
+
     Parameters
     ----------
     embedding : np.ndarray, shape (n_samples, 2)
@@ -254,7 +256,7 @@ def plot_umap(
         Label for x-axis.
     ylabel : str, default="UMAP 2"
         Label for y-axis.
-    
+
     Returns
     -------
     ax : matplotlib.axes.Axes
@@ -262,19 +264,19 @@ def plot_umap(
     """
     if ax is None:
         ax = plt.gca()
-    
+
     # Validate embedding shape
     if embedding.ndim != 2 or embedding.shape[1] != 2:
         raise ValueError("Embedding must be a 2D array with shape (n_samples, 2)")
-    
+
     # Plot with or without labels
     if labels is not None:
         labels = np.asarray(labels)
         unique_labels = np.unique(labels)
-        
+
         # Use colormap
         colors = plt.get_cmap(cmap)
-        
+
         for i, label in enumerate(unique_labels):
             mask = labels == label
             ax.scatter(
@@ -284,29 +286,21 @@ def plot_umap(
                 label=str(label),
                 alpha=alpha,
                 s=s,
-                edgecolors='none'
+                edgecolors="none",
             )
-        
+
         if show_legend:
             ax.legend(
-                bbox_to_anchor=(1.05, 1),
-                loc='upper left',
-                frameon=True,
-                fontsize=8
+                bbox_to_anchor=(1.05, 1), loc="upper left", frameon=True, fontsize=8
             )
     else:
         ax.scatter(
-            embedding[:, 0],
-            embedding[:, 1],
-            alpha=alpha,
-            s=s,
-            edgecolors='none'
+            embedding[:, 0], embedding[:, 1], alpha=alpha, s=s, edgecolors="none"
         )
-    
+
     ax.set_xlabel(xlabel, fontsize=10)
     ax.set_ylabel(ylabel, fontsize=10)
-    ax.set_title(title, fontsize=12, fontweight='bold')
-    ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
-    
-    return ax
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
 
+    return ax

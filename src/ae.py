@@ -11,6 +11,7 @@ import pytorch_lightning as pl  # pyright: ignore[reportMissingImports]
 # ----------------------------
 class MLPBlock(nn.Module):
     """Linear -> (BatchNorm) -> Activation -> (Dropout)"""
+
     def __init__(
         self,
         in_dim: int,
@@ -48,6 +49,7 @@ class Encoder(nn.Module):
     Encoder with optional residual connections.
     If residual=True, all hidden dims must be the same to allow x + f(x).
     """
+
     def __init__(
         self,
         n_genes: int,
@@ -64,21 +66,34 @@ class Encoder(nn.Module):
         self.l2_normalize = l2_normalize
 
         if residual:
-            assert len(set(hidden_dim)) == 1, \
+            assert len(set(hidden_dim)) == 1, (
                 "When residual=True, all hidden dims must be equal for skip-add."
+            )
 
         blocks = nn.ModuleList()
         # input layer
         blocks.append(
             nn.Sequential(
                 nn.Dropout(p=input_dropout) if input_dropout > 0 else nn.Identity(),
-                MLPBlock(n_genes, hidden_dim[0], activation=activation, dropout=0.0, use_bn=True),
+                MLPBlock(
+                    n_genes,
+                    hidden_dim[0],
+                    activation=activation,
+                    dropout=0.0,
+                    use_bn=True,
+                ),
             )
         )
         # hidden layers
         for i in range(1, len(hidden_dim)):
             blocks.append(
-                MLPBlock(hidden_dim[i - 1], hidden_dim[i], activation=activation, dropout=dropout, use_bn=True)
+                MLPBlock(
+                    hidden_dim[i - 1],
+                    hidden_dim[i],
+                    activation=activation,
+                    dropout=dropout,
+                    use_bn=True,
+                )
             )
         # output (latent) layer
         self.to_latent = nn.Linear(hidden_dim[-1], latent_dim)
@@ -93,7 +108,7 @@ class Encoder(nn.Module):
             else:
                 x = h
         z = self.to_latent(x)
-        if self.l2_normalize: # l2 normalization may limit the reconstruction ability
+        if self.l2_normalize:  # l2 normalization may limit the reconstruction ability
             z = F.normalize(z, p=2, dim=1)
         return z
 
@@ -102,6 +117,7 @@ class Decoder(nn.Module):
     """
     Decoder (mirror of Encoder). Optional residual on hidden blocks.
     """
+
     def __init__(
         self,
         n_genes: int,
@@ -117,15 +133,32 @@ class Decoder(nn.Module):
         self.out_activation = out_activation.lower()
 
         if residual:
-            assert len(set(hidden_dim)) == 1, \
+            assert len(set(hidden_dim)) == 1, (
                 "When residual=True, all hidden dims must be equal for skip-add."
+            )
 
         blocks = nn.ModuleList()
         # first hidden block
-        blocks.append(MLPBlock(latent_dim, hidden_dim[0], activation=activation, dropout=0.0, use_bn=True))
+        blocks.append(
+            MLPBlock(
+                latent_dim,
+                hidden_dim[0],
+                activation=activation,
+                dropout=0.0,
+                use_bn=True,
+            )
+        )
         # other hidden blocks
         for i in range(1, len(hidden_dim)):
-            blocks.append(MLPBlock(hidden_dim[i - 1], hidden_dim[i], activation=activation, dropout=dropout, use_bn=True))
+            blocks.append(
+                MLPBlock(
+                    hidden_dim[i - 1],
+                    hidden_dim[i],
+                    activation=activation,
+                    dropout=dropout,
+                    use_bn=True,
+                )
+            )
         self.blocks = blocks
         self.to_output = nn.Linear(hidden_dim[-1], n_genes)
 
@@ -151,26 +184,26 @@ class LightningAE(pl.LightningModule):
     """
     Pure AE (not variational). Trains to reconstruct adata.X.
     """
+
     def __init__(
         self,
         n_genes: int,
         latent_dim: int = 128,
         enc_hidden: List[int] = [1024, 1024, 1024],
-        dec_hidden: Optional[List[int]] = None,   # default: mirror encoder
+        dec_hidden: Optional[List[int]] = None,  # default: mirror encoder
         dropout: float = 0.0,
         input_dropout: float = 0.0,
         residual: bool = False,
         enc_activation: str = "prelu",
         dec_activation: str = "prelu",
-        decoder_out_activation: str = "linear",   # 'linear'|'relu'|'sigmoid'
+        decoder_out_activation: str = "linear",  # 'linear'|'relu'|'sigmoid'
         lr: float = 5e-4,
         weight_decay: float = 1e-2,
         l2_normalize_latent: bool = False,
-        loss: str = "mse"                         # 'mse' | 'mae'
+        loss: str = "mse",  # 'mse' | 'mae'
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=['encoder', 'decoder', 'criterion'])
-
+        self.save_hyperparameters(ignore=["encoder", "decoder", "criterion"])
 
         if dec_hidden is None:
             dec_hidden = list(reversed(enc_hidden))
@@ -211,11 +244,20 @@ class LightningAE(pl.LightningModule):
         return self.decode(self.encode(x))
 
     # ---- steps
-    def _step(self, batch: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], stage: str):
+    def _step(
+        self, batch: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]], stage: str
+    ):
         x = batch[0] if isinstance(batch, (list, tuple)) else batch
         x_hat = self(x)
         loss = self.criterion(x_hat, x)
-        self.log(f"{stage}_loss", loss, prog_bar=True, on_step=False, on_epoch=True, batch_size=x.size(0))
+        self.log(
+            f"{stage}_loss",
+            loss,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            batch_size=x.size(0),
+        )
         return loss
 
     def training_step(self, batch, batch_idx):
@@ -223,10 +265,18 @@ class LightningAE(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         return self._step(batch, "val")
-        
+
     # ---- optim
     def configure_optimizers(self):
-        opt = torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=self.hparams.weight_decay)
-        sch = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.5, patience=10)
-        return {'optimizer': opt, 'lr_scheduler': {'scheduler': sch, 'monitor': 'val_loss'}}
-
+        opt = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay,
+        )
+        sch = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            opt, mode="min", factor=0.5, patience=10
+        )
+        return {
+            "optimizer": opt,
+            "lr_scheduler": {"scheduler": sch, "monitor": "val_loss"},
+        }

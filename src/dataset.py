@@ -13,10 +13,10 @@ def to_tensor(X):
             return t.view(1)
         return t
     return t.squeeze()
-    
+
 
 class ScDataset(Dataset):
-    def __init__(self, adata, label_key, encoder = "LabelEncoder"):
+    def __init__(self, adata, label_key, encoder="LabelEncoder"):
         super().__init__()
         self.adata = adata
         self.sparse = sp.issparse(adata.X)
@@ -30,11 +30,10 @@ class ScDataset(Dataset):
             )
         else:
             raise ValueError(f"Invalid encoder: {encoder}")
-        
 
     def __len__(self):
         return len(self.adata)
-    
+
     def __getitem__(self, idx):
         """Get the idx-th row of cellxgene data and its label.
 
@@ -51,11 +50,12 @@ class ScDataset(Dataset):
         else:
             classes = torch.tensor(self.classes[idx], dtype=torch.float32)
         return x, classes
-        
-        
+
 
 class ScDataModule(pl.LightningDataModule):
-    def __init__(self, adata, label_key, encoder = "LabelEncoder", batch_size=128, val_split=0.2):
+    def __init__(
+        self, adata, label_key, encoder="LabelEncoder", batch_size=128, val_split=0.2
+    ):
         super().__init__()
         self.adata = adata
         self.label_key = label_key
@@ -67,10 +67,12 @@ class ScDataModule(pl.LightningDataModule):
         full = ScDataset(self.adata, self.label_key, self.encoder)
         val_size = int(len(full) * self.val_split)
         train_size = len(full) - val_size
-        self.train_dataset, self.val_dataset = random_split(full, [train_size, val_size])
-        
+        self.train_dataset, self.val_dataset = random_split(
+            full, [train_size, val_size]
+        )
+
     def train_dataloader(self):
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
-    
+
     def val_dataloader(self):
         return DataLoader(self.val_dataset, batch_size=self.batch_size)
