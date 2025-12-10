@@ -39,11 +39,11 @@ class LightningDiffusion(pl.LightningModule):
         guidance_scale: float = 1.0,  # guidance scale for inference
         sampling_timesteps: int = 100,  # number of sampling steps
         # predict_epsilon: bool = True, # whether to predict noise (True) or x_0 (False)
-        ema_decay: float = 0.9999,  # EMA decay rate
+        ema_decay: float = 0.999,  # EMA decay rate
         # training parameters
         lr: float = 1e-4,  # learning rate
         weight_decay: float = 1e-4,  # weight decay for optimizer
-        use_ema: bool = False,  # whether to use EMA
+        use_ema: bool = True,  # whether to use EMA
     ):
         """
         Args:
@@ -200,7 +200,7 @@ class LightningDiffusion(pl.LightningModule):
         num_samples: int,
         sampling_timesteps: Optional[int] = None,
         labels: Optional[torch.Tensor] = None,
-        use_ema: bool = False,
+        use_ema: Optional[bool] = None,
         guidance_scale: Optional[float] = None,
         progress: bool = True,
         ddim_sampling_eta: Optional[float] = None,
@@ -221,6 +221,8 @@ class LightningDiffusion(pl.LightningModule):
         Returns:
             generated samples [num_samples, input_dim]
         """
+        use_ema = use_ema if use_ema is not None else self.hparams.use_ema
+        
         model = (
             self.ema_model if (use_ema and self.ema_model is not None) else self.model
         )

@@ -234,7 +234,7 @@ class DenoisingUNet(nn.Module):
         input_dim: int,
         hidden_dims: List[int] = [512, 512, 256, 128],
         num_classes: int = 10,
-        dropout: float = 0.0,
+        dropout: float = 0.05,
         time_emb_dim: Optional[int] = None,
         use_one_hot_labels: bool = True,
         use_classifier_free_guidance: bool = True,

@@ -173,6 +173,7 @@ class GaussianDiffusion(nn.Module):
 
         (timesteps,) = betas.shape
         self.num_timesteps = int(timesteps)
+        self.sampling_timesteps = sampling_timesteps
         self.ddim_sampling_eta = ddim_sampling_eta
 
         def register_buffer(name, val):
@@ -320,7 +321,7 @@ class GaussianDiffusion(nn.Module):
         return posterior_mean, posterior_variance, posterior_log_variance_clipped
 
     def model_predictions(
-        self, x, t, classes, cond_scale=6.0, rescaled_phi=0.7, clip_x_start=False
+        self, x, t, classes, cond_scale=1.0, rescaled_phi=0.7, clip_x_start=False
     ):
         """
         Compute the model predictions for the given input.
@@ -368,7 +369,7 @@ class GaussianDiffusion(nn.Module):
 
     @torch.no_grad()
     def p_sample(
-        self, x, t, classes, cond_scale=6.0, rescaled_phi=0.7, clip_denoised=True
+        self, x, t, classes, cond_scale=1.0, rescaled_phi=0.7, clip_denoised=False
     ):
         """Sample from the posterior distribution of x_{t-1} | x_t"""
         b, *_, device = *x.shape, x.device
@@ -385,7 +386,9 @@ class GaussianDiffusion(nn.Module):
         return x_t_1, x_start
 
     @torch.no_grad()
-    def p_sample_loop(self, classes, shape, cond_scale=6.0, rescaled_phi=0.7):
+    def p_sample_loop(
+        self, classes, shape, cond_scale=1.0, rescaled_phi=0.7, clip_denoised=False
+    ):
         """
         Sample x_0 from guassian noise by reverse diffusion process.
         """
@@ -399,7 +402,9 @@ class GaussianDiffusion(nn.Module):
             desc="sampling loop time step",
             total=self.num_timesteps,
         ):
-            x, x_start = self.p_sample(x, t, classes, cond_scale, rescaled_phi)
+            x, x_start = self.p_sample(
+                x, t, classes, cond_scale, rescaled_phi, clip_denoised
+            )
 
         return x
 
@@ -410,9 +415,9 @@ class GaussianDiffusion(nn.Module):
         shape,
         sampling_timesteps,
         ddim_sampling_eta=None,
-        cond_scale=6.0,
+        cond_scale=1.0,
         rescaled_phi=0.7,
-        clip_denoised: bool = True,
+        clip_denoised: bool = False,
     ):
         """Sample from the posterior distribution of x_{t-1} | x_t using DDIM."""
         batch, device = shape[0], self.betas.device
@@ -468,11 +473,11 @@ class GaussianDiffusion(nn.Module):
         self,
         classes,
         sampling_timesteps=None,
-        cond_scale=6.0,
+        cond_scale=1.0,
         rescaled_phi=0.7,
         shape=None,
         ddim_sampling_eta=None,
-        clip_denoised: bool = True,
+        clip_denoised: bool = False,
     ):
         """
         Sample from the diffusion model.
@@ -493,9 +498,13 @@ class GaussianDiffusion(nn.Module):
             batch_size, input_dim = classes.shape[0], self.input_dim
             shape = (batch_size, input_dim)
 
+        sampling_timesteps = default(sampling_timesteps, self.sampling_timesteps)
+
         if sampling_timesteps is None or sampling_timesteps == self.num_timesteps:
             sampling_timesteps = self.num_timesteps
-            return self.p_sample_loop(classes, shape, cond_scale, rescaled_phi)
+            return self.p_sample_loop(
+                classes, shape, cond_scale, rescaled_phi, clip_denoised
+            )
         elif sampling_timesteps < self.num_timesteps:
             # Use keyword arguments to avoid mis-ordering cond_scale / eta.
             return self.ddim_sample(
