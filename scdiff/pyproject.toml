@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scdiff"
+version = "0.1.0"
+description = "Single-cell diffusion models (packaged from scDeepSim/src)."
+requires-python = ">=3.10"
+dependencies = [
+  "torch",
+  "pytorch-lightning",
+  "einops",
+  "tqdm",
+  "numpy",
+  "scipy",
+  "scikit-learn",
+  "matplotlib",
+  "umap-learn",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["scdiff*"]
+

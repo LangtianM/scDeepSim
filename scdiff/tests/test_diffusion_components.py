@@ -1,16 +1,6 @@
-import sys
-from pathlib import Path
-
 import torch
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
-
-from diffusion_model import DenoisingUNet  # noqa: E402
-from diffusion_core import GaussianDiffusion  # noqa: E402
+from scdiff.diffusion_model import DenoisingUNet  # noqa: E402
+from scdiff.diffusion_core import GaussianDiffusion  # noqa: E402
 
 
 def _make_unet(

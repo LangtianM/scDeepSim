@@ -1,5 +1,6 @@
 # ae.py
 from typing import List, Optional, Tuple, Union
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -280,3 +281,4 @@ class LightningAE(pl.LightningModule):
             "optimizer": opt,
             "lr_scheduler": {"scheduler": sch, "monitor": "val_loss"},
         }
+
