@@ -158,50 +158,66 @@ class AnalyticPearsonResidualScaler:
 
 class NormalLog1pScaler:
     """
-    Normalize and log1p transform a count matrix.
+    Normalize per cell to `target_sum` and apply log1p.
+    Stores per-cell row sums from `fit()` to enable a pseudo-inverse.
+
+    Note: Only valid for matrices with the same number/order of cells as used in fit().
     """
 
-    target_sum: float = 1e4
-    row_sum: np.ndarray = None
-    
-    
+    def __init__(self, target_sum: float = 1e4, eps: float = 1e-12):
+        self.target_sum = float(target_sum)
+        self.eps = float(eps)
+        self.row_sum: Optional[np.ndarray] = None
+
     def fit(self, X: ArrayLike) -> "NormalLog1pScaler":
         X = self._validate_X(X)
-        self.row_sum = X.sum(axis=1) #per cell
+        rs = X.sum(axis=1).astype(np.float64, copy=False)
+        self.row_sum = np.maximum(rs, self.eps)  # avoid divide-by-zero
         return self
-        
+
     def transform(self, X: ArrayLike) -> np.ndarray:
         self._check_is_fitted()
-        X = self._validate_X(X)
+        X = self._validate_X(X, n_cells=self.row_sum.shape[0])
         return np.log1p((X / self.row_sum[:, None]) * self.target_sum)
-    
+
     def fit_transform(self, X: ArrayLike) -> np.ndarray:
-        self.fit(X)
-        return self.transform(X)
-    
-    def inverse_transform(self, X: ArrayLike, 
-                          clip: bool = True, 
-                          round: bool = True) -> np.ndarray:
+        return self.fit(X).transform(X)
+
+    def inverse_transform(
+        self,
+        X: ArrayLike,
+        clip: bool = True,
+        do_round: bool = True,
+        return_int: bool = False,
+    ) -> np.ndarray:
         self._check_is_fitted()
-        X = self._validate_X(X)
+        X = self._validate_X(X, n_cells=self.row_sum.shape[0])
         X = np.expm1(X) * (self.row_sum[:, None] / self.target_sum)
         if clip:
             X = np.clip(X, 0, np.inf)
-        if round:
+        if do_round:
             X = np.rint(X)
+        if return_int:
+            return X.astype(np.int64, copy=False)
         return X.astype(np.float32, copy=False)
-    
+
     def _check_is_fitted(self) -> None:
         if self.row_sum is None:
             raise RuntimeError("This NormalLog1pScaler instance is not fitted yet. Call fit() first.")
-            
-    def _validate_X(self, X: ArrayLike, n_genes: Optional[int] = None) -> np.ndarray:
+
+    def _validate_X(
+        self,
+        X: ArrayLike,
+        n_genes: Optional[int] = None,
+        n_cells: Optional[int] = None,
+    ) -> np.ndarray:
         X = np.asarray(X)
         if X.ndim != 2:
             raise ValueError("X must be a 2D array (n_cells, n_genes).")
+        if n_cells is not None and X.shape[0] != n_cells:
+            raise ValueError(f"X has {X.shape[0]} cells but expected {n_cells}.")
         if n_genes is not None and X.shape[1] != n_genes:
             raise ValueError(f"X has {X.shape[1]} genes but expected {n_genes}.")
         if np.any(X < 0):
-            raise ValueError("X must be nonnegative counts.")
-        # Use float for safe arithmetic; keep sparse out-of@dataclass-scope for this minimal class
+            raise ValueError("X must be nonnegative.")
         return X.astype(np.float64, copy=False)
