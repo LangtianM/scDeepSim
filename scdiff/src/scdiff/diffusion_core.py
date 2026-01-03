@@ -520,8 +520,8 @@ class GaussianDiffusion(nn.Module):
             raise ValueError(f"Invalid sampling_timesteps: {sampling_timesteps}")
 
     @torch.no_grad()
-    def interpolate(self, x1, x2, classes, t=None, lam=0.5, rescaled_phi=0.7):
-        """Interpolate between two samples.
+    def interpolate(self, x1, x2, classes, t=None, lam=0.5, slerp=False, rescaled_phi=0.7):
+        """Interpolate between two samples. Both linear and spherical linear interpolation are supported.
 
         Args:
             x1: the first sample (before add noise)
@@ -529,7 +529,7 @@ class GaussianDiffusion(nn.Module):
             classes: the classes
             t: the timestep
             lam: the interpolation weight
-
+            slerp: whether to use spherical linear interpolation
         Returns:
             the interpolated sample
         """
@@ -544,8 +544,11 @@ class GaussianDiffusion(nn.Module):
             lambda x: self.q_sample(x, t=t_batched), (x1, x2)
         )  # Get the noisy samples
 
-        x = (1 - lam) * xt1 + lam * xt2  # Interpolate the noisy samples
-
+        if slerp:
+            x = self.slerp(xt1, xt2, lam)
+        else:
+            x = (1 - lam) * xt1 + lam * xt2  # linear interpolation
+            
         for i in tqdm(
             reversed(range(0, t)), desc="interpolation sample time step", total=t
         ):
@@ -554,6 +557,22 @@ class GaussianDiffusion(nn.Module):
             )  # Reverse diffusion to get the interpolated sample
 
         return x
+    
+    @torch.no_grad()
+    def slerp(x1, x2, lam, eps=1e-8):
+        """
+        helper function: Spherical linear interpolation between two samples.
+        """
+        x1n = x1 / (x1.norm(dim=-1, keepdim=True) + eps)
+        x2n = x2 / (x2.norm(dim=-1, keepdim=True) + eps)
+        dot = (x1n * x2n).sum(dim=-1, keepdim=True).clamp(-1, 1)
+        theta = torch.acos(dot)
+        sin_theta = torch.sin(theta)
+
+        return (
+            torch.sin((1 - lam) * theta) / sin_theta * x1
+            + torch.sin(lam * theta) / sin_theta * x2
+        )
 
     def q_sample(self, x_start, t, noise=None):
         """

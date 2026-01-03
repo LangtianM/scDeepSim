@@ -424,7 +424,7 @@ class DenoisingUNet(nn.Module):
         scaled_logits = null_logits + update * cond_scale
 
         std_fn = partial(
-            torch.std, dim=tuple(range(1, scaled_logits.ndim)), keepdim=True
+            torch.std, dim=tuple[int, ...](range(1, scaled_logits.ndim)), keepdim=True
         )
         rescaled_logits = scaled_logits * (
             std_fn(logits) / (std_fn(scaled_logits) + 1e-8)
@@ -434,3 +434,4 @@ class DenoisingUNet(nn.Module):
         )
 
         return interpolated_rescaled_logits, null_logits
+    
