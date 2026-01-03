@@ -303,3 +303,66 @@ def plot_umap(
     ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
 
     return ax
+
+def umap_plot(
+    data: Union[np.ndarray, list],
+    labels: Optional[Union[np.ndarray, list]] = None,
+    title: str = "UMAP Projection",
+    n_neighbors: int = 15,
+    min_dist: float = 0.1,
+    metric: str = "euclidean",
+    random_state: int = 42,
+    cmap: str = "tab10",
+    alpha: float = 0.6,
+    s: int = 10,
+    save_path: Optional[str] = None,
+    dpi: int = 300,
+):
+    """
+    Plot UMAP embedding of a single dataset with labels.
+    """
+    # INSERT_YOUR_CODE
+    data = np.asarray(data)
+    reducer = umap.UMAP(
+        n_neighbors=n_neighbors,
+        min_dist=min_dist,
+        metric=metric,
+        random_state=random_state,
+    )
+    embedding = reducer.fit_transform(data)
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    if labels is not None:
+        labels = np.asarray(labels)
+        unique_labels = np.unique(labels)
+        colors = plt.get_cmap(cmap)
+
+        for i, label in enumerate(unique_labels):
+            mask = labels == label
+            ax.scatter(
+                embedding[mask, 0],
+                embedding[mask, 1],
+                c=[colors(i / len(unique_labels))],
+                label=str(label),
+                alpha=alpha,
+                s=s,
+                edgecolors="none",
+            )
+        ax.legend(
+            bbox_to_anchor=(1.05, 1), loc="upper left", frameon=True, fontsize=8
+        )
+    else:
+        ax.scatter(
+            embedding[:, 0], embedding[:, 1],
+            alpha=alpha, s=s, edgecolors="none"
+        )
+
+    ax.set_xlabel("UMAP 1", fontsize=10)
+    ax.set_ylabel("UMAP 2", fontsize=10)
+    ax.set_title(title, fontsize=12, fontweight="bold")
+    ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
+
+    plt.tight_layout()
+    if save_path is not None:
+        fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
+    return embedding, fig
