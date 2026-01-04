@@ -4,7 +4,7 @@ src/__pycache__
 Implementation_plan.md
 lightning_logs/
 checkpoints/
-data/
+data/*
 checkpoints/*
 data/*
 tests/__pycache__/test_diffusion_components.cpython-312-pytest-9.0.1.pyc
