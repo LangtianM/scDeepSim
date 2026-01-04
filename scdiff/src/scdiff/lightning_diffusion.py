@@ -205,6 +205,7 @@ class LightningDiffusion(pl.LightningModule):
         progress: bool = True,
         ddim_sampling_eta: Optional[float] = None,
         clip_denoised: bool = False,
+        rescaled_phi: float = 0.7,
     ) -> torch.Tensor:
         """
         Generate samples from the diffusion model.
@@ -229,7 +230,7 @@ class LightningDiffusion(pl.LightningModule):
         model.eval()
         labels = self._format_labels(labels, num_samples)
 
-        guidance_scale = guidance_scale or self.hparams.guidance_scale
+        guidance_scale = guidance_scale if guidance_scale is not None else self.hparams.guidance_scale
 
         original_model = self.diffusion.model
         self.diffusion.model = model
@@ -238,7 +239,7 @@ class LightningDiffusion(pl.LightningModule):
                 classes=labels,
                 sampling_timesteps=sampling_timesteps,
                 cond_scale=guidance_scale,
-                rescaled_phi=0.7,
+                rescaled_phi=rescaled_phi,
                 ddim_sampling_eta=ddim_sampling_eta,
                 clip_denoised=clip_denoised,
                 shape=(num_samples, self.hparams.input_dim),
