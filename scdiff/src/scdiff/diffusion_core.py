@@ -520,16 +520,34 @@ class GaussianDiffusion(nn.Module):
             raise ValueError(f"Invalid sampling_timesteps: {sampling_timesteps}")
 
     @torch.no_grad()
-    def interpolate(self, x1, x2, classes, t=None, lam=0.5, slerp=False, rescaled_phi=0.7):
+    def interpolate(
+        self,
+        x1,
+        x2,
+        classes,
+        t=None,
+        lam=0.5,
+        slerp=False,
+        sampling_timesteps=None,
+        ddim_sampling_eta=None,
+        cond_scale=1.0,
+        rescaled_phi=0.7,
+        clip_denoised=False,
+    ):
         """Interpolate between two samples. Both linear and spherical linear interpolation are supported.
 
         Args:
             x1: the first sample (before add noise)
             x2: the second sample (before add noise)
             classes: the classes
-            t: the timestep
+            t: the starting timestep for interpolation (default: num_timesteps - 1)
             lam: the interpolation weight
             slerp: whether to use spherical linear interpolation
+            sampling_timesteps: number of sampling steps for DDIM (None = use DDPM full steps)
+            ddim_sampling_eta: eta parameter for DDIM sampling (None = use default)
+            cond_scale: classifier-free guidance scale
+            rescaled_phi: CFG++ rescaling factor
+            clip_denoised: whether to clamp predicted x0 to [-1, 1]
         Returns:
             the interpolated sample
         """
@@ -548,20 +566,121 @@ class GaussianDiffusion(nn.Module):
             x = self.slerp(xt1, xt2, lam)
         else:
             x = (1 - lam) * xt1 + lam * xt2  # linear interpolation
-            
-        for i in tqdm(
-            reversed(range(0, t)), desc="interpolation sample time step", total=t
-        ):
-            x, _ = self.p_sample(
-                x, t=i, classes=classes, rescaled_phi=rescaled_phi
-            )  # Reverse diffusion to get the interpolated sample
+
+        # Determine whether to use DDIM or DDPM sampling
+        sampling_timesteps = default(sampling_timesteps, self.sampling_timesteps)
+        use_ddim = sampling_timesteps is not None and sampling_timesteps < t
+
+        if use_ddim:
+            # DDIM fast sampling
+            x = self._interpolate_ddim(
+                x=x,
+                start_t=t,
+                classes=classes,
+                sampling_timesteps=sampling_timesteps,
+                ddim_sampling_eta=ddim_sampling_eta,
+                cond_scale=cond_scale,
+                rescaled_phi=rescaled_phi,
+                clip_denoised=clip_denoised,
+            )
+        else:
+            # DDPM full sampling
+            for i in tqdm(
+                reversed(range(0, t)), desc="interpolation sample time step", total=t
+            ):
+                x, _ = self.p_sample(
+                    x,
+                    t=i,
+                    classes=classes,
+                    cond_scale=cond_scale,
+                    rescaled_phi=rescaled_phi,
+                    clip_denoised=clip_denoised,
+                )  # Reverse diffusion to get the interpolated sample
+
+        return x
+
+    @torch.no_grad()
+    def _interpolate_ddim(
+        self,
+        x,
+        start_t,
+        classes,
+        sampling_timesteps,
+        ddim_sampling_eta=None,
+        cond_scale=1.0,
+        rescaled_phi=0.7,
+        clip_denoised=False,
+    ):
+        """DDIM sampling for interpolation, starting from a given noisy sample.
+
+        Args:
+            x: the noisy interpolated sample at timestep start_t
+            start_t: the starting timestep
+            classes: the classes
+            sampling_timesteps: number of DDIM sampling steps
+            ddim_sampling_eta: eta parameter for DDIM sampling
+            cond_scale: classifier-free guidance scale
+            rescaled_phi: CFG++ rescaling factor
+            clip_denoised: whether to clamp predicted x0 to [-1, 1]
+        Returns:
+            the denoised interpolated sample
+        """
+        batch, device = x.shape[0], x.device
+        eta = self.ddim_sampling_eta if ddim_sampling_eta is None else ddim_sampling_eta
+
+        # Build a descending integer schedule from start_t to 0
+        times = torch.linspace(
+            0,
+            start_t,
+            steps=sampling_timesteps,
+            device=device,
+            dtype=torch.long,
+        )
+        times = torch.unique_consecutive(times)  # avoid duplicates
+        times = torch.flip(times, dims=[0])
+        times = torch.cat([times, times.new_tensor([-1])])  # sentinel for final x0
+        time_pairs = list(zip(times[:-1].tolist(), times[1:].tolist()))
+
+        x_start = None
+
+        for time, time_next in tqdm(time_pairs, desc="DDIM interpolation sampling"):
+            time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
+            pred_noise, x_start = self.model_predictions(
+                x,
+                time_cond,
+                classes,
+                cond_scale=cond_scale,
+                rescaled_phi=rescaled_phi,
+                clip_x_start=clip_denoised,
+            )
+            if time_next < 0:
+                x = x_start
+                continue
+
+            alpha = self.alphas_cumprod[time]
+            alpha_next = self.alphas_cumprod[time_next]
+            sigma = (
+                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+            )
+            c = (1 - alpha_next - sigma**2).sqrt()
+            noise = torch.randn_like(x)
+            x = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
 
         return x
     
+    @staticmethod
     @torch.no_grad()
     def slerp(x1, x2, lam, eps=1e-8):
         """
-        helper function: Spherical linear interpolation between two samples.
+        Spherical linear interpolation between two samples.
+        
+        Args:
+            x1: first sample tensor
+            x2: second sample tensor
+            lam: interpolation weight (0 = x1, 1 = x2)
+            eps: small epsilon for numerical stability
+        Returns:
+            interpolated sample using spherical linear interpolation
         """
         x1n = x1 / (x1.norm(dim=-1, keepdim=True) + eps)
         x2n = x2 / (x2.norm(dim=-1, keepdim=True) + eps)
