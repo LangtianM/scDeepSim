@@ -4,17 +4,14 @@ Utility functions for scDeepSim project.
 
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Union, Tuple, Optional
+from typing import Union, Tuple, Optional, List, Sequence
 import umap
 
 
 def compare_umap(
-    data1: Union[np.ndarray, list],
-    data2: Union[np.ndarray, list],
-    labels1: Optional[Union[np.ndarray, list]] = None,
-    labels2: Optional[Union[np.ndarray, list]] = None,
-    title1: str = "Dataset 1",
-    title2: str = "Dataset 2",
+    data_list: Sequence[Union[np.ndarray, list]],
+    labels_list: Optional[Sequence[Optional[Union[np.ndarray, list]]]] = None,
+    title_list: Optional[Sequence[str]] = None,
     n_neighbors: int = 15,
     min_dist: float = 0.1,
     metric: str = "euclidean",
@@ -25,27 +22,22 @@ def compare_umap(
     s: int = 10,
     save_path: Optional[str] = None,
     dpi: int = 300,
-) -> Tuple[np.ndarray, np.ndarray, plt.Figure]:
+) -> Tuple[List[np.ndarray], plt.Figure]:
     """
-    Compare two datasets using UMAP visualization with consistent dimensionality reduction.
+    Compare multiple datasets using UMAP visualization with consistent dimensionality reduction.
 
-    This function concatenates two datasets, applies UMAP transformation to ensure
-    consistent dimensionality reduction, then creates side-by-side visualizations.
+    This function concatenates all datasets, applies UMAP transformation once (so all
+    datasets share the same embedding space), then creates a 1×N panel visualization.
 
     Parameters
     ----------
-    data1 : array-like, shape (n_samples1, n_features)
-        First dataset to visualize.
-    data2 : array-like, shape (n_samples2, n_features)
-        Second dataset to visualize.
-    labels1 : array-like, shape (n_samples1,), optional
-        Labels for coloring points in the first dataset.
-    labels2 : array-like, shape (n_samples2,), optional
-        Labels for coloring points in the second dataset.
-    title1 : str, default="Dataset 1"
-        Title for the first subplot.
-    title2 : str, default="Dataset 2"
-        Title for the second subplot.
+    data_list : sequence of array-like
+        List of datasets, each with shape (n_samples_i, n_features).
+    labels_list : sequence of array-like or None, optional
+        List of label arrays aligned with `data_list`. Each element can be None.
+        If None, all datasets are plotted without labels.
+    title_list : sequence of str, optional
+        Titles aligned with `data_list`. If None, uses "Dataset 1..N".
     n_neighbors : int, default=15
         Number of neighbors for UMAP.
     min_dist : float, default=0.1
@@ -69,43 +61,71 @@ def compare_umap(
 
     Returns
     -------
-    embedding1 : np.ndarray, shape (n_samples1, 2)
-        UMAP embedding for the first dataset.
-    embedding2 : np.ndarray, shape (n_samples2, 2)
-        UMAP embedding for the second dataset.
+    embeddings : list of np.ndarray
+        List of UMAP embeddings, each with shape (n_samples_i, 2).
     fig : matplotlib.figure.Figure
         The generated figure object.
 
     Examples
     --------
-    >>> data1 = np.random.randn(100, 50)
-    >>> data2 = np.random.randn(150, 50)
-    >>> emb1, emb2, fig = compare_umap(data1, data2)
+    >>> datasets = [np.random.randn(100, 50), np.random.randn(150, 50)]
+    >>> labels = [np.random.randint(0, 3, size=100), np.random.randint(0, 3, size=150)]
+    >>> titles = ["A", "B"]
+    >>> embs, fig = compare_umap(datasets, labels, titles)
     >>> plt.show()
     """
-    # Convert to numpy arrays
-    data1 = np.asarray(data1)
-    data2 = np.asarray(data2)
+    if data_list is None or len(data_list) == 0:
+        raise ValueError("data_list must be a non-empty sequence of datasets")
 
-    # Validate input shapes
-    if data1.ndim != 2 or data2.ndim != 2:
-        raise ValueError("Both data1 and data2 must be 2D arrays")
+    datasets: List[np.ndarray] = [np.asarray(d) for d in data_list]
 
-    if data1.shape[1] != data2.shape[1]:
-        raise ValueError(
-            f"Feature dimensions must match: data1 has {data1.shape[1]} features, "
-            f"data2 has {data2.shape[1]} features"
-        )
+    # Validate input shapes and feature dims
+    if any(ds.ndim != 2 for ds in datasets):
+        raise ValueError("All datasets in data_list must be 2D arrays")
 
-    n_samples1 = data1.shape[0]
+    n_features = datasets[0].shape[1]
+    for i, ds in enumerate(datasets):
+        if ds.shape[1] != n_features:
+            raise ValueError(
+                f"Feature dimensions must match across datasets: dataset 0 has {n_features} "
+                f"features, dataset {i} has {ds.shape[1]} features"
+            )
+
+    # Normalize labels_list
+    if labels_list is None:
+        norm_labels: List[Optional[np.ndarray]] = [None for _ in datasets]
+    else:
+        if len(labels_list) != len(datasets):
+            raise ValueError("labels_list must have the same length as data_list")
+        norm_labels = []
+        for i, (ds, lab) in enumerate(zip(datasets, labels_list)):
+            if lab is None:
+                norm_labels.append(None)
+                continue
+            lab_arr = np.asarray(lab)
+            if lab_arr.shape[0] != ds.shape[0]:
+                raise ValueError(
+                    f"Labels length mismatch for dataset {i}: got {lab_arr.shape[0]} labels, "
+                    f"but dataset has {ds.shape[0]} samples"
+                )
+            norm_labels.append(lab_arr)
+
+    # Normalize title_list
+    if title_list is None:
+        titles: List[str] = [f"Dataset {i+1}" for i in range(len(datasets))]
+    else:
+        if len(title_list) != len(datasets):
+            raise ValueError("title_list must have the same length as data_list")
+        titles = [str(t) for t in title_list]
 
     # Concatenate datasets for consistent UMAP transformation
-    data_combined = np.vstack([data1, data2])
+    sizes = [ds.shape[0] for ds in datasets]
+    data_combined = np.vstack(datasets)
 
     # Perform UMAP on combined data
     print(
         f"Performing UMAP on combined dataset ({data_combined.shape[0]} samples, "
-        f"{data_combined.shape[1]} features)..."
+        f"{data_combined.shape[1]} features) across {len(datasets)} datasets..."
     )
 
     reducer = umap.UMAP(
@@ -119,31 +139,40 @@ def compare_umap(
     embedding_combined = reducer.fit_transform(data_combined)
 
     # Split embeddings back into original datasets
-    embedding1 = embedding_combined[:n_samples1]
-    embedding2 = embedding_combined[n_samples1:]
+    embeddings: List[np.ndarray] = []
+    start = 0
+    for n in sizes:
+        embeddings.append(embedding_combined[start : start + n])
+        start += n
 
     print("UMAP completed. Generating visualizations...")
 
-    # Create side-by-side visualizations
-    fig = _create_comparison_plot(
-        embedding1=embedding1,
-        embedding2=embedding2,
-        labels1=labels1,
-        labels2=labels2,
-        title1=title1,
-        title2=title2,
-        figsize=figsize,
-        cmap=cmap,
-        alpha=alpha,
-        s=s,
-    )
+    # Create 1×N panel visualization
+    per_panel_w = figsize[0] / 2.0
+    multi_figsize = (max(per_panel_w * len(datasets), 6.0), figsize[1])
+    fig, axes = plt.subplots(1, len(datasets), figsize=multi_figsize)
+    if len(datasets) == 1:
+        axes = [axes]
+
+    for i, (emb, lab, title) in enumerate(zip(embeddings, norm_labels, titles)):
+        plot_umap(
+            embedding=emb,
+            labels=lab,
+            title=title,
+            ax=axes[i],
+            cmap=cmap,
+            alpha=alpha,
+            s=s,
+        )
+
+    plt.tight_layout()
 
     # Save figure if path is provided
     if save_path is not None:
         fig.savefig(save_path, dpi=dpi, bbox_inches="tight")
         print(f"Figure saved to {save_path}")
 
-    return embedding1, embedding2, fig
+    return embeddings, fig
 
 
 def _create_comparison_plot(
