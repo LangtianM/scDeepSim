@@ -418,33 +418,63 @@ class GaussianDiffusion(nn.Module):
         cond_scale=1.0,
         rescaled_phi=0.7,
         clip_denoised: bool = False,
+        timestep_schedule: str = "linear",  # NEW
     ):
         """Sample from the posterior distribution of x_{t-1} | x_t using DDIM."""
+
         batch, device = shape[0], self.betas.device
         total_timesteps = self.num_timesteps
         eta = self.ddim_sampling_eta if ddim_sampling_eta is None else ddim_sampling_eta
-        # Build a descending integer schedule without rounding collisions.
-        times = torch.linspace(
-            0,
-            total_timesteps - 1,
-            steps=sampling_timesteps,
-            device=device,
-            dtype=torch.long,
-        )
-        times = torch.unique_consecutive(
-            times
-        )  # avoid duplicates when steps do not divide T
+
+        # -------------------------------------------------
+        # Build timestep schedule
+        # -------------------------------------------------
+        if timestep_schedule == "linear":
+            times = torch.linspace(
+                0,
+                total_timesteps - 1,
+                steps=sampling_timesteps,
+                device=device,
+            )
+
+        elif timestep_schedule == "quadratic":
+            # Dense near t=0, sparse near t=T
+            times = torch.linspace(
+                0,
+                math.sqrt(total_timesteps - 1),
+                steps=sampling_timesteps,
+                device=device,
+            ) ** 2
+
+        elif timestep_schedule == "cosine":
+            # Cosine spacing in [0, 1]
+            s = torch.linspace(0, 1, steps=sampling_timesteps, device=device)
+            times = 0.5 * (1 - torch.cos(math.pi * s)) * (total_timesteps - 1)
+
+        else:
+            raise ValueError(
+                f"Unknown timestep_schedule: {timestep_schedule}. "
+                "Choose from ['linear', 'quadratic', 'cosine']."
+            )
+
+        # Convert to integer timesteps
+        times = times.long()
+        times = torch.unique_consecutive(times)
         times = torch.flip(times, dims=[0])
-        times = torch.cat(
-            [times, times.new_tensor([-1])]
-        )  # sentinel for final x0 write
+
+        # Sentinel for final x0 write
+        times = torch.cat([times, times.new_tensor([-1])])
         time_pairs = list(zip(times[:-1].tolist(), times[1:].tolist()))
 
+        # -------------------------------------------------
+        # DDIM sampling loop
+        # -------------------------------------------------
         x = torch.randn(shape, device=device)
         x_start = None
 
         for time, time_next in tqdm(time_pairs, desc="DDIM sampling"):
             time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
+
             pred_noise, x_start = self.model_predictions(
                 x,
                 time_cond,
@@ -453,20 +483,25 @@ class GaussianDiffusion(nn.Module):
                 rescaled_phi=rescaled_phi,
                 clip_x_start=clip_denoised,
             )
+
             if time_next < 0:
                 x = x_start
                 continue
 
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
+
             sigma = (
-                eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
+                eta
+                * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             )
             c = (1 - alpha_next - sigma**2).sqrt()
+
             noise = torch.randn_like(x)
             x = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
 
         return x
+
 
     @torch.no_grad()
     def sample(
@@ -478,6 +513,7 @@ class GaussianDiffusion(nn.Module):
         shape=None,
         ddim_sampling_eta=None,
         clip_denoised: bool = False,
+        timestep_schedule: str = "cosine"
     ):
         """
         Sample from the diffusion model.
@@ -489,6 +525,7 @@ class GaussianDiffusion(nn.Module):
             shape: optional tuple (batch_size, input_dim); required when classes is None
             ddim_sampling_eta: eta parameter for DDIM sampling (None = use default)
             clip_denoised: whether to clamp predicted x0 to [-1, 1]
+            timestep_schedule: the schedule of the timesteps
         """
         if shape is None:
             if classes is None:
@@ -515,6 +552,7 @@ class GaussianDiffusion(nn.Module):
                 cond_scale=cond_scale,
                 rescaled_phi=rescaled_phi,
                 clip_denoised=clip_denoised,
+                timestep_schedule=timestep_schedule,
             )
         else:
             raise ValueError(f"Invalid sampling_timesteps: {sampling_timesteps}")

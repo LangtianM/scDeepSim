@@ -206,6 +206,7 @@ class LightningDiffusion(pl.LightningModule):
         ddim_sampling_eta: Optional[float] = None,
         clip_denoised: bool = False,
         rescaled_phi: float = 0.7,
+        timestep_schedule: str = "cosine",
     ) -> torch.Tensor:
         """
         Generate samples from the diffusion model.
@@ -221,6 +222,7 @@ class LightningDiffusion(pl.LightningModule):
             clip_denoised: whether to clamp predicted x0 to [-1, 1]
         Returns:
             generated samples [num_samples, input_dim]
+            timestep_schedule: the schedule of the ddim fast sampling timesteps, choices: "linear", "quadratic", "cosine", default is "cosine"
         """
         use_ema = use_ema if use_ema is not None else self.hparams.use_ema
         
@@ -243,6 +245,7 @@ class LightningDiffusion(pl.LightningModule):
                 ddim_sampling_eta=ddim_sampling_eta,
                 clip_denoised=clip_denoised,
                 shape=(num_samples, self.hparams.input_dim),
+                timestep_schedule=timestep_schedule,
             )
         finally:
             self.diffusion.model = original_model
