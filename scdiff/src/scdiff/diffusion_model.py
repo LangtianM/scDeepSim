@@ -422,10 +422,15 @@ class DenoisingUNet(nn.Module):
             update = orthogonal + parallel * keep_parallel_frac
 
         scaled_logits = null_logits + update * cond_scale
+        
+        if rescaled_phi == 0.:
+            return scaled_logits, null_logits
 
         std_fn = partial(
-            torch.std, dim=tuple[int, ...](range(1, scaled_logits.ndim)), keepdim=True
+            torch.std, dim=tuple(range(1, scaled_logits.ndim)), keepdim=True
         )
+        
+        
         rescaled_logits = scaled_logits * (
             std_fn(logits) / (std_fn(scaled_logits) + 1e-8)
         )
