@@ -2,7 +2,7 @@
 
 ## Overview
 
-This repository contains research code for **controllable diffusion models for single-cell data simulation**.
+This repository contains research code for the ongoing project about **controllable diffusion models for single-cell data simulation**.
 
 A Python package **`scdiff`** (located under `./scdiff/`), is built for convenient and reproducible research experiments. It provides a unified interface for latent diffusion modeling and controlled data simulation.
 

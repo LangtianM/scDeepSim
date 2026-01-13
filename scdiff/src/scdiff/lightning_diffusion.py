@@ -206,7 +206,7 @@ class LightningDiffusion(pl.LightningModule):
         ddim_sampling_eta: Optional[float] = None,
         clip_denoised: bool = False,
         rescaled_phi: float = 0.7,
-        timestep_schedule: str = "cosine",
+        timestep_schedule: str = "linear",
     ) -> torch.Tensor:
         """
         Generate samples from the diffusion model.
