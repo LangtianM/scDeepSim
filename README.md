@@ -28,7 +28,6 @@ python -m pip install -e "./scdiff"
   - `transform.py`: preprocessing scalers
   - `plot.py`: UMAP plotting helpers
   - `control.py`: controlled data simulation utilities
-- `scdiff/tests/`: unit tests for diffusion components
 - `experiments/`: research notebooks
 
 ## License & attribution
