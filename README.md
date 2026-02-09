@@ -4,22 +4,22 @@
 
 This repository contains research code for the ongoing project about **controllable diffusion models for single-cell data simulation**.
 
-A Python package **`scdiff`** (located under `./scdiff/`), is built for convenient and reproducible research experiments. It provides a unified interface for latent diffusion modeling and controlled data simulation.
+A Python package **`scdeepsim`** (located under `./scdeepsim/`), is built for convenient and reproducible research experiments. It provides a unified interface for latent diffusion modeling and controlled data simulation.
 
 Notebooks under `./experiments/` show example analyses.
 
 ## Installation
 
-The package is defined by `./scdiff/pyproject.toml`. To install from the repository root:
+The package is defined by `./scdeepsim/pyproject.toml`. To install from the repository root:
 
 ```bash
 python -m pip install -U pip
-python -m pip install -e "./scdiff"
+python -m pip install -e "./scdeepsim"
 ```
 
 ## Project layout
 
-- `scdiff/src/scdiff/`: package source
+- `scdeepsim/src/scdeepsim/`: package source
   - `diffusion_model.py`: denoising backbone (MLP U-Net style) + classifier-free guidance logic
   - `diffusion_core.py`: diffusion schedules, losses, DDPM/DDIM sampling
   - `lightning_diffusion.py`: Lightning training loop + sampling convenience

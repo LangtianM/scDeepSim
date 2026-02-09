@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: scdeepsim
+Version: 0.1.0
+Summary: Single-cell diffusion models (packaged from scDeepSim/src).
+Requires-Python: >=3.10
+Requires-Dist: torch
+Requires-Dist: pytorch-lightning
+Requires-Dist: einops
+Requires-Dist: tqdm
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: scikit-learn
+Requires-Dist: matplotlib
+Requires-Dist: umap-learn
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"

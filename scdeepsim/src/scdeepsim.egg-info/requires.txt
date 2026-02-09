@@ -1,0 +1,12 @@
+torch
+pytorch-lightning
+einops
+tqdm
+numpy
+scipy
+scikit-learn
+matplotlib
+umap-learn
+
+[dev]
+pytest

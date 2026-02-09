@@ -16,10 +16,10 @@ from pytorch_lightning.callbacks import EarlyStopping
 import warnings
 import time
 
-from scdiff.ae import LightningAE
-from scdiff.lightning_diffusion import LightningDiffusion
-from scdiff.dataset import ScDataModule
-from scdiff.quality import knn_discriminability
+from scdeepsim.ae import LightningAE
+from scdeepsim.lightning_diffusion import LightningDiffusion
+from scdeepsim.dataset import ScDataModule
+from scdeepsim.quality import knn_discriminability
 from scdesigner.simulators import NegBinCopula
 
 # Suppress warnings for cleaner output

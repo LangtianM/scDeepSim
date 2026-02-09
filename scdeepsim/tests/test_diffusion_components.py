@@ -1,6 +1,6 @@
 import torch
-from scdiff.diffusion_model import DenoisingUNet  # noqa: E402
-from scdiff.diffusion_core import GaussianDiffusion  # noqa: E402
+from scdeepsim.diffusion_model import DenoisingUNet  # noqa: E402
+from scdeepsim.diffusion_core import GaussianDiffusion  # noqa: E402
 
 
 def _make_unet(
