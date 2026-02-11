@@ -1,19 +1,12 @@
 """
 Extensible simulation quality comparison framework.
 
-This script provides a flexible benchmarking system for comparing different
-single-cell simulation methods across datasets, gene counts, and cell counts.
-
-Supported simulators:
-- NegBinCopula: Copula-based negative binomial simulator
-- AE+Diffusion: Autoencoder with diffusion model
-- scVI-posterior: scVI with posterior_predictive_sample
-- scVI-prior: scVI with custom prior sampling
-
-Features:
+This script compares different single-cell simulation methods with support for:
 - Configurable datasets, n_cells, n_genes via command-line arguments
 - Intelligent caching of trained models and generated samples
-- Extensible architecture for adding new simulators
+- Multiple simulators: NegBinCopula, AE+Diffusion, scVI-Posterior, scVI-Prior
+
+All methods are evaluated in normalized log1p space using knn_discriminability.
 """
 
 import numpy as np
@@ -29,16 +22,15 @@ import argparse
 import os
 import pickle
 import json
-from pathlib import Path
 from datetime import datetime
-import scvi
+
 from scdeepsim.ae import LightningAE
 from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.quality import knn_discriminability
 from scdesigner.simulators import NegBinCopula
 
-# Suppress warnings for cleaner output
+import scvi
 warnings.filterwarnings('ignore')
 
 
@@ -46,127 +38,130 @@ warnings.filterwarnings('ignore')
 # Path Management Utilities
 # ============================================================================
 
-def create_experiment_dirs(base_dir, dataset_name, n_cells, n_genes):
+def get_experiment_dir(base_dir, dataset, n_cells, n_genes):
+    """Get directory for this experiment configuration."""
+    return os.path.join(base_dir, dataset, f"{n_cells}_cells", f"{n_genes}_genes")
+
+
+def ensure_dirs(exp_dir):
+    """Create models and samples directories."""
+    os.makedirs(os.path.join(exp_dir, 'models'), exist_ok=True)
+    os.makedirs(os.path.join(exp_dir, 'samples'), exist_ok=True)
+    return {
+        'models': os.path.join(exp_dir, 'models'),
+        'samples': os.path.join(exp_dir, 'samples')
+    }
+
+
+# ============================================================================
+# Simulator Test Functions
+# ============================================================================
+
+def test_negbincopula(muris_subset, paths, processed_muris):
     """
-    Create hierarchical directory structure for experiment outputs.
+    Test NegBinCopula approach on raw count data with caching.
     
     Args:
-        base_dir: Base output directory
-        dataset_name: Name of the dataset
-        n_cells: Number of cells
-        n_genes: Number of genes
+        muris_subset: AnnData object with raw counts
+        paths: Dictionary with 'models' and 'samples' paths
+        processed_muris: Preprocessed (normalized log1p) data for comparison
         
     Returns:
-        dict: Paths for models, samples, and processed data
+        tuple: (auc, accuracy) scores
     """
-    exp_dir = os.path.join(base_dir, dataset_name, f"{n_cells}_cells", f"{n_genes}_genes")
+    print(f"\n=== Testing NegBinCopula ===")
+    start_time = time.time()
     
-    paths = {
-        'base': exp_dir,
-        'models': os.path.join(exp_dir, 'models'),
-        'samples': os.path.join(exp_dir, 'samples'),
-        'processed': os.path.join(exp_dir, 'processed_data.h5ad')
-    }
+    model_path = os.path.join(paths['models'], 'negbincopula.pkl')
+    samples_path = os.path.join(paths['samples'], 'negbincopula_samples.h5ad')
     
-    # Create directories
-    os.makedirs(paths['models'], exist_ok=True)
-    os.makedirs(paths['samples'], exist_ok=True)
+    # Load or train model
+    # if os.path.exists(model_path):
+    #     print("Loading cached NegBinCopula model...")
+    #     with open(model_path, 'rb') as f:
+    #         nbc = pickle.load(f)
+    # else:
+    print("Training NegBinCopula model...")
+    nbc = NegBinCopula(mean_formula="~ celltype")
+    nbc.fit(muris_subset, max_epochs=300, top_k=100)
+    # try:
+    #     with open(model_path, 'wb') as f:
+    #         pickle.dump(nbc, f)
+    #     print(f"Model saved to: {model_path}")
+    # except Exception as e:
+    #     print(f"Warning: Could not save NegBinCopula model: {e}")
     
-    return paths
-
-
-# ============================================================================
-# NegBinCopula Simulator
-# ============================================================================
-
-class NegBinCopulaSimulator:
-    """NegBinCopula simulator with caching support."""
-    
-    @staticmethod
-    def get_model_path(model_dir):
-        return os.path.join(model_dir, 'negbincopula.pkl')
-    
-    @staticmethod
-    def get_samples_path(samples_dir):
-        return os.path.join(samples_dir, 'negbincopula_samples.h5ad')
-    
-    @staticmethod
-    def train(data, model_dir):
-        """Train NegBinCopula model on raw counts."""
-        print("Training NegBinCopula model...")
-        nbc = NegBinCopula(mean_formula="~ celltype")
-        nbc.fit(data, max_epochs=300, top_k=100)
-        
-        # Save model
-        model_path = NegBinCopulaSimulator.get_model_path(model_dir)
-        with open(model_path, 'wb') as f:
-            pickle.dump(nbc, f)
-        print(f"Model saved to: {model_path}")
-        
-        return nbc
-    
-    @staticmethod
-    def load(model_dir):
-        """Load trained NegBinCopula model."""
-        model_path = NegBinCopulaSimulator.get_model_path(model_dir)
-        print(f"Loading NegBinCopula model from: {model_path}")
-        with open(model_path, 'rb') as f:
-            nbc = pickle.load(f)
-        return nbc
-    
-    @staticmethod
-    def sample(model, data, n_samples, samples_dir):
-        """Generate samples from NegBinCopula model."""
-        print("Generating NegBinCopula samples...")
-        samples = model.sample(obs=data.obs)
-        
-        # Save samples
-        samples_path = NegBinCopulaSimulator.get_samples_path(samples_dir)
-        samples.write_h5ad(samples_path)
+    # Load or generate samples
+    if os.path.exists(samples_path):
+        print("Loading cached samples...")
+        nbc_samples = sc.read_h5ad(samples_path)
+    else:
+        print("Generating samples...")
+        nbc_samples = nbc.sample(obs=muris_subset.obs)
+        nbc_samples.write_h5ad(samples_path)
         print(f"Samples saved to: {samples_path}")
+    
+    # Preprocess simulated data for comparison (normalize and log1p transform)
+    processed_nbc = nbc_samples.copy()
+    sc.pp.normalize_total(processed_nbc, target_sum=10000)
+    sc.pp.log1p(processed_nbc)
+    
+    # Evaluate discriminability
+    print("Evaluating discriminability...")
+    auc, acc = knn_discriminability(
+        processed_muris.X, 
+        processed_nbc.X,
+        seed=42,
+        n_neighbors=10
+    )
+    
+    elapsed = time.time() - start_time
+    print(f"NegBinCopula - AUC: {auc:.4f}, Accuracy: {acc:.4f} (Time: {elapsed:.1f}s)")
+    return auc, acc
+
+
+def test_ae_diffusion(muris_subset, paths, processed_muris):
+    """
+    Test AE+Diffusion approach on normalized log1p-transformed data with caching.
+    
+    Args:
+        muris_subset: AnnData object with raw counts
+        paths: Dictionary with 'models' and 'samples' paths
+        processed_muris: Preprocessed (normalized log1p) data for comparison
         
-        return samples
+    Returns:
+        tuple: (auc, accuracy) scores
+    """
+    print(f"\n=== Testing AE+Diffusion ===")
+    start_time = time.time()
     
-    @staticmethod
-    def load_samples(samples_dir):
-        """Load pre-generated samples."""
-        samples_path = NegBinCopulaSimulator.get_samples_path(samples_dir)
-        print(f"Loading NegBinCopula samples from: {samples_path}")
-        return sc.read_h5ad(samples_path)
-
-
-# ============================================================================
-# AE+Diffusion Simulator
-# ============================================================================
-
-class AEDiffusionSimulator:
-    """AE+Diffusion simulator with caching support."""
+    ae_path = os.path.join(paths['models'], 'ae_model.ckpt')
+    diff_path = os.path.join(paths['models'], 'diffusion_model.ckpt')
+    scaler_path = os.path.join(paths['models'], 'scaler.pkl')
+    samples_path = os.path.join(paths['samples'], 'ae_diffusion_samples.npy')
     
-    @staticmethod
-    def get_model_paths(model_dir):
-        return {
-            'ae': os.path.join(model_dir, 'ae_model.ckpt'),
-            'diffusion': os.path.join(model_dir, 'diffusion_model.ckpt'),
-            'scaler': os.path.join(model_dir, 'scaler.pkl')
-        }
+    # Check if all models exist
+    models_exist = (os.path.exists(ae_path) and 
+                    os.path.exists(diff_path) and 
+                    os.path.exists(scaler_path))
     
-    @staticmethod
-    def get_samples_path(samples_dir):
-        return os.path.join(samples_dir, 'ae_diffusion_samples.npy')
-    
-    @staticmethod
-    def train(data, model_dir):
-        """Train AE+Diffusion models on normalized log1p data."""
-        print("Training AE+Diffusion models...")
+    if models_exist:
+        print("Loading cached models...")
+        ae = LightningAE.load_from_checkpoint(ae_path)
+        diffusion = LightningDiffusion.load_from_checkpoint(diff_path)
+        with open(scaler_path, 'rb') as f:
+            scaler = pickle.load(f)
+    else:
+        print("Training models...")
         
         # Preprocess: normalize and log1p transform
         print("  Preprocessing data (normalize + log1p)...")
-        processed_data = data.copy()
+        processed_data = muris_subset.copy()
         sc.pp.normalize_total(processed_data, target_sum=10000)
         sc.pp.log1p(processed_data)
         
         # Create data module
-        data_module = ScDataModule(processed_data, "celltype", "LabelEncoder")
+        murisData = ScDataModule(processed_data, "celltype", "LabelEncoder")
         
         # Train Autoencoder
         print("  Training Autoencoder...")
@@ -175,7 +170,7 @@ class AEDiffusionSimulator:
             enc_hidden=[512, 512, 512]
         )
         
-        trainer = pl.Trainer(
+        ae_trainer = pl.Trainer(
             max_epochs=100,
             accelerator='auto',
             enable_progress_bar=False,
@@ -183,7 +178,10 @@ class AEDiffusionSimulator:
             logger=False,
             callbacks=[EarlyStopping(monitor='val_loss', patience=10, mode='min')]
         )
-        trainer.fit(ae, data_module)
+        ae_trainer.fit(ae, murisData)
+        
+        # Save AE model immediately after training
+        ae_trainer.save_checkpoint(ae_path)
         
         # Extract latent representations
         ae.eval()
@@ -191,7 +189,7 @@ class AEDiffusionSimulator:
             X_tensor = torch.FloatTensor(processed_data.X).to(ae.device)
             X_encoded = ae.encode(X_tensor).cpu().numpy()
         
-        # Standardize the encoded representations
+        # Standardize the encoded representations before diffusion
         print("  Standardizing latent representations...")
         scaler = StandardScaler()
         X_encoded_scaled = scaler.fit_transform(X_encoded)
@@ -213,7 +211,7 @@ class AEDiffusionSimulator:
             ema_decay=0.999
         )
         
-        trainer = pl.Trainer(
+        diffusion_trainer = pl.Trainer(
             max_epochs=200,
             accelerator='auto',
             enable_progress_bar=False,
@@ -221,53 +219,33 @@ class AEDiffusionSimulator:
             logger=False,
             callbacks=[EarlyStopping(monitor='val_loss', patience=20, mode='min')]
         )
-        trainer.fit(diffusion, latent_dm)
+        diffusion_trainer.fit(diffusion, latent_dm)
         
-        # Save models
-        paths = AEDiffusionSimulator.get_model_paths(model_dir)
-        trainer.save_checkpoint(paths['ae'])
-        trainer.save_checkpoint(paths['diffusion'])
-        with open(paths['scaler'], 'wb') as f:
+        # Save diffusion model and scaler
+        diffusion_trainer.save_checkpoint(diff_path)
+        with open(scaler_path, 'wb') as f:
             pickle.dump(scaler, f)
-        print(f"Models saved to: {model_dir}")
-        
-        return {'ae': ae, 'diffusion': diffusion, 'scaler': scaler}
+        print(f"Models saved to: {paths['models']}")
     
-    @staticmethod
-    def load(model_dir):
-        """Load trained AE+Diffusion models."""
-        print(f"Loading AE+Diffusion models from: {model_dir}")
-        paths = AEDiffusionSimulator.get_model_paths(model_dir)
-        
-        # Load models
-        ae = LightningAE.load_from_checkpoint(paths['ae'])
-        diffusion = LightningDiffusion.load_from_checkpoint(paths['diffusion'])
-        with open(paths['scaler'], 'rb') as f:
-            scaler = pickle.load(f)
-        
-        return {'ae': ae, 'diffusion': diffusion, 'scaler': scaler}
-    
-    @staticmethod
-    def sample(models, data, n_samples, samples_dir):
-        """Generate samples from AE+Diffusion models."""
-        print("Generating AE+Diffusion samples...")
-        
-        ae = models['ae']
-        diffusion = models['diffusion']
-        scaler = models['scaler']
+    # Check if samples exist
+    if os.path.exists(samples_path):
+        print("Loading cached samples...")
+        decoded_samples = np.load(samples_path)
+    else:
+        print("Generating samples...")
         
         # Sample from diffusion model
         diffusion.eval()
         with torch.no_grad():
             latent_samples = diffusion.sample(
-                num_samples=n_samples,
+                num_samples=muris_subset.n_obs,
                 sampling_timesteps=diffusion.diffusion.num_timesteps,
                 ddim_sampling_eta=0.0,
                 use_ema=True,
                 clip_denoised=False
             )
             
-            # Inverse transform and decode
+            # Inverse transform the standardized samples
             latent_samples_cpu = latent_samples.cpu().numpy()
             latent_samples_unscaled = scaler.inverse_transform(latent_samples_cpu)
             latent_samples_tensor = torch.FloatTensor(latent_samples_unscaled).to(ae.device)
@@ -275,402 +253,192 @@ class AEDiffusionSimulator:
             # Decode samples back to gene expression space
             decoded_samples = ae.decode(latent_samples_tensor).cpu().numpy()
         
-        # Save samples
-        samples_path = AEDiffusionSimulator.get_samples_path(samples_dir)
         np.save(samples_path, decoded_samples)
         print(f"Samples saved to: {samples_path}")
-        
-        return decoded_samples
     
-    @staticmethod
-    def load_samples(samples_dir):
-        """Load pre-generated samples."""
-        samples_path = AEDiffusionSimulator.get_samples_path(samples_dir)
-        print(f"Loading AE+Diffusion samples from: {samples_path}")
-        return np.load(samples_path)
-
-
-# ============================================================================
-# scVI Simulators
-# ============================================================================
-
-class scVISimulator:
-    """Base class for scVI simulators."""
-    
-    @staticmethod
-    def get_model_path(model_dir):
-        return os.path.join(model_dir, 'scvi_model')
-    
-    @staticmethod
-    def train(data, model_dir):
-        """Train scVI model on raw counts."""
-        print("Training scVI model...")
-        scvi.model.SCVI.setup_anndata(data, categorical_covariate_keys=['celltype'])
-        model = scvi.model.SCVI(data)
-        model.train()
-        
-        # Save model
-        model_path = scVISimulator.get_model_path(model_dir)
-        model.save(model_path, overwrite=True)
-        print(f"scVI model saved to: {model_path}")
-        
-        return model
-    
-    @staticmethod
-    def load(model_dir):
-        """Load trained scVI model."""
-        
-        model_path = scVISimulator.get_model_path(model_dir)
-        print(f"Loading scVI model from: {model_path}")
-        return scvi.model.SCVI.load(model_path)
-
-
-class scVIPosteriorSimulator(scVISimulator):
-    """scVI with posterior_predictive_sample."""
-    
-    @staticmethod
-    def get_samples_path(samples_dir):
-        return os.path.join(samples_dir, 'scvi_posterior_samples.npy')
-    
-    @staticmethod
-    def sample(model, data, n_samples, samples_dir):
-        """Generate samples using posterior_predictive_sample."""
-        print("Generating scVI posterior samples...")
-        
-        # Use scVI's posterior predictive sampling
-        samples = model.posterior_predictive_sample(n_samples=n_samples)
-        
-        # Save samples
-        samples_path = scVIPosteriorSimulator.get_samples_path(samples_dir)
-        np.save(samples_path, samples)
-        print(f"Samples saved to: {samples_path}")
-        
-        return samples
-    
-    @staticmethod
-    def load_samples(samples_dir):
-        """Load pre-generated samples."""
-        samples_path = scVIPosteriorSimulator.get_samples_path(samples_dir)
-        print(f"Loading scVI posterior samples from: {samples_path}")
-        return np.load(samples_path)
-
-
-class scVIPriorSimulator(scVISimulator):
-    """scVI with custom prior sampling."""
-    
-    @staticmethod
-    def get_samples_path(samples_dir):
-        return os.path.join(samples_dir, 'scvi_prior_samples.npy')
-    
-    @staticmethod
-    def sample_from_prior(model, n_samples, data):
-        """
-        Custom prior sampling from scVI model.
-        
-        This samples from the prior distribution of the latent space
-        rather than the posterior distribution.
-        """
-        device = model.device
-        n_latent = model.get_latent_representation().shape[1]
-        z = torch.randn(n_samples, n_latent).to(device)
-        
-        obs_indices = np.random.choice(len(data), n_samples, replace=True)
-        batch_indices = torch.tensor(
-            data.obs['_scvi_batch'].values[obs_indices], dtype=torch.long
-        ).unsqueeze(1).to(device)
-        
-        labels = torch.tensor(
-            data.obs['_scvi_labels'].values[obs_indices], dtype=torch.long
-        ).unsqueeze(1).to(device)
-        
-        latent_library = model.get_latent_library_size(indices=obs_indices, give_mean=False)
-        library = torch.tensor(np.log(latent_library), dtype=torch.float32).to(device)
-        
-        model.module.eval()
-        with torch.no_grad():
-            scvi_prior_samples = model.module.generative(
-                z=z, 
-                batch_index=batch_indices, 
-                library=library,
-                y=labels
-            )
-        px = scvi_prior_samples['px']
-        return px.sample().cpu().numpy()
-    
-    @staticmethod
-    def sample(model, data, n_samples, samples_dir):
-        """Generate samples using custom prior sampling."""
-        print("Generating scVI prior samples...")
-        
-        samples = scVIPriorSimulator.sample_from_prior(model, n_samples, data)
-        
-        # Save samples
-        samples_path = scVIPriorSimulator.get_samples_path(samples_dir)
-        np.save(samples_path, samples)
-        print(f"Samples saved to: {samples_path}")
-        
-        return samples
-    
-    @staticmethod
-    def load_samples(samples_dir):
-        """Load pre-generated samples."""
-        samples_path = scVIPriorSimulator.get_samples_path(samples_dir)
-        print(f"Loading scVI prior samples from: {samples_path}")
-        return np.load(samples_path)
-
-
-# ============================================================================
-# Simulator Registry
-# ============================================================================
-
-SIMULATORS = {
-    'negbincopula': {
-        'name': 'NegBinCopula',
-        'class': NegBinCopulaSimulator,
-        'requires_raw': True,
-        'outputs_raw': True,
-    },
-    'ae_diffusion': {
-        'name': 'AE+Diffusion',
-        'class': AEDiffusionSimulator,
-        'requires_raw': True,
-        'outputs_raw': False,  # Already normalized log1p
-    },
-    'scvi_posterior': {
-        'name': 'scVI-Posterior',
-        'class': scVIPosteriorSimulator,
-        'requires_raw': True,
-        'outputs_raw': True,
-        'requires_scvi': True,
-        'shares_model_with': 'scvi_prior',
-    },
-    'scvi_prior': {
-        'name': 'scVI-Prior',
-        'class': scVIPriorSimulator,
-        'requires_raw': True,
-        'outputs_raw': True,
-        'requires_scvi': True,
-        'shares_model_with': 'scvi_posterior',
-    },
-}
-
-
-# ============================================================================
-# Main Experiment Functions
-# ============================================================================
-
-def test_simulator(simulator_key, raw_data, processed_data, paths, force_retrain=False):
-    """
-    Test a single simulator with caching support.
-    
-    Args:
-        simulator_key: Key in SIMULATORS registry
-        raw_data: Raw count AnnData
-        processed_data: Normalized log1p AnnData
-        paths: Dictionary of paths for models/samples
-        force_retrain: If True, retrain even if cached model exists
-        
-    Returns:
-        tuple: (auc, accuracy, elapsed_time)
-    """
-    sim_info = SIMULATORS[simulator_key]
-    sim_class = sim_info['class']
-    
-    print(f"\n=== Testing {sim_info['name']} ===")
-    start_time = time.time()
-    
-    # Check if scVI is required but not available
-    if sim_info.get('requires_scvi', False):
-        print(f"Skipping {sim_info['name']}: scvi-tools not installed")
-        return None, None, 0
-    
-    # Determine data to use for training
-    train_data = raw_data if sim_info['requires_raw'] else processed_data
-    
-    # Check if model exists (handle shared models for scVI)
-    shared_with = sim_info.get('shares_model_with')
-    if shared_with and simulator_key == 'scvi_prior':
-        # scvi_prior uses the same model as scvi_posterior, so check if it was already trained
-        model_exists = os.path.exists(sim_class.get_model_path(paths['models']))
-    else:
-        if hasattr(sim_class, 'get_model_paths'):
-            model_paths = sim_class.get_model_paths(paths['models'])
-            model_exists = all(os.path.exists(p) for p in model_paths.values())
-        else:
-            model_exists = os.path.exists(sim_class.get_model_path(paths['models']))
-    
-    # Train or load model
-    if model_exists and not force_retrain:
-        model = sim_class.load(paths['models'])
-    else:
-        model = sim_class.train(train_data, paths['models'])
-    
-    # Check if samples exist
-    samples_path = sim_class.get_samples_path(paths['samples'])
-    samples_exist = os.path.exists(samples_path)
-    
-    # Generate or load samples
-    if samples_exist and not force_retrain:
-        if sim_info['outputs_raw']:
-            # Load as numpy array
-            simulated_samples = sim_class.load_samples(paths['samples'])
-        else:
-            # Load as numpy array (AE+Diffusion)
-            simulated_samples = sim_class.load_samples(paths['samples'])
-    else:
-        simulated_samples = sim_class.sample(model, train_data, raw_data.n_obs, paths['samples'])
-    
-    # Preprocess samples for evaluation if they are raw counts
-    if sim_info['outputs_raw']:
-        # Convert to AnnData and normalize
-        if isinstance(simulated_samples, ad.AnnData):
-            processed_sim = simulated_samples.copy()
-        else:
-            processed_sim = ad.AnnData(simulated_samples)
-        
-        sc.pp.normalize_total(processed_sim, target_sum=10000)
-        sc.pp.log1p(processed_sim)
-        simulated_samples_processed = processed_sim.X
-    else:
-        # Already in normalized log1p space
-        simulated_samples_processed = simulated_samples
-    
-    # Evaluate discriminability
+    # Evaluate discriminability (already in normalized log1p space)
     print("Evaluating discriminability...")
     auc, acc = knn_discriminability(
-        processed_data.X,
-        simulated_samples_processed,
+        processed_muris.X,
+        decoded_samples,
         seed=42,
         n_neighbors=10
     )
     
     elapsed = time.time() - start_time
-    print(f"{sim_info['name']} - AUC: {auc:.4f}, Accuracy: {acc:.4f} (Time: {elapsed:.1f}s)")
-    
-    return auc, acc, elapsed
+    print(f"AE+Diffusion - AUC: {auc:.4f}, Accuracy: {acc:.4f} (Time: {elapsed:.1f}s)")
+    return auc, acc
 
 
-def run_experiment(args, dataset_name, n_genes):
+def test_scvi_posterior(muris_subset, paths, processed_muris):
     """
-    Run experiment for a specific gene configuration.
+    Test scVI with posterior_predictive_sample.
     
     Args:
-        args: Command-line arguments
-        dataset_name: Name of the dataset
-        n_genes: Number of genes to test
+        muris_subset: AnnData object with raw counts
+        paths: Dictionary with 'models' and 'samples' paths
+        processed_muris: Preprocessed (normalized log1p) data for comparison
         
     Returns:
-        dict: Results for all simulators
+        tuple: (auc, accuracy) scores
     """
-    print(f"\n{'='*60}")
-    print(f"Testing with {n_genes} highly variable genes")
-    print(f"{'='*60}")
+    print(f"\n=== Testing scVI-Posterior ===")
+    start_time = time.time()
     
-    # Load and preprocess data
-    print("\nLoading data...")
-    muris = sc.read_h5ad(args.data_path)
+    model_path = os.path.join(paths['models'], 'scvi_model')
+    samples_path = os.path.join(paths['samples'], 'scvi_posterior_samples.npy')
     
-    # Basic preprocessing
-    muris.var_names_make_unique()
-    sc.pp.filter_cells(muris, min_genes=10)
-    sc.pp.filter_genes(muris, min_cells=2)
+    # Load or train scVI model
+    if os.path.exists(model_path):
+        print("Loading cached scVI model...")
+        model = scvi.model.SCVI.load(model_path, adata=muris_subset)
+    else:
+        print("Training scVI model...")
+        scvi.model.SCVI.setup_anndata(muris_subset, categorical_covariate_keys=['celltype'])
+        model = scvi.model.SCVI(muris_subset)
+        model.train()
+        model.save(model_path, overwrite=True)
+        print(f"Model saved to: {model_path}")
     
-    # Randomly select cells
-    np.random.seed(42)
-    muris_subset = muris[np.random.choice(muris.n_obs, args.n_cells, replace=False)]
+    # Load or generate samples
+    if os.path.exists(samples_path):
+        print("Loading cached posterior samples...")
+        samples = np.load(samples_path)
+    else:
+        print("Generating posterior samples...")
+        samples = model.posterior_predictive_sample(n_samples=1)
+        np.save(samples_path, samples.todense())
+        print(f"Samples saved to: {samples_path}")
     
-    # Select highly variable genes
-    print(f"Selecting {n_genes} highly variable genes...")
-    sc.pp.highly_variable_genes(
-        muris_subset,
-        flavor='seurat_v3',
-        n_top_genes=n_genes
+    # Normalize samples for evaluation (samples are raw counts)
+    processed_samples = ad.AnnData(samples)
+    sc.pp.normalize_total(processed_samples, target_sum=10000)
+    sc.pp.log1p(processed_samples)
+    
+    # Evaluate discriminability
+    print("Evaluating discriminability...")
+    auc, acc = knn_discriminability(
+        processed_muris.X, 
+        processed_samples.X, 
+        seed=42, 
+        n_neighbors=10
     )
-    muris_subset = muris_subset[:, muris_subset.var['highly_variable']]
-    muris_subset = muris_subset.copy()
-    muris_subset.X = muris_subset.X.toarray()  # Convert to dense matrix
-    print(f"Data shape: {muris_subset.shape}")
     
-    # Create normalized version for comparison
-    processed_muris = muris_subset.copy()
-    sc.pp.normalize_total(processed_muris, target_sum=10000)
-    sc.pp.log1p(processed_muris)
+    elapsed = time.time() - start_time
+    print(f"scVI-Posterior - AUC: {auc:.4f}, Accuracy: {acc:.4f} (Time: {elapsed:.1f}s)")
+    return auc, acc
+
+
+def sample_from_prior(model, n_samples, data):
+    """
+    Custom prior sampling function from scVI model.
     
-    # Create experiment directories
-    paths = create_experiment_dirs(args.output_dir, dataset_name, args.n_cells, n_genes)
+    This samples from the prior distribution of the latent space
+    rather than the posterior distribution.
     
-    # Save processed data if not exists
-    if not os.path.exists(paths['processed']):
-        processed_muris.write_h5ad(paths['processed'])
-    
-    # Run all requested simulators
-    results = {
-        'n_genes': n_genes,
-        'n_cells': args.n_cells,
-        'dataset': dataset_name,
-    }
-    
-    for sim_key in args.simulators:
-        if sim_key not in SIMULATORS:
-            print(f"\nWarning: Unknown simulator '{sim_key}', skipping...")
-            continue
+    Args:
+        model: Trained scVI model
+        n_samples: Number of samples to generate
+        data: Original AnnData object
         
-        try:
-            auc, acc, elapsed = test_simulator(
-                sim_key, 
-                muris_subset, 
-                processed_muris, 
-                paths,
-                force_retrain=False
-            )
-            
-            if auc is not None:
-                results[f'{sim_key}_auc'] = auc
-                results[f'{sim_key}_acc'] = acc
-                results[f'{sim_key}_time'] = elapsed
-        except Exception as e:
-            print(f"\n!!! Error testing {sim_key}: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            print("Skipping this simulator and continuing...")
-            continue
+    Returns:
+        numpy array of sampled gene expression values (raw counts)
+    """
+    device = model.device
+    n_latent = model.get_latent_representation().shape[1]
+    z = torch.randn(n_samples, n_latent).to(device)
     
-    return results
+    obs_indices = np.random.choice(len(data), n_samples, replace=True)
+    batch_indices = torch.tensor(
+        data.obs['_scvi_batch'].values[obs_indices], dtype=torch.long
+    ).unsqueeze(1).to(device)
+    
+    labels = torch.tensor(
+        data.obs['_scvi_labels'].values[obs_indices], dtype=torch.long
+    ).unsqueeze(1).to(device)
+    
+    latent_library = model.get_latent_library_size(indices=obs_indices, give_mean=False)
+    library = torch.tensor(np.log(latent_library), dtype=torch.float32).to(device)
+    
+    model.module.eval()
+    with torch.no_grad():
+        scvi_prior_samples = model.module.generative(
+            z=z, 
+            batch_index=batch_indices, 
+            library=library,
+            y=labels
+        )
+    px = scvi_prior_samples['px']
+    return px.sample().cpu().numpy()
 
 
-def print_results_table(all_results, simulators):
-    """Print formatted results table."""
-    print(f"\n{'='*100}")
-    print("FINAL RESULTS SUMMARY")
-    print(f"{'='*100}")
+def test_scvi_prior(muris_subset, paths, processed_muris):
+    """
+    Test scVI with custom prior sampling.
     
-    # Build header
-    header = f"{'N_Genes':<10} {'N_Cells':<10}"
-    for sim_key in simulators:
-        if sim_key in SIMULATORS:
-            sim_name = SIMULATORS[sim_key]['name']
-            header += f" {sim_name + '_AUC':<15} {sim_name + '_ACC':<15}"
-    print(header)
-    print(f"{'-'*100}")
+    Args:
+        muris_subset: AnnData object with raw counts
+        paths: Dictionary with 'models' and 'samples' paths
+        processed_muris: Preprocessed (normalized log1p) data for comparison
+        
+    Returns:
+        tuple: (auc, accuracy) scores
+    """
+    print(f"\n=== Testing scVI-Prior ===")
+    start_time = time.time()
     
-    # Print results
-    for result in all_results:
-        row = f"{result['n_genes']:<10} {result['n_cells']:<10}"
-        for sim_key in simulators:
-            if sim_key in SIMULATORS:
-                auc = result.get(f'{sim_key}_auc', float('nan'))
-                acc = result.get(f'{sim_key}_acc', float('nan'))
-                if not np.isnan(auc):
-                    row += f" {auc:<15.4f} {acc:<15.4f}"
-                else:
-                    row += f" {'N/A':<15} {'N/A':<15}"
-        print(row)
+    model_path = os.path.join(paths['models'], 'scvi_model')
+    samples_path = os.path.join(paths['samples'], 'scvi_prior_samples.npy')
     
-    print(f"{'='*100}\n")
+    # Load model (should already be trained by posterior method)
+    if os.path.exists(model_path):
+        print("Loading scVI model...")
+        model = scvi.model.SCVI.load(model_path, adata=muris_subset)
+    else:
+        print("Training scVI model...")
+        scvi.model.SCVI.setup_anndata(muris_subset, categorical_covariate_keys=['celltype'])
+        model = scvi.model.SCVI(muris_subset)
+        model.train()
+        model.save(model_path, overwrite=True)
+        print(f"Model saved to: {model_path}")
+    
+    # Load or generate samples
+    if os.path.exists(samples_path):
+        print("Loading cached prior samples...")
+        samples = np.load(samples_path)
+    else:
+        print("Generating prior samples...")
+        samples = sample_from_prior(model, muris_subset.n_obs, muris_subset)
+        np.save(samples_path, samples)
+        print(f"Samples saved to: {samples_path}")
+    
+    # Normalize samples for evaluation (samples are raw counts)
+    processed_samples = ad.AnnData(samples)
+    sc.pp.normalize_total(processed_samples, target_sum=10000)
+    sc.pp.log1p(processed_samples)
+    
+    # Evaluate discriminability
+    print("Evaluating discriminability...")
+    auc, acc = knn_discriminability(
+        processed_muris.X, 
+        processed_samples.X, 
+        seed=42, 
+        n_neighbors=10
+    )
+    
+    elapsed = time.time() - start_time
+    print(f"scVI-Prior - AUC: {auc:.4f}, Accuracy: {acc:.4f} (Time: {elapsed:.1f}s)")
+    return auc, acc
 
+
+# ============================================================================
+# Main Experiment Loop
+# ============================================================================
 
 def main():
-    """Main experiment loop."""
+    """
+    Main experiment loop with configurable parameters.
+    """
     # Parse command-line arguments
     parser = argparse.ArgumentParser(
         description='Extensible simulation quality comparison framework'
@@ -703,7 +471,7 @@ def main():
         '--simulators',
         type=str,
         default='negbincopula,ae_diffusion,scvi_posterior,scvi_prior',
-        help='Comma-separated list of simulators (default: negbincopula,ae_diffusion,scvi_posterior,scvi_prior)'
+        help='Comma-separated list of simulators to test (default: all)'
     )
     parser.add_argument(
         '--output-dir',
@@ -714,11 +482,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Parse n_genes list
-    args.n_genes_list = [int(x.strip()) for x in args.n_genes.split(',')]
-    
-    # Parse simulators list
-    args.simulators = [x.strip() for x in args.simulators.split(',')]
+    # Parse lists
+    n_genes_list = [int(x.strip()) for x in args.n_genes.split(',')]
+    simulators = [x.strip() for x in args.simulators.split(',')]
     
     # Print configuration
     print("="*80)
@@ -728,8 +494,8 @@ def main():
     print(f"  Dataset: {args.dataset}")
     print(f"  Data path: {args.data_path}")
     print(f"  N cells: {args.n_cells}")
-    print(f"  N genes: {args.n_genes_list}")
-    print(f"  Simulators: {args.simulators}")
+    print(f"  N genes: {n_genes_list}")
+    print(f"  Simulators: {simulators}")
     print(f"  Output dir: {args.output_dir}")
     
     # Check device availability
@@ -741,22 +507,97 @@ def main():
         device = "cpu"
     print(f"  Device: {device}")
     
-    # Set seeds for reproducibility
+    print("\nLoading data...")
+    muris = sc.read_h5ad(args.data_path)
+    
+    # Seed for reproducibility
     np.random.seed(42)
     pl.seed_everything(42)
     
-    # Run experiments for each gene configuration
+    # Basic preprocessing
+    muris.var_names_make_unique()
+    sc.pp.filter_cells(muris, min_genes=10)
+    sc.pp.filter_genes(muris, min_cells=2)
+    
+    # Randomly select cells
+    muris_subset_full = muris[np.random.choice(muris.n_obs, args.n_cells, replace=False)]
+    
+    # Store results
     all_results = []
-    for i, n_genes in enumerate(args.n_genes_list, 1):
-        print(f"\n{'='*80}")
-        print(f"Experiment {i}/{len(args.n_genes_list)}")
-        print(f"{'='*80}")
+    
+    # Run experiments for each gene configuration
+    for i, n_genes in enumerate(n_genes_list, 1):
+        print(f"\n{'='*60}")
+        print(f"Experiment {i}/{len(n_genes_list)}: Testing with {n_genes} highly variable genes")
+        print(f"{'='*60}")
         
         try:
-            result = run_experiment(args, args.dataset, n_genes)
+            # Select highly variable genes
+            print(f"Selecting {n_genes} highly variable genes...")
+            muris_subset = muris_subset_full.copy()
+            sc.pp.highly_variable_genes(
+                muris_subset,
+                flavor='seurat_v3',
+                n_top_genes=n_genes
+            )
+            muris_subset = muris_subset[:, muris_subset.var['highly_variable']]
+            muris_subset = muris_subset.copy()
+            muris_subset.X = muris_subset.X.toarray()  # Convert to dense matrix
+            print(f"Data shape: {muris_subset.shape}")
+            
+            # Create experiment directory
+            exp_dir = get_experiment_dir(args.output_dir, args.dataset, args.n_cells, n_genes)
+            paths = ensure_dirs(exp_dir)
+            
+            # Prepare processed data for comparison
+            processed_muris = muris_subset.copy()
+            sc.pp.normalize_total(processed_muris, target_sum=10000)
+            sc.pp.log1p(processed_muris)
+            
+            # Store results for this configuration
+            result = {
+                'n_genes': n_genes,
+                'n_cells': args.n_cells,
+                'dataset': args.dataset
+            }
+            
+            # Run selected simulators
+            if 'negbincopula' in simulators:
+                try:
+                    nbc_auc, nbc_acc = test_negbincopula(muris_subset, paths, processed_muris)
+                    result['negbincopula_auc'] = nbc_auc
+                    result['negbincopula_acc'] = nbc_acc
+                except Exception as e:
+                    print(f"Error in NegBinCopula: {e}")
+            
+            if 'ae_diffusion' in simulators:
+                try:
+                    ae_auc, ae_acc = test_ae_diffusion(muris_subset, paths, processed_muris)
+                    result['ae_diffusion_auc'] = ae_auc
+                    result['ae_diffusion_acc'] = ae_acc
+                except Exception as e:
+                    print(f"Error in AE+Diffusion: {e}")
+            
+            if 'scvi_posterior' in simulators:
+                try:
+                    scvi_post_auc, scvi_post_acc = test_scvi_posterior(muris_subset, paths, processed_muris)
+                    result['scvi_posterior_auc'] = scvi_post_auc
+                    result['scvi_posterior_acc'] = scvi_post_acc
+                except Exception as e:
+                    print(f"Error in scVI-Posterior: {e}")
+            
+            if 'scvi_prior' in simulators:
+                try:
+                    scvi_prior_auc, scvi_prior_acc = test_scvi_prior(muris_subset, paths, processed_muris)
+                    result['scvi_prior_auc'] = scvi_prior_auc
+                    result['scvi_prior_acc'] = scvi_prior_acc
+                except Exception as e:
+                    print(f"Error in scVI-Prior: {e}")
+            
             all_results.append(result)
+            
         except Exception as e:
-            print(f"\n!!! Error in experiment with {n_genes} genes: {str(e)}")
+            print(f"\n!!! Error testing with {n_genes} genes: {str(e)}")
             import traceback
             traceback.print_exc()
             print("Skipping this configuration and continuing...")
@@ -767,19 +608,61 @@ def main():
         print("\n!!! No results to report - all experiments failed!")
         return []
     
-    print_results_table(all_results, args.simulators)
+    print(f"\n{'='*100}")
+    print("FINAL RESULTS SUMMARY")
+    print(f"{'='*100}")
+    
+    # Build dynamic header based on available simulators
+    header = f"{'N_Genes':<10} {'N_Cells':<10}"
+    for sim in simulators:
+        if sim == 'negbincopula':
+            header += f" {'NBC_AUC':<15} {'NBC_ACC':<15}"
+        elif sim == 'ae_diffusion':
+            header += f" {'AE+Diff_AUC':<15} {'AE+Diff_ACC':<15}"
+        elif sim == 'scvi_posterior':
+            header += f" {'scVI-Post_AUC':<15} {'scVI-Post_ACC':<15}"
+        elif sim == 'scvi_prior':
+            header += f" {'scVI-Prior_AUC':<15} {'scVI-Prior_ACC':<15}"
+    print(header)
+    print(f"{'-'*100}")
+    
+    # Print results
+    for result in all_results:
+        row = f"{result['n_genes']:<10} {result['n_cells']:<10}"
+        for sim in simulators:
+            if sim == 'negbincopula':
+                auc = result.get('negbincopula_auc', float('nan'))
+                acc = result.get('negbincopula_acc', float('nan'))
+            elif sim == 'ae_diffusion':
+                auc = result.get('ae_diffusion_auc', float('nan'))
+                acc = result.get('ae_diffusion_acc', float('nan'))
+            elif sim == 'scvi_posterior':
+                auc = result.get('scvi_posterior_auc', float('nan'))
+                acc = result.get('scvi_posterior_acc', float('nan'))
+            elif sim == 'scvi_prior':
+                auc = result.get('scvi_prior_auc', float('nan'))
+                acc = result.get('scvi_prior_acc', float('nan'))
+            else:
+                continue
+                
+            if not np.isnan(auc):
+                row += f" {auc:<15.4f} {acc:<15.4f}"
+            else:
+                row += f" {'N/A':<15} {'N/A':<15}"
+        print(row)
+    
+    print(f"{'='*100}\n")
     
     # Save results to file
-    results_dir = os.path.join(args.output_dir, args.dataset)
-    os.makedirs(results_dir, exist_ok=True)
-    results_file = os.path.join(results_dir, 'comparison_results.json')
+    results_file = os.path.join(args.output_dir, args.dataset, 'comparison_results.json')
+    os.makedirs(os.path.dirname(results_file), exist_ok=True)
     
     results_data = {
         'metadata': {
             'dataset': args.dataset,
             'n_cells': args.n_cells,
-            'n_genes_list': args.n_genes_list,
-            'simulators': args.simulators,
+            'n_genes_list': n_genes_list,
+            'simulators': simulators,
             'timestamp': datetime.now().isoformat(),
             'device': device,
         },
