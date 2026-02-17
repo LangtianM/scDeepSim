@@ -72,7 +72,7 @@ def test_negbincopula(muris_subset, paths, processed_muris):
     print(f"\n=== Testing NegBinCopula ===")
     start_time = time.time()
     
-    model_path = os.path.join(paths['models'], 'negbincopula.pkl')
+    # model_path = os.path.join(paths['models'], 'negbincopula.pkl')
     samples_path = os.path.join(paths['samples'], 'negbincopula_samples.h5ad')
     
     # Load or train model
@@ -306,7 +306,7 @@ def test_scvi_posterior(muris_subset, paths, processed_muris):
         samples = np.load(samples_path)
     else:
         print("Generating posterior samples...")
-        samples = model.posterior_predictive_sample(n_samples=1)
+        samples = model.posterior_predictive_sample(n_samples=1).todense()
         np.save(samples_path, samples.todense())
         print(f"Samples saved to: {samples_path}")
     
