@@ -26,7 +26,7 @@ class VAEEncoder(nn.Module):
         latent_dim: int = 128,
         hidden_dim: List[int] = [512, 256],
         dropout: float = 0.1,
-        input_dropout: float = 0.4,
+        input_dropout: float = 0,
         residual: bool = False,
         activation: str = "prelu",
     ):
@@ -62,7 +62,9 @@ class VAEEncoder(nn.Module):
                 x = h + x
             else:
                 x = h
-        return self.mu_head(x), self.logvar_head(x)
+        mu = self.mu_head(x)
+        logvar = self.logvar_head(x).clamp(min=-15.0, max=15.0)
+        return mu, logvar
 
 
 # ---------------------------------------------------------------------------
@@ -121,8 +123,8 @@ class ZINBDecoder(nn.Module):
                 x = h + x
             else:
                 x = h
-        mu = F.softplus(self.mu_head(x))
-        theta = F.softplus(self.theta_head(x))
+        mu = F.softplus(self.mu_head(x)).clamp(min=1e-4, max=1e6)
+        theta = F.softplus(self.theta_head(x)).clamp(min=1e-4, max=1e6)
         pi_logit = self.pi_head(x)
         return mu, theta, pi_logit
 
@@ -144,14 +146,17 @@ def nb_nll(
     mu : (B, G) NB mean (positive).
     theta : (B, G) NB inverse-dispersion (positive).
     """
-    log_theta_mu = torch.log(theta / (theta + mu) + eps)
-    log_mu_theta = torch.log(mu / (theta + mu) + eps)
+    # log(theta/(theta+mu)) = log(theta) - log(theta+mu)  (avoids 0/0)
+    log_theta_mu = torch.log(theta + eps) - torch.log(theta + mu + eps)
+    # log(mu/(theta+mu)): only used where x > 0, so guard with nan_to_num
+    log_mu_theta = torch.log(mu + eps) - torch.log(theta + mu + eps)
+
     ll = (
         torch.lgamma(x + theta)
         - torch.lgamma(theta)
         - torch.lgamma(x + 1.0)
         + theta * log_theta_mu
-        + x * log_mu_theta
+        + x * log_mu_theta  # safe: x=0 → 0 * finite = 0
     )
     return -ll.sum(dim=-1).mean()
 
@@ -176,8 +181,8 @@ def zinb_nll(
     """
     softplus_pi = F.softplus(pi_logit)
 
-    log_theta_mu = torch.log(theta / (theta + mu) + eps)
-    log_mu_theta = torch.log(mu / (theta + mu) + eps)
+    log_theta_mu = torch.log(theta + eps) - torch.log(theta + mu + eps)
+    log_mu_theta = torch.log(mu + eps) - torch.log(theta + mu + eps)
 
     nb_log_prob = (
         torch.lgamma(x + theta)
@@ -187,10 +192,6 @@ def zinb_nll(
         + x * log_mu_theta
     )
 
-    # P(x=0 | ZINB) = pi + (1-pi) * NB(0)
-    # log P(x=0) = log(pi + (1-pi)*NB(0))
-    #            = log(sigmoid(logit) + sigmoid(-logit)*exp(nb_log_prob(x=0)))
-    # We use logsumexp via: log(exp(log_pi) + exp(log(1-pi) + nb_log_prob))
     nb_zero = theta * log_theta_mu  # NB log-prob at x=0
 
     # log(sigmoid(a)) = -softplus(-a) ; log(sigmoid(-a)) = -softplus(a)
@@ -259,6 +260,18 @@ class SupervisedHead(nn.Module):
 class LightningVAE(pl.LightningModule):
     """Semi-supervised VAE with ZINB reconstruction for single-cell count data.
 
+    The encoder always receives **log-normalised** input (log1p of
+    library-size-normalised counts) regardless of whether the raw counts or
+    pre-normalised data are supplied.  This decouples the encoder's
+    optimisation landscape (smooth, quasi-Gaussian) from the decoder's
+    generative model (ZINB / NB over raw counts), preventing posterior
+    collapse while keeping the biological meaning of the count decoder.
+
+    The ZINB NLL reconstruction loss is always computed against the **raw
+    count** input ``x``.  If ``normalize_encoder_input=True`` (default) the
+    model internally normalises before encoding; the caller therefore only
+    needs to supply raw counts.
+
     Parameters
     ----------
     n_genes : Number of genes (input / output dimension).
@@ -269,8 +282,17 @@ class LightningVAE(pl.LightningModule):
     input_dropout : Dropout rate applied to the encoder input.
     residual : Whether to use residual connections in the MLP backbone.
     activation : Activation function name for MLPBlock.
-    beta : Weight on the KL divergence term.
+    beta : Maximum weight on the KL divergence term.
+    beta_warmup_epochs : Number of epochs to linearly anneal beta from 0 → beta.
+        KL annealing prevents posterior collapse early in training.
     use_zinb : If True use ZINB decoder; otherwise plain NB.
+    normalize_encoder_input : If True (default) apply library-size
+        normalisation + log1p to the raw counts before feeding the encoder.
+        The ZINB reconstruction loss is still computed on raw counts.
+        Set to False only if you pre-normalise outside the model AND want to
+        evaluate on normalised data (not recommended for ZINB).
+    library_size_target : Target total counts per cell used for the internal
+        normalisation when ``normalize_encoder_input=True``.
     supervised_config : List of dicts describing semi-supervised latent
         assignments.  Each dict must contain:
 
@@ -297,15 +319,19 @@ class LightningVAE(pl.LightningModule):
         enc_hidden: List[int] = [512, 256],
         dec_hidden: Optional[List[int]] = None,
         dropout: float = 0.1,
-        input_dropout: float = 0.4,
+        input_dropout: float = 0,
         residual: bool = False,
         activation: str = "prelu",
         beta: float = 1.0,
+        beta_warmup_epochs: int = 0,
         use_zinb: bool = True,
+        normalize_encoder_input: bool = True,
+        library_size_target: float = 1e4,
         supervised_config: Optional[List[Dict]] = None,
         sup_head_hidden: int = 64,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
+        gradient_clip_val: float = 5.0,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -355,6 +381,25 @@ class LightningVAE(pl.LightningModule):
         self._sup_config = supervised_config or []
 
     # ------------------------------------------------------------------
+    # Input normalisation helper (encoder-side only)
+    # ------------------------------------------------------------------
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """Library-size normalise + log1p raw counts for encoder input.
+
+        The decoder and its ZINB loss always operate on the original raw
+        counts; this method is called *only* before the encoder.
+        """
+        library_size = x.sum(dim=-1, keepdim=True).clamp(min=1.0)
+        return torch.log1p(x / library_size * self.hparams.library_size_target)
+
+    def _effective_beta(self) -> float:
+        """Linearly anneal KL weight from 0 to beta over beta_warmup_epochs."""
+        if self.hparams.beta_warmup_epochs <= 0:
+            return self.hparams.beta
+        frac = min(1.0, self.current_epoch / self.hparams.beta_warmup_epochs)
+        return frac * self.hparams.beta
+
+    # ------------------------------------------------------------------
     # Core helpers
     # ------------------------------------------------------------------
     def reparameterize(
@@ -362,19 +407,90 @@ class LightningVAE(pl.LightningModule):
     ) -> torch.Tensor:
         std = torch.exp(0.5 * logvar)
         return mu + std * torch.randn_like(std)
+    
+    @torch.no_grad()
+    @staticmethod
+    def sample_zinb(mu, theta, pi, *, generator=None):
+        """
+        Sample from ZINB with mean mu, dispersion theta, zero-inflation prob pi.
 
+        Parameters
+        ----------
+        mu : torch.Tensor
+            Mean (>0), any shape (e.g., [n_cells, n_genes]).
+        theta : torch.Tensor
+            Dispersion (>0), broadcastable to mu's shape.
+        pi : torch.Tensor
+            Zero-inflation probability in [0,1], broadcastable to mu's shape.
+        generator : torch.Generator | None
+            Optional RNG.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Integer counts sampled from ZINB, same shape as broadcast(mu,theta,pi).
+        """
+        mu = torch.as_tensor(mu)
+        theta = torch.as_tensor(theta)
+        pi = torch.as_tensor(pi)
+
+        # Broadcast to a common shape
+        mu, theta, pi = torch.broadcast_tensors(mu, theta, pi)
+
+        is_zi_zero = torch.rand(mu.shape, device=mu.device, generator=generator) < pi
+
+        # probs p such that E[NB]=theta*(1-p)/p = mu
+        probs = theta / (theta + mu)
+
+        nb = torch.distributions.NegativeBinomial(total_count=theta, probs=probs)
+        x_nb = nb.sample()
+
+        x = torch.where(is_zi_zero, torch.zeros_like(x_nb), x_nb)
+        return x
+    
+    @torch.no_grad()
+    @staticmethod
+    def sample_nb(mu, theta, *, generator=None):
+        """
+        Sample from Negative Binomial with mean mu, dispersion theta.
+
+        Parameters
+        ----------
+        mu : torch.Tensor
+            Mean (>0), any shape (e.g., [n_cells, n_genes]).
+        theta : torch.Tensor
+            Dispersion (>0), broadcastable to mu's shape.
+        generator : torch.Generator | None
+            Optional RNG.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Integer counts sampled from NB, same shape as broadcast(mu,theta).
+        """
+        mu = torch.as_tensor(mu)
+        theta = torch.as_tensor(theta)
+        mu, theta = torch.broadcast_tensors(mu, theta)
+        probs = theta / (theta + mu)
+        nb = torch.distributions.NegativeBinomial(total_count=theta,probs=probs)
+        return nb.sample()
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
     def encode(
         self, x: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Return ``(mu, logvar)`` without sampling."""
-        return self.encoder(x)
+        """Return ``(mu, logvar)`` without sampling.
+
+        Raw counts are automatically normalised before the encoder when
+        ``normalize_encoder_input=True`` (the default).
+        """
+        x_enc = self._normalize(x) if self.hparams.normalize_encoder_input else x
+        return self.encoder(x_enc)
 
     def get_latent(self, x: torch.Tensor) -> torch.Tensor:
         """Encode and sample ``z`` from the posterior."""
-        mu, logvar = self.encoder(x)
+        mu, logvar = self.encode(x)
         return self.reparameterize(mu, logvar)
 
     def decode(
@@ -393,8 +509,25 @@ class LightningVAE(pl.LightningModule):
         """
         device = device or next(self.parameters()).device
         z = torch.randn(n, self.hparams.latent_dim, device=device)
-        mu, _theta, _pi = self.decoder(z)
-        return mu
+        mu, theta, pi = self.decoder(z)
+        if self.hparams.use_zinb:
+            return LightningVAE.sample_zinb(mu, theta, pi)
+        else:
+            return LightningVAE.sample_nb(mu, theta)
+    
+    @torch.no_grad()
+    def sample_from_latent(
+        self, z: torch.Tensor, device: Optional[torch.device] = None
+    ) -> torch.Tensor:
+        """Sample from the latent space and decode through the mean of the ZINB (no stochastic sampling
+        from the count distribution).
+        """
+        device = device or next(self.parameters()).device
+        mu, theta, pi = self.decoder(z)
+        if self.hparams.use_zinb:
+            return LightningVAE.sample_zinb(mu, theta, pi)
+        else:
+            return LightningVAE.sample_nb(mu, theta)
 
     # ------------------------------------------------------------------
     # Loss computation
@@ -404,7 +537,9 @@ class LightningVAE(pl.LightningModule):
         x: torch.Tensor,
         labels: Optional[Dict[str, torch.Tensor]],
     ) -> Dict[str, torch.Tensor]:
-        mu, logvar = self.encoder(x)
+        # Encoder receives normalised input; ZINB loss is computed on raw x.
+        x_enc = self._normalize(x) if self.hparams.normalize_encoder_input else x
+        mu, logvar = self.encoder(x_enc)
         z = self.reparameterize(mu, logvar)
         dec_mu, dec_theta, dec_pi_logit = self.decoder(z)
 
@@ -426,11 +561,13 @@ class LightningVAE(pl.LightningModule):
                     name
                 ].compute_loss(z_slice, labels[name])
 
-        loss = loss_recon + self.hparams.beta * loss_kl + loss_sup
+        beta = self._effective_beta()
+        loss = loss_recon + beta * loss_kl + loss_sup
         return {
             "loss": loss,
             "recon": loss_recon,
             "kl": loss_kl,
+            "kl_weight": torch.tensor(beta),
             "sup": loss_sup,
         }
 
@@ -447,7 +584,7 @@ class LightningVAE(pl.LightningModule):
             self.log(
                 f"{stage}_{key}",
                 val,
-                prog_bar=(key == "loss"),
+                prog_bar=(key in ("loss", "kl_weight")),
                 on_step=False,
                 on_epoch=True,
                 batch_size=bs,
@@ -476,3 +613,8 @@ class LightningVAE(pl.LightningModule):
             "optimizer": opt,
             "lr_scheduler": {"scheduler": sch, "monitor": "val_loss"},
         }
+
+    @property
+    def gradient_clip_val(self) -> float:
+        """Expose clip value so ``pl.Trainer(gradient_clip_val=...)`` can read it."""
+        return self.hparams.gradient_clip_val
