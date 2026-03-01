@@ -25,7 +25,7 @@ SEED = 42
 DATA_PATH = "../data/tabula_muris/all.h5ad"
 N_CELLS = 10_000
 N_GENES = 2_000
-MAX_EPOCHS = 200
+MAX_EPOCHS = 100
 CHECKPOINT_DIR = "checkpoints/test_truncated_normal_vae/tn_vae"
 LOG_DIR = "lightning_logs/test_truncated_normal_vae/tn_vae"
 
