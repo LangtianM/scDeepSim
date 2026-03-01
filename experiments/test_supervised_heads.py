@@ -2,13 +2,17 @@
 
 This script:
 1. Trains a TruncatedNormalVAE with celltype as a supervised latent label
-2. Encodes real data to get latent representations
-3. Ablates the celltype-supervised dimensions (sets them to constant)
-4. Decodes both original and ablated latents
-5. Trains classifiers on decoded samples to test if celltype info persists
+   with different supervision weights
+2. Evaluates both disentanglement ability and simulation quality:
+   - Disentanglement: Encodes real data, ablates celltype dims, and tests
+     if celltype info persists via classifiers
+   - Simulation Quality: Measures discriminability using kNN (AUC/accuracy)
+     between real and simulated data
+3. Compares results across different supervision weights (1, 2, 3, 5, 7)
 
-Expected behavior: When celltype dims are ablated, the classifier should
-perform near random chance, confirming those dims truly encoded celltype.
+Expected behavior: 
+- Strong disentanglement: ablated latents should perform near random chance
+- High simulation quality: kNN discriminability AUC should be close to 0.5
 """
 
 import os
@@ -16,12 +20,14 @@ import numpy as np
 import scanpy as sc
 import torch
 import pytorch_lightning as pl
+import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import train_test_split
 
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 from scdeepsim.dataset import ScDataModule
+from scdeepsim.quality import knn_discriminability
 
 
 SEED = 42
@@ -32,6 +38,7 @@ MAX_EPOCHS = 100
 CHECKPOINT_DIR = "checkpoints/test_supervised/tn_vae"
 LOG_DIR = "lightning_logs/test_supervised/tn_vae"
 CELLTYPE_LATENT_DIMS = 32  # Dims allocated to celltype
+SUPERVISION_WEIGHTS = [1.0, 2.0, 3.0, 5.0, 7.0]  # Different weights to test
 
 
 def load_and_preprocess(path, n_cells, n_genes, seed=42):
@@ -54,7 +61,7 @@ def load_and_preprocess(path, n_cells, n_genes, seed=42):
     return adata
 
 
-def train_or_load_supervised_vae(adata, ckpt_path, log_dir, max_epochs):
+def train_or_load_supervised_vae(adata, ckpt_path, log_dir, max_epochs, sup_weight):
     """Train a semi-supervised TruncatedNormalVAE with celltype encoding."""
     n_genes = adata.X.shape[1]
     
@@ -65,6 +72,7 @@ def train_or_load_supervised_vae(adata, ckpt_path, log_dir, max_epochs):
     n_celltypes = len(le.classes_)
     
     print(f"  Found {n_celltypes} unique celltypes")
+    print(f"  Supervision weight: {sup_weight}")
     
     if os.path.exists(ckpt_path):
         print(f"  Loading checkpoint from {ckpt_path}")
@@ -76,7 +84,7 @@ def train_or_load_supervised_vae(adata, ckpt_path, log_dir, max_epochs):
                 "type": "categorical",
                 "n_classes": n_celltypes,
                 "latent_dims": CELLTYPE_LATENT_DIMS,
-                "weight": 50.0,  # INCREASED: Strong supervision (was 10.0)
+                "weight": sup_weight,
             }
         ]
         
@@ -90,8 +98,6 @@ def train_or_load_supervised_vae(adata, ckpt_path, log_dir, max_epochs):
             zero_inflated=True,
             supervised_config=supervised_config,
             sup_head_hidden=64,
-            sup_recon_prob=0.2,  # NEW: 20% of batches decode from supervised dims only
-            independence_weight=0.5,  # NEW: Penalize correlation between sup/unsup dims
         )
         
         data_module = ScDataModule(
@@ -240,6 +246,50 @@ def evaluate_celltype_classification(adata, results, n_celltypes):
     }
 
 
+def evaluate_simulation_quality(vae, adata, n_neighbors=10):
+    """Evaluate simulation quality via kNN discriminability.
+    
+    Returns a dict with discriminability metrics for:
+      - prior: z ~ N(0,I) → sample from decoder
+      - encoded: encode real X → sample z → sample from decoder
+    """
+    device = next(vae.parameters()).device
+    X_log1p = torch.tensor(adata.X, dtype=torch.float32, device=device)
+    real_np = adata.X
+    
+    vae.eval()
+    with torch.no_grad():
+        mu_z, logvar_z = vae.encode(X_log1p)
+        
+        # Prior samples
+        prior_samples = vae.sample_from_prior(X_log1p.size(0)).cpu().numpy()
+        
+        # Encoded samples
+        z_encoded = vae.reparameterize(mu_z, logvar_z)
+        encoded_samples = vae.sample_from_latent(z_encoded).cpu().numpy()
+    
+    results = {}
+    
+    print("\n--- Simulation Quality (kNN Discriminability, k={}) ---".format(n_neighbors))
+    
+    auc, acc = knn_discriminability(real_np, prior_samples, n_neighbors=n_neighbors)
+    results["prior"] = {"auc": auc, "accuracy": acc}
+    print(f"  Prior samples vs real:   AUC={auc:.4f}, Accuracy={acc:.4f}")
+    
+    auc, acc = knn_discriminability(real_np, encoded_samples, n_neighbors=n_neighbors)
+    results["encoded"] = {"auc": auc, "accuracy": acc}
+    print(f"  Encoded samples vs real: AUC={auc:.4f}, Accuracy={acc:.4f}")
+    
+    # Gene mean correlation
+    gene_corr_samples = np.corrcoef(real_np.mean(0), encoded_samples.mean(0))[0, 1]
+    results["gene_mean_corr"] = gene_corr_samples
+    print(f"  Gene mean correlation:   {gene_corr_samples:.4f}")
+    
+    print("\n  Note: Lower AUC (closer to 0.5) = better simulation quality")
+    
+    return results
+
+
 def analyze_latent_structure(results, adata, n_celltypes):
     """Analyze how well celltype dims separate celltypes."""
     from sklearn.preprocessing import LabelEncoder
@@ -291,46 +341,189 @@ def analyze_latent_structure(results, adata, n_celltypes):
         print("✓ GOOD: Celltype info is primarily in supervised dims")
     else:
         print("⚠ POOR: Supervised dims don't strongly encode celltype")
+    
+    return {
+        "celltype_dims_balanced_acc": ct_bal,
+        "other_dims_balanced_acc": other_bal,
+    }
+
+
+def run_single_weight_experiment(adata, sup_weight, n_celltypes):
+    """Run complete evaluation for a single supervision weight."""
+    print("\n" + "=" * 70)
+    print(f"TESTING SUPERVISION WEIGHT: {sup_weight}")
+    print("=" * 70)
+    
+    # Create weight-specific checkpoint path
+    ckpt_path = os.path.join(
+        CHECKPOINT_DIR, f"weight_{sup_weight:.1f}", "trained_supervised_vae.ckpt"
+    )
+    log_dir = os.path.join(LOG_DIR, f"weight_{sup_weight:.1f}")
+    
+    print("\n[1/5] Training semi-supervised VAE...")
+    vae, _ = train_or_load_supervised_vae(
+        adata, ckpt_path, log_dir, MAX_EPOCHS, sup_weight
+    )
+    
+    print("\n[2/5] Encoding and ablating latents...")
+    ablation_results = encode_and_ablate(vae, adata)
+    
+    print("\n[3/5] Evaluating celltype classification (disentanglement)...")
+    classification_metrics = evaluate_celltype_classification(
+        adata, ablation_results, n_celltypes
+    )
+    
+    print("\n[4/5] Analyzing latent structure...")
+    latent_metrics = analyze_latent_structure(ablation_results, adata, n_celltypes)
+    
+    print("\n[5/5] Evaluating simulation quality...")
+    quality_metrics = evaluate_simulation_quality(vae, adata, n_neighbors=10)
+    
+    # Combine all metrics
+    combined_metrics = {
+        "weight": sup_weight,
+        "classification": classification_metrics,
+        "latent_structure": latent_metrics,
+        "simulation_quality": quality_metrics,
+    }
+    
+    return combined_metrics
+
+
+def print_comparison_summary(all_results):
+    """Print a comparison table across all supervision weights."""
+    print("\n" + "=" * 90)
+    print("COMPARISON ACROSS SUPERVISION WEIGHTS")
+    print("=" * 90)
+    
+    print("\n--- DISENTANGLEMENT METRICS ---")
+    print(f"{'Weight':<10} {'Ablated Bal.Acc':<20} {'Celltype Dims':<20} {'Other Dims':<20}")
+    print("-" * 90)
+    for res in all_results:
+        weight = res["weight"]
+        abl_acc = res["classification"]["ablated"]["balanced_acc"]
+        ct_dims = res["latent_structure"]["celltype_dims_balanced_acc"]
+        other_dims = res["latent_structure"]["other_dims_balanced_acc"]
+        print(f"{weight:<10.1f} {abl_acc:<20.4f} {ct_dims:<20.4f} {other_dims:<20.4f}")
+    
+    print("\n--- SIMULATION QUALITY METRICS ---")
+    print(f"{'Weight':<10} {'Encoded AUC':<20} {'Encoded Acc':<20} {'Gene Corr':<20}")
+    print("-" * 90)
+    for res in all_results:
+        weight = res["weight"]
+        enc_auc = res["simulation_quality"]["encoded"]["auc"]
+        enc_acc = res["simulation_quality"]["encoded"]["accuracy"]
+        gene_corr = res["simulation_quality"]["gene_mean_corr"]
+        print(f"{weight:<10.1f} {enc_auc:<20.4f} {enc_acc:<20.4f} {gene_corr:<20.4f}")
+    
+    print("\n--- INTERPRETATION ---")
+    print("Disentanglement:")
+    print("  - Lower Ablated Bal.Acc (closer to random) = better disentanglement")
+    print("  - Higher Celltype Dims Bal.Acc = celltype info concentrated in supervised dims")
+    print("  - Lower Other Dims Bal.Acc = less celltype leakage to unsupervised dims")
+    print("\nSimulation Quality:")
+    print("  - Lower Encoded AUC (closer to 0.5) = better simulation quality")
+    print("  - Lower Encoded Acc (closer to 0.5) = harder to distinguish real from simulated")
+    print("  - Higher Gene Corr = better gene expression distribution matching")
+
+
+def plot_metrics_vs_weight(all_results, save_path="supervised_weight_comparison.png"):
+    """Plot how key metrics change with supervision weight.
+    
+    Shows two lines on a single plot:
+    1. Classification accuracy for celltype using other (unsupervised) dimensions
+    2. Discriminability (AUC) between simulated and real data
+    """
+    weights = [res["weight"] for res in all_results]
+    
+    # Extract metrics
+    other_dims_acc = [res["latent_structure"]["other_dims_balanced_acc"] for res in all_results]
+    encoded_auc = [res["simulation_quality"]["encoded"]["auc"] for res in all_results]
+    
+    # Create single plot
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Plot both lines
+    ax.plot(weights, other_dims_acc, 'o-', linewidth=3, markersize=10, 
+            color='#e74c3c', label='Celltype Classification on Other Dims (Bal. Acc)', 
+            alpha=0.8)
+    ax.plot(weights, encoded_auc, 's-', linewidth=3, markersize=10, 
+            color='#3498db', label='Simulation Quality (AUC: Real vs Simulated)', 
+            alpha=0.8)
+    
+    # Add reference lines
+    if all_results:
+        random_chance = all_results[0]["classification"]["random_chance"]
+        ax.axhline(y=random_chance, color='#e74c3c', linestyle='--', linewidth=2, 
+                  alpha=0.4, label=f'Random Chance ({random_chance:.3f})')
+    ax.axhline(y=0.5, color='#3498db', linestyle='--', linewidth=2, 
+              alpha=0.4, label='Perfect Simulation (0.5)')
+    
+    # Formatting
+    ax.set_xlabel('Supervision Weight', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Score', fontsize=14, fontweight='bold')
+    ax.set_title('Effect of Supervision Weight on Disentanglement and Simulation Quality', 
+                 fontsize=15, fontweight='bold', pad=20)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    ax.legend(fontsize=11, loc='best', framealpha=0.9)
+    ax.set_xticks(weights)
+    ax.set_ylim([0.0, 1.0])
+    
+    # Add interpretation text
+    textstr = ('Lower Other Dims Acc = Better Disentanglement\n'
+               'Lower AUC (→0.5) = Better Simulation Quality')
+    props = dict(boxstyle='round', facecolor='wheat', alpha=0.3)
+    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10,
+            verticalalignment='top', bbox=props)
+    
+    plt.tight_layout()
+    
+    # Save figure
+    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else '.', exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    print(f"\n✓ Plot saved to: {save_path}")
+    
+    # Also display if in interactive mode
+    plt.show()
+    plt.close()
 
 
 def main():
-    print("=" * 70)
-    print("TruncatedNormalVAE Semi-Supervised Celltype Test")
-    print("=" * 70)
+    print("=" * 90)
+    print("TruncatedNormalVAE Semi-Supervised Celltype Test - Multi-Weight Comparison")
+    print("=" * 90)
     
-    print("\n[1/5] Loading and preprocessing data...")
+    print("\n[SETUP] Loading and preprocessing data...")
     adata = load_and_preprocess(DATA_PATH, N_CELLS, N_GENES, SEED)
     print(f"  Data shape: {adata.X.shape}")
     print(f"  Zero fraction: {(adata.X == 0).mean():.4f}")
     
-    ckpt_path = os.path.join(CHECKPOINT_DIR, "trained_supervised_vae.ckpt")
+    # Count celltypes
+    from sklearn.preprocessing import LabelEncoder
+    le = LabelEncoder()
+    celltype_encoded = le.fit_transform(adata.obs["celltype"])
+    n_celltypes = len(le.classes_)
+    print(f"  Number of celltypes: {n_celltypes}")
     
-    print("\n[2/5] Training semi-supervised VAE...")
-    vae, n_celltypes = train_or_load_supervised_vae(
-        adata, ckpt_path, LOG_DIR, MAX_EPOCHS
-    )
+    # Run experiments for all weights
+    all_results = []
+    for sup_weight in SUPERVISION_WEIGHTS:
+        result = run_single_weight_experiment(adata, sup_weight, n_celltypes)
+        all_results.append(result)
     
-    print("\n[3/5] Encoding and ablating latents...")
-    results = encode_and_ablate(vae, adata)
+    # Print comparison summary
+    print_comparison_summary(all_results)
     
-    print("\n[4/5] Evaluating celltype classification...")
-    metrics = evaluate_celltype_classification(adata, results, n_celltypes)
+    # Plot results
+    print("\n[PLOTTING] Generating visualization...")
+    plot_save_path = os.path.join(CHECKPOINT_DIR, "supervised_weight_comparison.png")
+    plot_metrics_vs_weight(all_results, save_path=plot_save_path)
     
-    print("\n[5/5] Analyzing latent structure...")
-    analyze_latent_structure(results, adata, n_celltypes)
-    
-    print("\n" + "=" * 70)
-    print("Summary")
-    print("=" * 70)
-    print(f"Real data balanced accuracy:      {metrics['real']['balanced_acc']:.4f}")
-    print(f"Decoded (original) balanced acc:  {metrics['original']['balanced_acc']:.4f}")
-    print(f"Decoded (ablated) balanced acc:   {metrics['ablated']['balanced_acc']:.4f}")
-    print(f"Random chance:                    {metrics['random_chance']:.4f}")
-    
-    print("\nInterpretation:")
-    print("  - If ablated ≈ random: supervised dims successfully encoded celltype")
-    print("  - If ablated >> random: celltype info leaked to unsupervised dims")
+    print("\n" + "=" * 90)
+    print("EXPERIMENT COMPLETE")
+    print("=" * 90)
 
 
 if __name__ == "__main__":
     main()
+
