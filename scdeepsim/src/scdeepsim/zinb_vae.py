@@ -257,7 +257,7 @@ class SupervisedHead(nn.Module):
 # ---------------------------------------------------------------------------
 # Lightning module
 # ---------------------------------------------------------------------------
-class LightningVAE(pl.LightningModule):
+class ZINBVAE(pl.LightningModule):
     """Semi-supervised VAE with ZINB reconstruction for single-cell count data.
 
     The encoder always receives **log-normalised** input (log1p of
@@ -511,9 +511,9 @@ class LightningVAE(pl.LightningModule):
         z = torch.randn(n, self.hparams.latent_dim, device=device)
         mu, theta, pi = self.decoder(z)
         if self.hparams.use_zinb:
-            return LightningVAE.sample_zinb(mu, theta, pi)
+            return ZINBVAE.sample_zinb(mu, theta, pi)
         else:
-            return LightningVAE.sample_nb(mu, theta)
+            return ZINBVAE.sample_nb(mu, theta)
     
     @torch.no_grad()
     def sample_from_latent(
@@ -525,9 +525,9 @@ class LightningVAE(pl.LightningModule):
         device = device or next(self.parameters()).device
         mu, theta, pi = self.decoder(z)
         if self.hparams.use_zinb:
-            return LightningVAE.sample_zinb(mu, theta, pi)
+            return ZINBVAE.sample_zinb(mu, theta, pi)
         else:
-            return LightningVAE.sample_nb(mu, theta)
+            return ZINBVAE.sample_nb(mu, theta)
 
     # ------------------------------------------------------------------
     # Loss computation

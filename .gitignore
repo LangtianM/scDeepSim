@@ -8,3 +8,4 @@ checkpoints/*
 tests/__pycache__/test_diffusion_components.cpython-312-pytest-9.0.1.pyc
 *.pyc
 experiments/sim_benchmarking_results/
+*_plan.md
