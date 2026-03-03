@@ -5,7 +5,7 @@ This script:
 2. Trains a diffusion model in the VAE's latent space
 3. Evaluates simulation quality by:
    - Sampling from diffusion → decoding with VAE
-   - Comparing with real data using kNN discriminability
+   - Comparing with real data using RF discriminability
    - Measuring gene expression correlations
    - Visualizing results
 
@@ -250,8 +250,8 @@ def evaluate_latent_space_quality(real_latents, diffusion_latents):
     print(f"    Mean: {diffusion_latents.mean():.4f}, Std: {diffusion_latents.std():.4f}")
     print(f"    Min:  {diffusion_latents.min():.4f}, Max: {diffusion_latents.max():.4f}")
     
-    # kNN discriminability in latent space
-    print(f"\n  Testing kNN discriminability in latent space...")
+    # RF discriminability in latent space
+    print(f"\n  Testing RF discriminability in latent space...")
     auc, acc = rf_discriminability(real_latents, diffusion_latents)
     print(f"  Latent AUC:      {auc:.4f} (closer to 0.5 = better)")
     print(f"  Latent Accuracy: {acc:.4f} (closer to 0.5 = better)")
@@ -294,7 +294,7 @@ def compare_vae_reconstruction_quality(vae, adata, device="cpu"):
     print(f"    Zero fraction: {(x_recon == 0).mean():.4f}")
     
     # Test discriminability of VAE reconstruction
-    print(f"\n  Testing kNN discriminability of VAE reconstruction...")
+    print(f"\n  Testing RF discriminability of VAE reconstruction...")
     auc, acc = rf_discriminability(adata.X, x_recon)
     print(f"  VAE Recon AUC:      {auc:.4f} (closer to 0.5 = better)")
     print(f"  VAE Recon Accuracy: {acc:.4f} (closer to 0.5 = better)")
@@ -325,10 +325,11 @@ def generate_samples(diffusion, vae, n_samples, celltype_labels, device="cpu"):
         print("  [1/2] Sampling from diffusion model...")
         z_samples = diffusion.sample(
             num_samples=n_samples,
+            labels=labels_tensor,
             use_ema=True,
             sampling_timesteps=DIFF_SAMPLING_STEPS,
             ddim_sampling_eta=0.,
-            clip_denoised=False,
+            clip_x_start_value=5.0,
         )
         
         # Decode latents to gene expression
@@ -354,11 +355,11 @@ def evaluate_simulation_quality(real_data, sim_data, real_labels, sim_labels, le
     
     results = {}
     
-    # 1. kNN Discriminability
-    print("\n[1/5] kNN Discriminability...")
+    # 1. RF Discriminability
+    print("\n[1/5] RF Discriminability...")
     auc, acc = rf_discriminability(real_data, sim_data)
-    results["knn_auc"] = auc
-    results["knn_accuracy"] = acc
+    results["RF_auc"] = auc
+    results["RF_accuracy"] = acc
     print(f"  AUC:      {auc:.4f} (closer to 0.5 = better)")
     print(f"  Accuracy: {acc:.4f} (closer to 0.5 = better)")
     
@@ -438,7 +439,7 @@ def plot_results(real_data, sim_data, real_labels, sim_labels, le, results, save
     # Plot 1: Discriminability Comparison (Latent vs Gene Space)
     ax = axes[0, 0]
     metrics = ["Latent AUC", "Gene AUC", "VAE Recon AUC"]
-    values = [results["latent_auc"], results["knn_auc"], results["vae_recon_auc"]]
+    values = [results["latent_auc"], results["RF_auc"], results["vae_recon_auc"]]
     colors = ["#e74c3c" if v > 0.6 else "#27ae60" for v in values]
     bars = ax.bar(metrics, values, color=colors, alpha=0.7, edgecolor="black", linewidth=2)
     ax.axhline(y=0.5, color="gray", linestyle="--", linewidth=2, label="Perfect (0.5)")
@@ -452,15 +453,15 @@ def plot_results(real_data, sim_data, real_labels, sim_labels, le, results, save
         ax.text(bar.get_x() + bar.get_width()/2., height + 0.02,
                 f'{val:.3f}', ha='center', va='bottom', fontweight='bold', fontsize=9)
     
-    # Plot 2: kNN Accuracy
+    # Plot 2: RF Accuracy
     ax = axes[0, 1]
     metrics = ["Latent Acc", "Gene Acc"]
-    values = [results["latent_accuracy"], results["knn_accuracy"]]
+    values = [results["latent_accuracy"], results["RF_accuracy"]]
     colors = ["#e74c3c" if v > 0.6 else "#27ae60" for v in values]
     bars = ax.bar(metrics, values, color=colors, alpha=0.7, edgecolor="black", linewidth=2)
     ax.axhline(y=0.5, color="gray", linestyle="--", linewidth=2, label="Perfect (0.5)")
     ax.set_ylabel("Accuracy", fontsize=12, fontweight="bold")
-    ax.set_title("kNN Discriminability Accuracy\n(Lower = Better)", fontsize=13, fontweight="bold")
+    ax.set_title("RF Discriminability Accuracy\n(Lower = Better)", fontsize=13, fontweight="bold")
     ax.set_ylim([0, 1])
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
@@ -646,8 +647,8 @@ def print_summary(results):
     print("Note: If latent discriminability is high, the diffusion model is not learning well")
     
     print("\n--- Gene Expression Space Quality (End-to-End) ---")
-    print(f"kNN Discriminability AUC:  {results['knn_auc']:.4f} (target: 0.5)")
-    print(f"kNN Discriminability Acc:  {results['knn_accuracy']:.4f} (target: 0.5)")
+    print(f"RF Discriminability AUC:  {results['RF_auc']:.4f} (target: 0.5)")
+    print(f"RF Discriminability Acc:  {results['RF_accuracy']:.4f} (target: 0.5)")
     print("Note: This combines VAE decoder quality and diffusion sample quality")
     
     print("\n--- Gene Expression Statistics ---")
@@ -663,6 +664,157 @@ def print_summary(results):
     print(f"Genes per cell (real):     {results['mean_genes_per_cell_real']:.2f}")
     print(f"Genes per cell (sim):      {results['mean_genes_per_cell_sim']:.2f}")
     
+
+
+# ===========================
+# Diffusion Diagnostics
+# ===========================
+
+def diagnose_diffusion(diffusion, latent_vectors, device="cpu"):
+    """Pinpoint where the diffusion sampling scale explosion originates.
+
+    Tests:
+      1. Model noise prediction quality on real data at various timesteps
+      2. DDIM sampling trajectory (10 steps) — track mean/std at each step
+      3. EMA vs main model comparison
+    """
+    import torch.nn.functional as F
+
+    diffusion = diffusion.to(device)
+    diffusion.eval()
+
+    gd = diffusion.diffusion  # GaussianDiffusion instance
+    ema_model = diffusion.ema_model if diffusion.ema_model is not None else diffusion.model
+    main_model = diffusion.model
+    ema_model.to(device).eval()
+    main_model.to(device).eval()
+
+    n_test = min(500, len(latent_vectors))
+    x_0 = torch.tensor(latent_vectors[:n_test], dtype=torch.float32, device=device)
+    latent_dim = x_0.shape[1]
+
+    # Per-dimension stats of training data
+    dim_stds = x_0.std(dim=0)
+    print(f"\n{'='*70}")
+    print("DIAGNOSTIC: Per-dimension latent statistics")
+    print(f"{'='*70}")
+    print(f"  Overall:  mean={x_0.mean():.4f}, std={x_0.std():.4f}")
+    print(f"  Per-dim std: min={dim_stds.min():.4f}, max={dim_stds.max():.4f}, "
+          f"median={dim_stds.median():.4f}, mean={dim_stds.mean():.4f}")
+    print(f"  Dims with std > 2: {(dim_stds > 2).sum().item()}")
+    print(f"  Dims with std < 0.1: {(dim_stds < 0.1).sum().item()}")
+
+    # ---- TEST 1: Noise prediction quality at various timesteps ----
+    print(f"\n{'='*70}")
+    print("DIAGNOSTIC TEST 1: Noise prediction quality (EMA model, unconditional)")
+    print(f"{'='*70}")
+    print(f"  {'t':>5s} | {'noise_MSE':>10s} | {'noise_bias':>11s} | "
+          f"{'x0_MSE':>10s} | {'x0_bias':>10s} | {'x0_std':>10s} | {'alpha_bar':>10s}")
+    print(f"  {'-'*5}-+-{'-'*10}-+-{'-'*11}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}")
+
+    saved_model = gd.model
+    gd.model = ema_model
+    try:
+        for t_val in [0, 10, 50, 100, 250, 500, 750, 900, 950, 999]:
+            if t_val >= gd.num_timesteps:
+                continue
+            t = torch.full((n_test,), t_val, device=device, dtype=torch.long)
+            noise = torch.randn_like(x_0)
+            x_t = gd.q_sample(x_0, t, noise)
+
+            with torch.no_grad():
+                pred_noise = ema_model(x_t, t, None)
+
+            noise_mse = F.mse_loss(pred_noise, noise).item()
+            noise_bias = (pred_noise - noise).mean().item()
+
+            x_start_pred = gd.predict_start_from_noise(x_t, t, pred_noise)
+            x0_mse = F.mse_loss(x_start_pred, x_0).item()
+            x0_bias = (x_start_pred - x_0).mean().item()
+            x0_std = x_start_pred.std().item()
+            alpha_bar = gd.alphas_cumprod[t_val].item()
+
+            print(f"  {t_val:5d} | {noise_mse:10.4f} | {noise_bias:+11.6f} | "
+                  f"{x0_mse:10.4f} | {x0_bias:+10.4f} | {x0_std:10.4f} | {alpha_bar:10.6f}")
+
+        # ---- TEST 2: DDIM sampling trajectory ----
+        print(f"\n{'='*70}")
+        print("DIAGNOSTIC TEST 2: DDIM sampling trajectory (10 steps, eta=0)")
+        print(f"{'='*70}")
+
+        n_samp = 500
+        shape = (n_samp, latent_dim)
+        x = torch.randn(shape, device=device)
+
+        sampling_steps = 10
+        total_T = gd.num_timesteps
+        times = torch.linspace(0, total_T - 1, steps=sampling_steps, device=device).long()
+        times = torch.unique_consecutive(times)
+        times = torch.flip(times, dims=[0])
+        times = torch.cat([times, times.new_tensor([-1])])
+        time_pairs = list(zip(times[:-1].tolist(), times[1:].tolist()))
+
+        print(f"  {'step':>5s} | {'t':>5s} -> {'t_next':>6s} | "
+              f"{'x_mean':>10s} | {'x_std':>10s} | {'x0_mean':>10s} | {'x0_std':>10s} | "
+              f"{'noise_mean':>10s} | {'noise_std':>10s}")
+        print(f"  {'-'*5}-+-{'-'*5}----{'-'*6}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}-+-"
+              f"{'-'*10}-+-{'-'*10}")
+        print(f"  {'init':>5s} | {'':>5s}    {'':>6s} | "
+              f"{x.mean().item():+10.4f} | {x.std().item():10.4f} | {'':>10s} | {'':>10s} | "
+              f"{'':>10s} | {'':>10s}")
+
+        with torch.no_grad():
+            for step_i, (time, time_next) in enumerate(time_pairs):
+                time_cond = torch.full((n_samp,), time, device=device, dtype=torch.long)
+                preds = gd.model_predictions(x, time_cond, None, cond_scale=1.0, rescaled_phi=0.0)
+                x_start = preds.pred_x_start
+                pred_n = preds.pred_noise
+
+                if time_next < 0:
+                    x = x_start
+                    print(f"  {step_i:5d} | {time:5d} -> {'DONE':>6s} | "
+                          f"{x.mean().item():+10.4f} | {x.std().item():10.4f} | "
+                          f"{x_start.mean().item():+10.4f} | {x_start.std().item():10.4f} | "
+                          f"{pred_n.mean().item():+10.4f} | {pred_n.std().item():10.4f}")
+                    break
+
+                alpha = gd.alphas_cumprod[time]
+                alpha_next = gd.alphas_cumprod[time_next]
+                c = (1 - alpha_next).sqrt()
+                x = x_start * alpha_next.sqrt() + c * pred_n
+
+                print(f"  {step_i:5d} | {time:5d} -> {time_next:6d} | "
+                      f"{x.mean().item():+10.4f} | {x.std().item():10.4f} | "
+                      f"{x_start.mean().item():+10.4f} | {x_start.std().item():10.4f} | "
+                      f"{pred_n.mean().item():+10.4f} | {pred_n.std().item():10.4f}")
+
+        print(f"\n  Real latents: mean={latent_vectors.mean():.4f}, std={latent_vectors.std():.4f}")
+        print(f"  Final sample: mean={x.mean().item():.4f}, std={x.std().item():.4f}")
+
+        # ---- TEST 3: EMA vs Main model at t=100 ----
+        print(f"\n{'='*70}")
+        print("DIAGNOSTIC TEST 3: EMA vs Main model (t=100, unconditional)")
+        print(f"{'='*70}")
+
+        t = torch.full((n_test,), 100, device=device, dtype=torch.long)
+        noise = torch.randn_like(x_0)
+        x_t = gd.q_sample(x_0, t, noise)
+
+        with torch.no_grad():
+            pred_main = main_model(x_t, t, None)
+            x0_main = gd.predict_start_from_noise(x_t, t, pred_main)
+
+            pred_ema = ema_model(x_t, t, None)
+            x0_ema = gd.predict_start_from_noise(x_t, t, pred_ema)
+
+        print(f"  Main:  noise_MSE={F.mse_loss(pred_main, noise).item():.4f}, "
+              f"x0_mean={x0_main.mean().item():+.4f}, x0_std={x0_main.std().item():.4f}")
+        print(f"  EMA:   noise_MSE={F.mse_loss(pred_ema, noise).item():.4f}, "
+              f"x0_mean={x0_ema.mean().item():+.4f}, x0_std={x0_ema.std().item():.4f}")
+        print(f"  Truth: x0_mean={x_0.mean().item():+.4f}, x0_std={x_0.std().item():.4f}")
+
+    finally:
+        gd.model = saved_model
 
 
 # ===========================
@@ -717,6 +869,9 @@ def main():
     diff_ckpt = os.path.join(DIFF_CHECKPOINT_DIR, "diffusion.ckpt")
     diffusion, le = train_or_load_diffusion(latent_adata, diff_ckpt, DIFF_LOG_DIR, DIFF_EPOCHS)
     
+    # Run diffusion diagnostics before sampling
+    diagnose_diffusion(diffusion, latent_vectors, device=device)
+
     # Generate samples
     # Sample cell types proportionally to real data
     real_celltype_labels = le.transform(adata.obs["celltype"])
@@ -748,7 +903,7 @@ def main():
         x_recon_subsample = vae.sample_from_latent(z_encoded).cpu().numpy()
         z_encoded_np = z_encoded.cpu().numpy()
     
-    print(f"  Testing kNN discriminability of VAE reconstruction on subset...")
+    print(f"  Testing RF discriminability of VAE reconstruction on subset...")
     recon_auc, recon_acc = rf_discriminability(X_subsample, x_recon_subsample)
     print(f"  VAE Encode-Decode AUC: {recon_auc:.4f}")
     print(f"  VAE Encode-Decode Acc: {recon_acc:.4f}")
