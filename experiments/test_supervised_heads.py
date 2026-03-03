@@ -27,7 +27,7 @@ from sklearn.model_selection import train_test_split
 
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 from scdeepsim.dataset import ScDataModule
-from scdeepsim.quality import knn_discriminability
+from scdeepsim.quality import knn_discriminability, rf_discriminability
 
 
 SEED = 42
@@ -35,9 +35,9 @@ DATA_PATH = "../data/tabula_muris/all.h5ad"
 N_CELLS = 10_000
 N_GENES = 2_000
 MAX_EPOCHS = 100
-CHECKPOINT_DIR = "checkpoints/test_supervised/tn_vae"
-LOG_DIR = "lightning_logs/test_supervised/tn_vae"
-CELLTYPE_LATENT_DIMS = 32  # Dims allocated to celltype
+CHECKPOINT_DIR = "checkpoints/test_supervised/tn_vae_1ctdim"
+LOG_DIR = "lightning_logs/test_supervised/tn_vae_1ctdim"
+CELLTYPE_LATENT_DIMS = 1  # Dims allocated to celltype
 SUPERVISION_WEIGHTS = [1.0, 2.0, 3.0, 5.0, 7.0]  # Different weights to test
 
 
@@ -101,9 +101,10 @@ def train_or_load_supervised_vae(adata, ckpt_path, log_dir, max_epochs, sup_weig
         )
         
         data_module = ScDataModule(
-            adata, 
-            label_key="celltype", 
-            encoder="LabelEncoder"
+            adata,
+            label_keys={
+                "celltype": {"obs_key": "celltype", "type": "categorical"},
+            }
         )
         
         trainer = pl.Trainer(
@@ -272,11 +273,11 @@ def evaluate_simulation_quality(vae, adata, n_neighbors=10):
     
     print("\n--- Simulation Quality (kNN Discriminability, k={}) ---".format(n_neighbors))
     
-    auc, acc = knn_discriminability(real_np, prior_samples, n_neighbors=n_neighbors)
+    auc, acc = rf_discriminability(real_np, prior_samples, n_neighbors=n_neighbors)
     results["prior"] = {"auc": auc, "accuracy": acc}
     print(f"  Prior samples vs real:   AUC={auc:.4f}, Accuracy={acc:.4f}")
     
-    auc, acc = knn_discriminability(real_np, encoded_samples, n_neighbors=n_neighbors)
+    auc, acc = rf_discriminability(real_np, encoded_samples, n_neighbors=n_neighbors)
     results["encoded"] = {"auc": auc, "accuracy": acc}
     print(f"  Encoded samples vs real: AUC={auc:.4f}, Accuracy={acc:.4f}")
     
@@ -430,22 +431,32 @@ def print_comparison_summary(all_results):
 def plot_metrics_vs_weight(all_results, save_path="supervised_weight_comparison.png"):
     """Plot how key metrics change with supervision weight.
     
-    Shows two lines on a single plot:
+    Shows four lines on a single plot:
     1. Classification accuracy for celltype using other (unsupervised) dimensions
-    2. Discriminability (AUC) between simulated and real data
+    2. Classification accuracy for ablated data (celltype dims zeroed out)
+    3. Classification accuracy using only celltype dimensions
+    4. Discriminability (AUC) between simulated and real data
     """
     weights = [res["weight"] for res in all_results]
     
     # Extract metrics
     other_dims_acc = [res["latent_structure"]["other_dims_balanced_acc"] for res in all_results]
+    celltype_dims_acc = [res["latent_structure"]["celltype_dims_balanced_acc"] for res in all_results]
+    ablated_acc = [res["classification"]["ablated"]["balanced_acc"] for res in all_results]
     encoded_auc = [res["simulation_quality"]["encoded"]["auc"] for res in all_results]
     
     # Create single plot
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(12, 7))
     
-    # Plot both lines
+    # Plot all four lines with distinct styles
     ax.plot(weights, other_dims_acc, 'o-', linewidth=3, markersize=10, 
-            color='#e74c3c', label='Celltype Classification on Other Dims (Bal. Acc)', 
+            color='#e74c3c', label='Celltype Class. on Other Dims (Bal. Acc)', 
+            alpha=0.8)
+    ax.plot(weights, ablated_acc, 'v-', linewidth=3, markersize=10, 
+            color='#e67e22', label='Celltype Class. on Ablated Data (Bal. Acc)', 
+            alpha=0.8)
+    ax.plot(weights, celltype_dims_acc, '^-', linewidth=3, markersize=10, 
+            color='#9b59b6', label='Celltype Class. on Celltype Dims (Bal. Acc)', 
             alpha=0.8)
     ax.plot(weights, encoded_auc, 's-', linewidth=3, markersize=10, 
             color='#3498db', label='Simulation Quality (AUC: Real vs Simulated)', 
@@ -454,9 +465,9 @@ def plot_metrics_vs_weight(all_results, save_path="supervised_weight_comparison.
     # Add reference lines
     if all_results:
         random_chance = all_results[0]["classification"]["random_chance"]
-        ax.axhline(y=random_chance, color='#e74c3c', linestyle='--', linewidth=2, 
-                  alpha=0.4, label=f'Random Chance ({random_chance:.3f})')
-    ax.axhline(y=0.5, color='#3498db', linestyle='--', linewidth=2, 
+        ax.axhline(y=random_chance, color='#95a5a6', linestyle='--', linewidth=2, 
+                  alpha=0.5, label=f'Random Chance ({random_chance:.3f})')
+    ax.axhline(y=0.5, color='#3498db', linestyle=':', linewidth=2, 
               alpha=0.4, label='Perfect Simulation (0.5)')
     
     # Formatting
@@ -465,16 +476,9 @@ def plot_metrics_vs_weight(all_results, save_path="supervised_weight_comparison.
     ax.set_title('Effect of Supervision Weight on Disentanglement and Simulation Quality', 
                  fontsize=15, fontweight='bold', pad=20)
     ax.grid(True, alpha=0.3, linestyle='--')
-    ax.legend(fontsize=11, loc='best', framealpha=0.9)
+    ax.legend(fontsize=10, loc='best', framealpha=0.95, ncol=2)
     ax.set_xticks(weights)
-    ax.set_ylim([0.0, 1.0])
-    
-    # Add interpretation text
-    textstr = ('Lower Other Dims Acc = Better Disentanglement\n'
-               'Lower AUC (→0.5) = Better Simulation Quality')
-    props = dict(boxstyle='round', facecolor='wheat', alpha=0.3)
-    ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=10,
-            verticalalignment='top', bbox=props)
+    ax.set_ylim([0.0, 1.05])
     
     plt.tight_layout()
     
