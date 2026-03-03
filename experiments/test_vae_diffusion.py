@@ -192,7 +192,7 @@ def train_or_load_diffusion(latent_adata, ckpt_path, log_dir, max_epochs):
             hidden_dims=[256, 256, 128],
             num_timesteps=DIFF_TIMESTEPS,
             sampling_timesteps=DIFF_SAMPLING_STEPS,
-            beta_schedule="cosine",
+            beta_schedule="linear",
             dropout=0.05,
             lr=1e-4,
             use_ema=True,
@@ -328,7 +328,7 @@ def generate_samples(diffusion, vae, n_samples, celltype_labels, device="cpu"):
             labels=labels_tensor,
             use_ema=True,
             sampling_timesteps=DIFF_SAMPLING_STEPS,
-            ddim_sampling_eta=0.,
+            ddim_sampling_eta=0.1,
             clip_x_start_value=5.0,
         )
         

@@ -204,7 +204,7 @@ class LightningDiffusion(pl.LightningModule):
         guidance_scale: Optional[float] = None,
         progress: bool = True,
         ddim_sampling_eta: Optional[float] = None,
-        clip_denoised: bool = False,
+        clip_x_start_value: Optional[float] = None,
         rescaled_phi: float = 0.7,
         timestep_schedule: str = "linear",
     ) -> torch.Tensor:
@@ -214,18 +214,23 @@ class LightningDiffusion(pl.LightningModule):
         Args:
             num_samples: number of samples to generate
             sampling_timesteps: number of sampling steps (None = use max)
-            labels: conditional labels [num_samples] for LabelEncoder, [num_samples, num_classes] for OneHotEncoder
+            labels: conditional labels [num_samples] for LabelEncoder,
+                [num_samples, num_classes] for OneHotEncoder
             use_ema: whether to use EMA model (if available)
             guidance_scale: classifier-free guidance scale (None = use default)
             progress: whether to show progress bar
             ddim_sampling_eta: eta parameter for DDIM sampling (None = use default)
-            clip_denoised: whether to clamp predicted x0 to [-1, 1]
+            clip_x_start_value: if set, clamp predicted x_start to [-v, +v]
+                at every reverse step and re-derive pred_noise for
+                consistency.  Recommended: 5.0 for N(0, 1) latent spaces.
+            rescaled_phi: CFG++ rescaling factor
+            timestep_schedule: the schedule of the ddim fast sampling
+                timesteps, choices: "linear", "quadratic", "cosine"
         Returns:
             generated samples [num_samples, input_dim]
-            timestep_schedule: the schedule of the ddim fast sampling timesteps, choices: "linear", "quadratic", "cosine", default is "cosine"
         """
         use_ema = use_ema if use_ema is not None else self.hparams.use_ema
-        
+
         model = (
             self.ema_model if (use_ema and self.ema_model is not None) else self.model
         )
@@ -243,7 +248,7 @@ class LightningDiffusion(pl.LightningModule):
                 cond_scale=guidance_scale,
                 rescaled_phi=rescaled_phi,
                 ddim_sampling_eta=ddim_sampling_eta,
-                clip_denoised=clip_denoised,
+                clip_x_start_value=clip_x_start_value,
                 shape=(num_samples, self.hparams.input_dim),
                 timestep_schedule=timestep_schedule,
             )
