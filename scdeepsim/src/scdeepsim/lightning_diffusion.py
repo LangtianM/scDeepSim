@@ -38,7 +38,7 @@ class LightningDiffusion(pl.LightningModule):
         beta_schedule: str = "cosine",  # beta schedule for diffusion
         guidance_scale: float = 1.0,  # guidance scale for inference
         sampling_timesteps: int = 100,  # number of sampling steps
-        # predict_epsilon: bool = True, # whether to predict noise (True) or x_0 (False)
+        objective: str = "pred_v",  # "pred_noise" or "pred_v"
         ema_decay: float = 0.999,  # EMA decay rate
         # training parameters
         lr: float = 1e-4,  # learning rate
@@ -60,7 +60,7 @@ class LightningDiffusion(pl.LightningModule):
             use_classifier_free_guidance: enable classifier-free guidance
             guidance_dropout: label dropout rate for training
             guidance_scale: guidance scale for inference (1.0 = no guidance)
-            predict_epsilon: whether to predict noise (True) or x_0 (False)
+            objective: "pred_noise" or "pred_v"
         """
         super().__init__()
         self.save_hyperparameters()
@@ -81,7 +81,7 @@ class LightningDiffusion(pl.LightningModule):
             timesteps=num_timesteps,
             beta_schedule=beta_schedule,
             sampling_timesteps=sampling_timesteps,
-            objective="pred_noise",
+            objective=objective,
         )
 
         # EMA model (optional)

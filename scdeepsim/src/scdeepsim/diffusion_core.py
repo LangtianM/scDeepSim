@@ -229,6 +229,8 @@ class GaussianDiffusion(nn.Module):
 
         if objective == "pred_noise":
             loss_weight = maybe_clipped_snr / snr
+        elif objective == "pred_v":
+            loss_weight = torch.ones_like(snr)
         else:
             raise ValueError(f"Unsupported objective: {objective}")
 
@@ -355,6 +357,12 @@ class GaussianDiffusion(nn.Module):
             if clip_x_start_value is not None:
                 x_start = x_start.clamp(-clip_x_start_value, clip_x_start_value)
                 pred_noise = self.predict_noise_from_start(x, t, x_start)
+        elif self.objective == "pred_v":
+            v = model_output
+            x_start = self.predict_start_from_v(x, t, v)
+            if clip_x_start_value is not None:
+                x_start = x_start.clamp(-clip_x_start_value, clip_x_start_value)
+            pred_noise = self.predict_noise_from_start(x, t, x_start)
         else:
             raise ValueError(f"Unsupported objective: {self.objective}")
 
@@ -749,12 +757,19 @@ class GaussianDiffusion(nn.Module):
         )
 
     def p_losses(self, x_start, t, *, classes, noise=None):
-        """Compute the training loss for predicting noise."""
+        """Compute the training loss for predicting noise or v."""
         noise = default(noise, lambda: torch.randn_like(x_start))
         x_t = self.q_sample(x_start, t, noise)
-        pred_noise = self.model(x_t, t, classes)
+        pred = self.model(x_t, t, classes)
 
-        loss = F.mse_loss(pred_noise, noise, reduction="none")
+        if self.objective == "pred_noise":
+            target = noise
+        elif self.objective == "pred_v":
+            target = self.predict_v(x_start, t, noise)
+        else:
+            raise ValueError(f"Unsupported objective: {self.objective}")
+
+        loss = F.mse_loss(pred, target, reduction="none")
         loss = reduce(loss, "b d -> b", "mean")
         loss = loss * extract(self.loss_weight, t, loss.shape)
         return loss

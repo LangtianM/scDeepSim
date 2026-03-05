@@ -200,6 +200,7 @@ def train_or_load_diffusion(latent_adata, ckpt_path, log_dir, max_epochs):
             use_classifier_free_guidance=True,
             guidance_dropout=0.1,
             guidance_scale=1.5,
+            objective="pred_v",
         )
         
         # Create data module for latent space
@@ -708,7 +709,7 @@ def diagnose_diffusion(diffusion, latent_vectors, device="cpu"):
     print(f"\n{'='*70}")
     print("DIAGNOSTIC TEST 1: Noise prediction quality (EMA model, unconditional)")
     print(f"{'='*70}")
-    print(f"  {'t':>5s} | {'noise_MSE':>10s} | {'noise_bias':>11s} | "
+    print(f"  {'t':>5s} | {'obj_MSE':>10s} | {'obj_bias':>11s} | "
           f"{'x0_MSE':>10s} | {'x0_bias':>10s} | {'x0_std':>10s} | {'alpha_bar':>10s}")
     print(f"  {'-'*5}-+-{'-'*10}-+-{'-'*11}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}-+-{'-'*10}")
 
@@ -723,18 +724,28 @@ def diagnose_diffusion(diffusion, latent_vectors, device="cpu"):
             x_t = gd.q_sample(x_0, t, noise)
 
             with torch.no_grad():
-                pred_noise = ema_model(x_t, t, None)
+                model_out = ema_model(x_t, t, None)
 
-            noise_mse = F.mse_loss(pred_noise, noise).item()
-            noise_bias = (pred_noise - noise).mean().item()
+            if gd.objective == "pred_noise":
+                target = noise
+                pred_noise = model_out
+                x_start_pred = gd.predict_start_from_noise(x_t, t, pred_noise)
+            elif gd.objective == "pred_v":
+                target = gd.predict_v(x_0, t, noise)
+                x_start_pred = gd.predict_start_from_v(x_t, t, model_out)
+                pred_noise = gd.predict_noise_from_start(x_t, t, x_start_pred)
+            else:
+                target = torch.zeros_like(noise)
 
-            x_start_pred = gd.predict_start_from_noise(x_t, t, pred_noise)
+            obj_mse = F.mse_loss(model_out, target).item()
+            obj_bias = (model_out - target).mean().item()
+
             x0_mse = F.mse_loss(x_start_pred, x_0).item()
             x0_bias = (x_start_pred - x_0).mean().item()
             x0_std = x_start_pred.std().item()
             alpha_bar = gd.alphas_cumprod[t_val].item()
 
-            print(f"  {t_val:5d} | {noise_mse:10.4f} | {noise_bias:+11.6f} | "
+            print(f"  {t_val:5d} | {obj_mse:10.4f} | {obj_bias:+11.6f} | "
                   f"{x0_mse:10.4f} | {x0_bias:+10.4f} | {x0_std:10.4f} | {alpha_bar:10.6f}")
 
         # ---- TEST 2: DDIM sampling trajectory ----
@@ -802,14 +813,30 @@ def diagnose_diffusion(diffusion, latent_vectors, device="cpu"):
 
         with torch.no_grad():
             pred_main = main_model(x_t, t, None)
-            x0_main = gd.predict_start_from_noise(x_t, t, pred_main)
+            if gd.objective == "pred_v":
+                x0_main = gd.predict_start_from_v(x_t, t, pred_main)
+            else:
+                x0_main = gd.predict_start_from_noise(x_t, t, pred_main)
 
             pred_ema = ema_model(x_t, t, None)
-            x0_ema = gd.predict_start_from_noise(x_t, t, pred_ema)
+            if gd.objective == "pred_v":
+                x0_ema = gd.predict_start_from_v(x_t, t, pred_ema)
+            else:
+                x0_ema = gd.predict_start_from_noise(x_t, t, pred_ema)
 
-        print(f"  Main:  noise_MSE={F.mse_loss(pred_main, noise).item():.4f}, "
+        if gd.objective == "pred_v":
+            target = gd.predict_v(x_0, t, noise)
+            main_mse = F.mse_loss(pred_main, target).item()
+            ema_mse = F.mse_loss(pred_ema, target).item()
+            mse_name = "v_MSE"
+        else:
+            main_mse = F.mse_loss(pred_main, noise).item()
+            ema_mse = F.mse_loss(pred_ema, noise).item()
+            mse_name = "noise_MSE"
+
+        print(f"  Main:  {mse_name}={main_mse:.4f}, "
               f"x0_mean={x0_main.mean().item():+.4f}, x0_std={x0_main.std().item():.4f}")
-        print(f"  EMA:   noise_MSE={F.mse_loss(pred_ema, noise).item():.4f}, "
+        print(f"  EMA:   {mse_name}={ema_mse:.4f}, "
               f"x0_mean={x0_ema.mean().item():+.4f}, x0_std={x0_ema.std().item():.4f}")
         print(f"  Truth: x0_mean={x_0.mean().item():+.4f}, x0_std={x_0.std().item():.4f}")
 
