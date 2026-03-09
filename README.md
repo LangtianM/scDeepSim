@@ -25,6 +25,7 @@ python -m pip install -e "./scdeepsim"
   - `lightning_diffusion.py`: Lightning training loop + sampling convenience
   - `dataset.py`: `ScDataset` / `ScDataModule`
   - `ae.py`: autoencoder for single-cell data 
+  - `truncated_normal_vae.py`: truncated normal VAE for single-cell data
   - `transform.py`: preprocessing scalers
   - `plot.py`: UMAP plotting helpers
   - `control.py`: controlled data simulation utilities
