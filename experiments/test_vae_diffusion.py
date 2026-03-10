@@ -29,6 +29,7 @@ from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.quality import rf_discriminability
+from scdeepsim.plot import compare_umap
 
 
 # ===========================
@@ -952,6 +953,29 @@ def main():
     plot_results(
         adata.X, sim_data, real_celltype_labels, sampled_celltypes, le, results, RESULTS_DIR
     )
+
+    # UMAP Comparison (Real vs VAE Recon vs End-to-End Sim)
+    print(f"\n{'='*70}")
+    print("GENERATING UMAP COMPARISON")
+    print(f"{'='*70}")
+    
+    # Map numeric labels back to strings for better legend
+    real_labels_str = le.inverse_transform(real_celltype_labels[subsample_idx])
+    sim_labels_str = le.inverse_transform(sampled_celltypes)
+    vae_recon_labels_str = real_labels_str  # Same as real subsample
+    
+    umap_data_list = [X_subsample, x_recon_subsample, sim_data]
+    umap_labels_list = [real_labels_str, vae_recon_labels_str, sim_labels_str]
+    umap_titles = ["Real Data (Subsample)", "VAE Reconstruction", "End-to-End Simulation"]
+    
+    umap_save_path = os.path.join(RESULTS_DIR, "umap_comparison.png")
+    compare_umap(
+        data_list=umap_data_list,
+        labels_list=umap_labels_list,
+        title_list=umap_titles,
+        save_path=umap_save_path
+    )
+    print(f"  ✓ Saved: {umap_save_path}")
     
     # Print summary
     print_summary(results)
