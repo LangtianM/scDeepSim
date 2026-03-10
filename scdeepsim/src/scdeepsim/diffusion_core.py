@@ -8,12 +8,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-try:
-    from .diffusion_model import DenoisingUNet
-except ImportError:
-    # Fallback for direct module execution (e.g., tests adding src/ to sys.path)
-    from diffusion_model import DenoisingUNet
+from .diffusion_model import DenoisingUNet
 from einops import reduce
 from functools import partial
 from tqdm.auto import tqdm
