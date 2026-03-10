@@ -158,11 +158,6 @@ class GaussianDiffusion(nn.Module):
         alphas = 1.0 - betas
         # define \bar{\alpha}_t: the cumulative product of alphas
         alphas_cumprod = torch.cumprod(alphas, dim=0)
-        # Prevent underflow: the cosine schedule drives alpha_bar to ~0 at the
-        # last timesteps, which makes 1/sqrt(alpha_bar) explode in
-        # predict_start_from_noise.  Flooring at 1e-5 caps that amplification
-        # at ~316x and has negligible effect on training (<0.5 % of timesteps).
-        alphas_cumprod = alphas_cumprod.clamp(min=1e-5)
         # define \bar{\alpha}_{t-1}
         alphas_cumprod_prev = F.pad(alphas_cumprod[:-1], (1, 0), value=1.0)
 
@@ -247,14 +242,10 @@ class GaussianDiffusion(nn.Module):
         Returns:
             the predicted x_0
         """
-        # Cap the reciprocal coefficients so that near-zero alpha_bar values
-        # (common at the tail of cosine schedules) cannot amplify noise
-        # prediction errors by more than ~316x.  This is a runtime safety net
-        # that also covers checkpoints saved before the alpha_bar floor fix.
-        max_coeff = 1.0 / math.sqrt(1e-5)
-        sqrt_recip = extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape).clamp(max=max_coeff)
-        sqrt_recipm1 = extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape).clamp(max=max_coeff)
-        return sqrt_recip * x_t - sqrt_recipm1 * noise
+        return (
+            extract(self.sqrt_recip_alphas_cumprod, t, x_t.shape) * x_t
+            - extract(self.sqrt_recipm1_alphas_cumprod, t, x_t.shape) * noise
+        )
 
     def predict_noise_from_start(self, x_t, t, x0):
         r"""
@@ -322,7 +313,6 @@ class GaussianDiffusion(nn.Module):
 
     def model_predictions(
         self, x, t, classes, cond_scale=1.0, rescaled_phi=0.7,
-        clip_x_start_value=None,
     ):
         """
         Compute the model predictions for the given input.
@@ -333,10 +323,6 @@ class GaussianDiffusion(nn.Module):
             classes: the classes
             cond_scale: the strength of the classifier-free guidance
             rescaled_phi: the rescaled phi in CFG++
-            clip_x_start_value: if set, clamp predicted x_start to
-                [-clip_x_start_value, +clip_x_start_value] and re-derive
-                pred_noise for consistency.  Recommended: 5.0 for N(0,1)
-                latent spaces (prevents catastrophic amplification at high t).
         """
         model_output, null_output = self.model.forward_with_cond_scale(
             x=x,
@@ -349,26 +335,19 @@ class GaussianDiffusion(nn.Module):
         if self.objective == "pred_noise":
             pred_noise = model_output
             x_start = self.predict_start_from_noise(x, t, pred_noise)
-            if clip_x_start_value is not None:
-                x_start = x_start.clamp(-clip_x_start_value, clip_x_start_value)
-                pred_noise = self.predict_noise_from_start(x, t, x_start)
         elif self.objective == "pred_v":
             v = model_output
             x_start = self.predict_start_from_v(x, t, v)
-            if clip_x_start_value is not None:
-                x_start = x_start.clamp(-clip_x_start_value, clip_x_start_value)
             pred_noise = self.predict_noise_from_start(x, t, x_start)
         else:
             raise ValueError(f"Unsupported objective: {self.objective}")
 
         return ModelPrediction(pred_noise, x_start)
 
-    def p_mean_variance(self, x, t, classes, cond_scale, rescaled_phi,
-                        clip_x_start_value=None):
+    def p_mean_variance(self, x, t, classes, cond_scale, rescaled_phi):
         """Predict the posterior mean and variance of x_{t-1} | x_t, x_0. with estimated x_0."""
         preds = self.model_predictions(
-            x, t, classes, cond_scale, rescaled_phi,
-            clip_x_start_value=clip_x_start_value,
+            x, t, classes, cond_scale, rescaled_phi
         )
         x_start = preds.pred_x_start
 
@@ -380,7 +359,6 @@ class GaussianDiffusion(nn.Module):
     @torch.no_grad()
     def p_sample(
         self, x, t, classes, cond_scale=1.0, rescaled_phi=0.7,
-        clip_x_start_value=None,
     ):
         """Sample from the posterior distribution of x_{t-1} | x_t"""
         b, *_, device = *x.shape, x.device
@@ -388,7 +366,6 @@ class GaussianDiffusion(nn.Module):
         model_mean, posterior_variance, posterior_log_variance, x_start = (
             self.p_mean_variance(
                 x, batched_times, classes, cond_scale, rescaled_phi,
-                clip_x_start_value=clip_x_start_value,
             )
         )
         noise = torch.randn_like(x) if t > 0 else 0.0
@@ -400,7 +377,6 @@ class GaussianDiffusion(nn.Module):
     @torch.no_grad()
     def p_sample_loop(
         self, classes, shape, cond_scale=1.0, rescaled_phi=0.7,
-        clip_x_start_value=None,
     ):
         """
         Sample x_0 from guassian noise by reverse diffusion process.
@@ -417,7 +393,6 @@ class GaussianDiffusion(nn.Module):
         ):
             x, x_start = self.p_sample(
                 x, t, classes, cond_scale, rescaled_phi,
-                clip_x_start_value=clip_x_start_value,
             )
 
         return x
@@ -431,7 +406,6 @@ class GaussianDiffusion(nn.Module):
         ddim_sampling_eta=None,
         cond_scale=1.0,
         rescaled_phi=0.7,
-        clip_x_start_value=None,
         timestep_schedule: str = "linear",
     ):
         """Sample from the posterior distribution of x_{t-1} | x_t using DDIM."""
@@ -493,7 +467,6 @@ class GaussianDiffusion(nn.Module):
                 classes,
                 cond_scale=cond_scale,
                 rescaled_phi=rescaled_phi,
-                clip_x_start_value=clip_x_start_value,
             )
 
             if time_next < 0:
@@ -524,7 +497,6 @@ class GaussianDiffusion(nn.Module):
         rescaled_phi=0.7,
         shape=None,
         ddim_sampling_eta=None,
-        clip_x_start_value=None,
         timestep_schedule: str = "cosine"
     ):
         """
@@ -536,9 +508,6 @@ class GaussianDiffusion(nn.Module):
             rescaled_phi: CFG++ rescaling factor, default to 0.7
             shape: optional tuple (batch_size, input_dim); required when classes is None
             ddim_sampling_eta: eta parameter for DDIM sampling (None = use default)
-            clip_x_start_value: if set, clamp predicted x_start to
-                [-v, +v] at every reverse step.  Recommended: 5.0 for
-                N(0, 1) latent spaces.
             timestep_schedule: the schedule of the timesteps
         """
         if shape is None:
@@ -555,7 +524,6 @@ class GaussianDiffusion(nn.Module):
             sampling_timesteps = self.num_timesteps
             return self.p_sample_loop(
                 classes, shape, cond_scale, rescaled_phi,
-                clip_x_start_value=clip_x_start_value,
             )
         elif sampling_timesteps < self.num_timesteps:
             return self.ddim_sample(
@@ -565,7 +533,6 @@ class GaussianDiffusion(nn.Module):
                 ddim_sampling_eta=ddim_sampling_eta,
                 cond_scale=cond_scale,
                 rescaled_phi=rescaled_phi,
-                clip_x_start_value=clip_x_start_value,
                 timestep_schedule=timestep_schedule,
             )
         else:
@@ -584,7 +551,6 @@ class GaussianDiffusion(nn.Module):
         ddim_sampling_eta=None,
         cond_scale=1.0,
         rescaled_phi=0.7,
-        clip_x_start_value=None,
     ):
         """Interpolate between two samples. Both linear and spherical linear interpolation are supported.
 
@@ -599,7 +565,6 @@ class GaussianDiffusion(nn.Module):
             ddim_sampling_eta: eta parameter for DDIM sampling (None = use default)
             cond_scale: classifier-free guidance scale
             rescaled_phi: CFG++ rescaling factor
-            clip_x_start_value: if set, clamp predicted x_start to [-v, +v]
         Returns:
             the interpolated sample
         """
@@ -631,7 +596,6 @@ class GaussianDiffusion(nn.Module):
                 ddim_sampling_eta=ddim_sampling_eta,
                 cond_scale=cond_scale,
                 rescaled_phi=rescaled_phi,
-                clip_x_start_value=clip_x_start_value,
             )
         else:
             for i in tqdm(
@@ -643,7 +607,6 @@ class GaussianDiffusion(nn.Module):
                     classes=classes,
                     cond_scale=cond_scale,
                     rescaled_phi=rescaled_phi,
-                    clip_x_start_value=clip_x_start_value,
                 )
 
         return x
@@ -658,7 +621,6 @@ class GaussianDiffusion(nn.Module):
         ddim_sampling_eta=None,
         cond_scale=1.0,
         rescaled_phi=0.7,
-        clip_x_start_value=None,
     ):
         """DDIM sampling for interpolation, starting from a given noisy sample.
 
@@ -670,7 +632,6 @@ class GaussianDiffusion(nn.Module):
             ddim_sampling_eta: eta parameter for DDIM sampling
             cond_scale: classifier-free guidance scale
             rescaled_phi: CFG++ rescaling factor
-            clip_x_start_value: if set, clamp predicted x_start to [-v, +v]
         Returns:
             the denoised interpolated sample
         """
@@ -699,7 +660,6 @@ class GaussianDiffusion(nn.Module):
                 classes,
                 cond_scale=cond_scale,
                 rescaled_phi=rescaled_phi,
-                clip_x_start_value=clip_x_start_value,
             )
             if time_next < 0:
                 x = x_start

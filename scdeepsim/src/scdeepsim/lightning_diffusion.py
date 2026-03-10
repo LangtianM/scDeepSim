@@ -204,7 +204,6 @@ class LightningDiffusion(pl.LightningModule):
         guidance_scale: Optional[float] = None,
         progress: bool = True,
         ddim_sampling_eta: Optional[float] = None,
-        clip_x_start_value: Optional[float] = None,
         rescaled_phi: float = 0.7,
         timestep_schedule: str = "linear",
     ) -> torch.Tensor:
@@ -220,9 +219,6 @@ class LightningDiffusion(pl.LightningModule):
             guidance_scale: classifier-free guidance scale (None = use default)
             progress: whether to show progress bar
             ddim_sampling_eta: eta parameter for DDIM sampling (None = use default)
-            clip_x_start_value: if set, clamp predicted x_start to [-v, +v]
-                at every reverse step and re-derive pred_noise for
-                consistency.  Recommended: 5.0 for N(0, 1) latent spaces.
             rescaled_phi: CFG++ rescaling factor
             timestep_schedule: the schedule of the ddim fast sampling
                 timesteps, choices: "linear", "quadratic", "cosine"
@@ -248,7 +244,6 @@ class LightningDiffusion(pl.LightningModule):
                 cond_scale=guidance_scale,
                 rescaled_phi=rescaled_phi,
                 ddim_sampling_eta=ddim_sampling_eta,
-                clip_x_start_value=clip_x_start_value,
                 shape=(num_samples, self.hparams.input_dim),
                 timestep_schedule=timestep_schedule,
             )

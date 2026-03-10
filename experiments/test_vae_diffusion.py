@@ -330,7 +330,6 @@ def generate_samples(diffusion, vae, n_samples, celltype_labels, device="cpu"):
             use_ema=True,
             sampling_timesteps=DIFF_SAMPLING_STEPS,
             ddim_sampling_eta=0.1,
-            clip_x_start_value=5.0,
         )
         
         # Decode latents to gene expression
