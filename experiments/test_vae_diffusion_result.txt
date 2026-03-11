@@ -1,0 +1,223 @@
+/opt/miniconda3/envs/lightning/lib/python3.12/site-packages/scanpy/preprocessing/_highly_variable_genes.py:178: Trying to modify attribute `._uns` of view, initializing view as actual.
+======================================================================
+VAE + LATENT DIFFUSION SIMULATION QUALITY TEST
+======================================================================
+
+Configuration:
+  Data: 10000 cells, 2000 genes
+  VAE latent dim: 128
+  Diffusion timesteps: 1000
+  Sampling steps: 1000
+  Samples to generate: 10000
+
+======================================================================
+LOADING DATA
+======================================================================
+  Data shape: (10000, 2000)
+  Zero fraction: 0.9367
+  Cell types: 12
+
+======================================================================
+STEP 1: Training Zero-Inflated TruncatedNormalVAE
+======================================================================
+  Loading VAE checkpoint from checkpoints/vae_diffusion/vae/vae.ckpt
+  Using device: cpu
+
+======================================================================
+VAE RECONSTRUCTION QUALITY CHECK
+======================================================================
+  Original data:
+    Mean: 0.2035, Std: 0.8516
+    Min:  0.0000, Max: 9.1795
+    Zero fraction: 0.9367
+
+  VAE reconstruction:
+    Mean: 0.2024, Std: 0.8433
+    Min:  0.0000, Max: 17.0343
+    Zero fraction: 0.9361
+
+  Testing RF discriminability of VAE reconstruction...
+  VAE Recon AUC:      0.7476 (closer to 0.5 = better)
+  VAE Recon Accuracy: 0.6655 (closer to 0.5 = better)
+
+======================================================================
+ENCODING TO LATENT SPACE
+======================================================================
+  Latent vectors shape: (10000, 128)
+  Latent mean: 0.0016
+  Latent std: 1.0031
+
+======================================================================
+STEP 2: Training Diffusion Model in Latent Space
+======================================================================
+  Latent dimension: 128
+  Number of cell types: 12
+  Loading diffusion checkpoint from checkpoints/vae_diffusion/diffusion/diffusion.ckpt
+
+======================================================================
+DIAGNOSTIC: Per-dimension latent statistics
+======================================================================
+  Overall:  mean=0.0003, std=1.0005
+  Per-dim std: min=0.8977, max=1.2874, median=0.9929, mean=0.9991
+  Dims with std > 2: 0
+  Dims with std < 0.1: 0
+
+======================================================================
+DIAGNOSTIC TEST 1: Noise prediction quality (EMA model, unconditional)
+======================================================================
+      t |    obj_MSE |    obj_bias |     x0_MSE |    x0_bias |     x0_std |  alpha_bar
+  ------+------------+-------------+------------+------------+------------+-----------
+      0 |     1.0000 |   -0.001805 |     0.0001 |    +0.0000 |     1.0005 |   0.999900
+     10 |     1.0051 |   +0.001978 |     0.0022 |    -0.0001 |     0.9999 |   0.997806
+     50 |     1.0013 |   -0.006475 |     0.0301 |    +0.0011 |     0.9842 |   0.969951
+    100 |     1.0031 |   +0.000128 |     0.1052 |    -0.0000 |     0.9460 |   0.895141
+    250 |     1.0113 |   +0.001144 |     0.4840 |    -0.0008 |     0.7174 |   0.521423
+    500 |     0.9992 |   -0.001557 |     0.9215 |    +0.0015 |     0.2762 |   0.077797
+    750 |     1.0022 |   -0.001157 |     0.9989 |    +0.0012 |     0.0606 |   0.003300
+    900 |     1.0020 |   -0.001095 |     1.0017 |    +0.0011 |     0.0295 |   0.000270
+    950 |     1.0016 |   -0.001004 |     1.0015 |    +0.0010 |     0.0269 |   0.000106
+    999 |     1.0018 |   -0.001047 |     1.0018 |    +0.0010 |     0.0261 |   0.000040
+
+======================================================================
+DIAGNOSTIC TEST 2: DDIM sampling trajectory (10 steps, eta=0)
+======================================================================
+   step |     t -> t_next |     x_mean |      x_std |    x0_mean |     x0_std | noise_mean |  noise_std
+  ------+-----------------+------------+------------+------------+------------+------------+-----------
+   init |                 |    +0.0068 |     1.0003 |            |            |            |           
+      0 |   999 ->    888 |    +0.0068 |     1.0002 |    +0.0014 |     0.0261 |    +0.0068 |     1.0003
+      1 |   888 ->    777 |    +0.0068 |     0.9997 |    +0.0015 |     0.0306 |    +0.0068 |     1.0001
+      2 |   777 ->    666 |    +0.0069 |     0.9979 |    +0.0018 |     0.0515 |    +0.0068 |     0.9987
+      3 |   666 ->    555 |    +0.0070 |     0.9922 |    +0.0020 |     0.1056 |    +0.0067 |     0.9926
+      4 |   555 ->    444 |    +0.0071 |     0.9786 |    +0.0028 |     0.2058 |    +0.0066 |     0.9710
+      5 |   444 ->    333 |    +0.0072 |     0.9532 |    +0.0037 |     0.3556 |    +0.0062 |     0.9121
+      6 |   333 ->    222 |    +0.0072 |     0.9147 |    +0.0050 |     0.5369 |    +0.0053 |     0.7880
+      7 |   222 ->    111 |    +0.0072 |     0.8666 |    +0.0063 |     0.7059 |    +0.0038 |     0.5823
+      8 |   111 ->      0 |    +0.0073 |     0.8126 |    +0.0072 |     0.8096 |    +0.0012 |     0.3097
+      9 |     0 ->   DONE |    +0.0073 |     0.8126 |    +0.0073 |     0.8126 |    -0.0017 |     0.0206
+
+  Real latents: mean=0.0016, std=1.0031
+  Final sample: mean=0.0073, std=0.8126
+
+======================================================================
+DIAGNOSTIC TEST 3: EMA vs Main model (t=100, unconditional)
+======================================================================
+  Main:  v_MSE=1.0066, x0_mean=+0.0003, x0_std=0.9472
+  EMA:   v_MSE=1.0067, x0_mean=+0.0006, x0_std=0.9473
+  Truth: x0_mean=+0.0003, x0_std=1.0005
+
+======================================================================
+CHECKING FOR SAVED SIMULATED DATA
+======================================================================
+  Loading simulated data from checkpoints/vae_diffusion/simulated_data.npz
+    Gene expression shape: (10000, 2000)
+    Latent vectors shape: (10000, 128)
+    Cell type labels shape: (10000,)
+  ✓ Using cached simulated data
+
+======================================================================
+BASELINE: Testing VAE Encode-Decode Quality
+======================================================================
+  Testing RF discriminability of VAE reconstruction on subset...
+  VAE Encode-Decode AUC: 0.7524
+  VAE Encode-Decode Acc: 0.6755
+
+======================================================================
+LATENT SPACE QUALITY CHECK
+======================================================================
+  Real latents shape: (10000, 128)
+  Diffusion latents shape: (10000, 128)
+
+  Real latents:
+    Mean: 0.0000, Std: 1.0037
+    Min:  -4.8373, Max: 4.9156
+
+  Diffusion latents:
+    Mean: 0.0039, Std: 1.0149
+    Min:  -5.3562, Max: 5.6195
+
+  Testing RF discriminability in latent space...
+  Latent AUC:      0.7002 (closer to 0.5 = better)
+  Latent Accuracy: 0.6448 (closer to 0.5 = better)
+
+======================================================================
+STEP 4: Evaluating Simulation Quality
+======================================================================
+
+[1/5] RF Discriminability...
+  AUC:      0.9637 (closer to 0.5 = better)
+  Accuracy: 0.8975 (closer to 0.5 = better)
+
+[2/5] Gene Expression Statistics...
+  Gene mean correlation: 0.9956
+  Gene var correlation:  0.9929
+
+[3/5] Cell Type Proportions...
+  Mean proportion difference: 0.0022
+
+[4/5] Zero Fraction...
+  Real data:       0.9367
+  Simulated data:  0.9411
+  Difference:      0.0045
+
+[5/5] Per-Cell Expression Statistics...
+  Mean genes per cell:
+    Real:      126.70
+    Simulated: 117.73
+  Mean expression per cell:
+    Real:      407.02
+    Simulated: 361.71
+
+======================================================================
+STEP 5: Creating Visualizations
+======================================================================
+  ✓ Saved: checkpoints/vae_diffusion/results/quality_metrics_summary.png
+  ✓ Saved: checkpoints/vae_diffusion/results/gene_expression_scatter.png
+  ✓ Saved: checkpoints/vae_diffusion/results/per_cell_distributions.png
+
+======================================================================
+GENERATING UMAP COMPARISON
+======================================================================
+Performing UMAP on combined dataset (30000 samples, 2000 features) across 3 datasets.../opt/miniconda3/envs/lightning/lib/python3.12/site-packages/umap/umap_.py:1952: n_jobs value 1 overridden to 1 by setting random_state. Use no seed for parallelism.
+
+UMAP completed. Generating visualizations...
+Figure saved to checkpoints/vae_diffusion/results/umap_comparison.png
+  ✓ Saved: checkpoints/vae_diffusion/results/umap_comparison.png
+
+======================================================================
+FINAL EVALUATION SUMMARY
+======================================================================
+
+--- VAE Reconstruction Quality (Baseline) ---
+VAE Recon AUC:             0.7476 (target: 0.5)
+VAE Recon Accuracy:        0.6655 (target: 0.5)
+Note: If VAE reconstruction is poor, the problem is in the VAE, not diffusion
+
+--- Latent Space Quality ---
+Latent Discriminability AUC: 0.7002 (target: 0.5)
+Latent Discriminability Acc: 0.6448 (target: 0.5)
+Real latent mean/std:        0.0000 / 1.0037
+Diff latent mean/std:        0.0039 / 1.0149
+Note: If latent discriminability is high, the diffusion model is not learning well
+
+--- Gene Expression Space Quality (End-to-End) ---
+RF Discriminability AUC:  0.9637 (target: 0.5)
+RF Discriminability Acc:  0.8975 (target: 0.5)
+Note: This combines VAE decoder quality and diffusion sample quality
+
+--- Gene Expression Statistics ---
+Gene mean correlation:     0.9956 (target: 1.0)
+Gene variance correlation: 0.9929 (target: 1.0)
+
+--- Cell Type Distribution ---
+Mean proportion difference: 0.0022 (target: 0.0)
+
+--- Data Statistics ---
+Zero fraction (real):      0.9367
+Zero fraction (sim):       0.9411
+Genes per cell (real):     126.70
+Genes per cell (sim):      117.73
+
+======================================================================
+EXPERIMENT COMPLETE
+======================================================================
+Results saved to: checkpoints/vae_diffusion/results

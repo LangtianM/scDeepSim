@@ -11,3 +11,4 @@ experiments/sim_benchmarking_results/
 *_plan.md
 .agents/
 .vscode/
+.cursor/

@@ -60,6 +60,7 @@ N_NEIGHBORS = 10
 
 # Output
 RESULTS_DIR = "checkpoints/vae_diffusion/results"
+SIMULATED_DATA_PATH = "checkpoints/vae_diffusion/simulated_data.npz"
 
 
 # ===========================
@@ -346,6 +347,56 @@ def generate_samples(diffusion, vae, n_samples, celltype_labels, device="cpu"):
     print(f"    Zero fraction: {(x_samples == 0).mean():.4f}")
     
     return x_samples, z_samples.cpu().numpy()
+
+
+def save_simulated_data(x_samples, z_samples, celltype_labels, save_path):
+    """Save simulated gene expression data, latent vectors, and cell type labels.
+    
+    Args:
+        x_samples: Gene expression data (numpy array)
+        z_samples: Latent vectors (numpy array)
+        celltype_labels: Cell type labels (numpy array)
+        save_path: Path to save the .npz file
+    """
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    np.savez(
+        save_path,
+        gene_expression=x_samples,
+        latent_vectors=z_samples,
+        celltype_labels=celltype_labels,
+    )
+    print(f"  ✓ Saved simulated data to {save_path}")
+
+
+def load_simulated_data(load_path, expected_n_samples=None):
+    """Load previously saved simulated data.
+    
+    Args:
+        load_path: Path to the .npz file
+        expected_n_samples: Optional check for expected number of samples
+        
+    Returns:
+        Tuple of (gene_expression, latent_vectors, celltype_labels) or None if file doesn't exist
+    """
+    if not os.path.exists(load_path):
+        return None
+    
+    print(f"  Loading simulated data from {load_path}")
+    data = np.load(load_path)
+    
+    x_samples = data["gene_expression"]
+    z_samples = data["latent_vectors"]
+    celltype_labels = data["celltype_labels"]
+    
+    if expected_n_samples is not None and len(x_samples) != expected_n_samples:
+        print(f"  Warning: Expected {expected_n_samples} samples, but found {len(x_samples)}")
+        return None
+    
+    print(f"    Gene expression shape: {x_samples.shape}")
+    print(f"    Latent vectors shape: {z_samples.shape}")
+    print(f"    Cell type labels shape: {celltype_labels.shape}")
+    
+    return x_samples, z_samples, celltype_labels
 
 
 def evaluate_simulation_quality(real_data, sim_data, real_labels, sim_labels, le):
@@ -899,7 +950,7 @@ def main():
     # Run diffusion diagnostics before sampling
     diagnose_diffusion(diffusion, latent_vectors, device=device)
 
-    # Generate samples
+    # Generate or load samples
     # Sample cell types proportionally to real data
     real_celltype_labels = le.transform(adata.obs["celltype"])
     celltype_counts = np.bincount(real_celltype_labels)
@@ -910,9 +961,22 @@ def main():
         p=celltype_probs
     )
     
-    sim_data, sim_latents = generate_samples(
-        diffusion, vae, N_SAMPLES, sampled_celltypes, device=device
-    )
+    # Try to load previously saved simulated data
+    print(f"\n{'='*70}")
+    print("CHECKING FOR SAVED SIMULATED DATA")
+    print(f"{'='*70}")
+    loaded_data = load_simulated_data(SIMULATED_DATA_PATH, expected_n_samples=N_SAMPLES)
+    
+    if loaded_data is not None:
+        print(f"  ✓ Using cached simulated data")
+        sim_data, sim_latents, sampled_celltypes = loaded_data
+    else:
+        print(f"  No cached data found, generating new samples...")
+        sim_data, sim_latents = generate_samples(
+            diffusion, vae, N_SAMPLES, sampled_celltypes, device=device
+        )
+        # Save the newly generated data
+        save_simulated_data(sim_data, sim_latents, sampled_celltypes, SIMULATED_DATA_PATH)
     
     # CRITICAL: Compare with VAE-encoded-decoded baseline
     print(f"\n{'='*70}")
