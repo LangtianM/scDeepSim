@@ -99,13 +99,6 @@ DIAGNOSTIC TEST 2: DDIM sampling trajectory (10 steps, eta=0)
   Final sample: mean=0.0073, std=0.8126
 
 ======================================================================
-DIAGNOSTIC TEST 3: EMA vs Main model (t=100, unconditional)
-======================================================================
-  Main:  v_MSE=1.0066, x0_mean=+0.0003, x0_std=0.9472
-  EMA:   v_MSE=1.0067, x0_mean=+0.0006, x0_std=0.9473
-  Truth: x0_mean=+0.0003, x0_std=1.0005
-
-======================================================================
 CHECKING FOR SAVED SIMULATED DATA
 ======================================================================
   Loading simulated data from checkpoints/vae_diffusion/simulated_data.npz

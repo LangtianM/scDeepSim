@@ -48,9 +48,9 @@ VAE_CHECKPOINT_DIR = "checkpoints/vae_diffusion/vae"
 VAE_LOG_DIR = "lightning_logs/vae_diffusion/vae"
 
 # Diffusion parameters
-DIFF_EPOCHS = 200
-DIFF_CHECKPOINT_DIR = "checkpoints/vae_diffusion/diffusion"
-DIFF_LOG_DIR = "lightning_logs/vae_diffusion/diffusion"
+DIFF_EPOCHS = 100
+DIFF_CHECKPOINT_DIR = "checkpoints/vae_diffusion/diffusion_noise"
+DIFF_LOG_DIR = "lightning_logs/vae_diffusion/diffusion_noise"
 DIFF_TIMESTEPS = 1000
 DIFF_SAMPLING_STEPS = 1000
 
@@ -59,8 +59,8 @@ N_SAMPLES = 10_000
 N_NEIGHBORS = 10
 
 # Output
-RESULTS_DIR = "checkpoints/vae_diffusion/results"
-SIMULATED_DATA_PATH = "checkpoints/vae_diffusion/simulated_data.npz"
+RESULTS_DIR = "checkpoints/vae_diffusion/results_pred_noise"
+SIMULATED_DATA_PATH = "checkpoints/vae_diffusion/simulated_data_pred_noise.npz"
 
 
 # ===========================
@@ -202,7 +202,7 @@ def train_or_load_diffusion(latent_adata, ckpt_path, log_dir, max_epochs):
             use_classifier_free_guidance=True,
             guidance_dropout=0.1,
             guidance_scale=1.5,
-            objective="pred_v",
+            objective="pred_noise",
         )
         
         # Create data module for latent space
