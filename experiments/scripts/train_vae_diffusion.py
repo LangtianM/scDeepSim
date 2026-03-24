@@ -3,18 +3,23 @@
 This script:
 1. Trains a zero-inflated TruncatedNormalVAE on single-cell data
 2. Trains a diffusion model in the VAE's latent space
-3. Evaluates simulation quality by:
+3. Runs NegBinCopula as a classical baseline
+4. Evaluates simulation quality by:
    - Sampling from diffusion -> decoding with VAE
-   - Comparing with real data using RF discriminability
+   - Comparing with real data using RF or KNN discriminability
    - Measuring gene expression correlations
+   - Comparing end-to-end discriminability against NegBinCopula baseline
    - Visualizing results
 
 Usage:
-    # pred_v run (default)
+    # pred_v run (default, with RF discriminability)
     python scripts/train_vae_diffusion.py
 
-    # override a single hparam
-    python scripts/train_vae_diffusion.py vae.latent_dim=64
+    # override discriminability method to KNN
+    python scripts/train_vae_diffusion.py eval.discriminability_method=knn
+
+    # override other hyperparameters
+    python scripts/train_vae_diffusion.py vae.latent_dim=64 eval.discriminability_method=knn eval.n_neighbors=15
 """
 
 import pyrootutils
@@ -37,7 +42,22 @@ from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.quality import rf_discriminability
+from scdeepsim.quality import knn_discriminability 
 from scdeepsim.plot import compare_umap
+
+
+# ===========================
+# Discriminability Helper
+# ===========================
+
+def compute_discriminability(X_real, X_sim, method="rf", n_neighbors=10, seed=42):
+    """Compute discriminability using the specified method (RF or KNN)."""
+    if method.lower() == "knn":
+        return knn_discriminability(X_real, X_sim, seed=seed, n_neighbors=n_neighbors)
+    elif method.lower() == "rf":
+        return rf_discriminability(X_real, X_sim, seed=seed)
+    else:
+        raise ValueError(f"Unknown discriminability method: {method}. Use 'rf' or 'knn'.")
 
 
 # ===========================
@@ -45,7 +65,11 @@ from scdeepsim.plot import compare_umap
 # ===========================
 
 def load_and_preprocess(path, n_cells, n_genes, seed=42):
-    """Load Tabula Muris, subsample, select HVGs, normalize + log1p."""
+    """Load Tabula Muris, subsample, select HVGs, normalize + log1p.
+
+    Returns both the normalized adata (for VAE/Diffusion) and the raw count
+    adata (for NegBinCopula, which expects integer counts).
+    """
     np.random.seed(seed)
     adata = sc.read_h5ad(path)
     adata.var_names_make_unique()
@@ -58,10 +82,13 @@ def load_and_preprocess(path, n_cells, n_genes, seed=42):
     adata = adata[:, adata.var["highly_variable"]].copy()
     adata.X = adata.X.toarray() if hasattr(adata.X, "toarray") else adata.X
 
+    # Keep a copy of raw counts before normalization (needed by NegBinCopula)
+    adata_raw = adata.copy()
+
     sc.pp.normalize_total(adata, target_sum=1e4)
     sc.pp.log1p(adata)
 
-    return adata
+    return adata, adata_raw
 
 
 # ===========================
@@ -209,7 +236,7 @@ def train_or_load_diffusion(latent_adata, ckpt_path, log_dir, cfg):
 # Sampling and Evaluation
 # ===========================
 
-def evaluate_latent_space_quality(real_latents, diffusion_latents):
+def evaluate_latent_space_quality(real_latents, diffusion_latents, method="rf", n_neighbors=10):
     """Test discriminability in latent space before decoding."""
     print(f"\n{'='*70}")
     print("LATENT SPACE QUALITY CHECK")
@@ -226,8 +253,9 @@ def evaluate_latent_space_quality(real_latents, diffusion_latents):
     print(f"    Mean: {diffusion_latents.mean():.4f}, Std: {diffusion_latents.std():.4f}")
     print(f"    Min:  {diffusion_latents.min():.4f}, Max: {diffusion_latents.max():.4f}")
 
-    print(f"\n  Testing RF discriminability in latent space...")
-    auc, acc = rf_discriminability(real_latents, diffusion_latents)
+    method_name = "KNN" if method.lower() == "knn" else "RF"
+    print(f"\n  Testing {method_name} discriminability in latent space...")
+    auc, acc = compute_discriminability(real_latents, diffusion_latents, method=method, n_neighbors=n_neighbors)
     print(f"  Latent AUC:      {auc:.4f} (closer to 0.5 = better)")
     print(f"  Latent Accuracy: {acc:.4f} (closer to 0.5 = better)")
 
@@ -241,7 +269,66 @@ def evaluate_latent_space_quality(real_latents, diffusion_latents):
     }
 
 
-def compare_vae_reconstruction_quality(vae, adata, device="cpu"):
+def run_negbin_copula(adata_raw, adata_norm, checkpoint_dir, cfg, method="rf", n_neighbors=10):
+    """Fit NegBinCopula on raw counts, sample, and compute discriminability.
+
+    NegBinCopula expects raw integer count data, so we pass adata_raw (before
+    normalization).  After sampling we apply the same normalize_total + log1p
+    pipeline used for the real data so that comparisons are in the same space.
+    """
+    from scdesigner.simulators import NegBinCopula
+
+    print(f"\n{'='*70}")
+    print("NEGBINCOPULA BASELINE")
+    print(f"{'='*70}")
+
+    samples_path = os.path.join(checkpoint_dir, "negbin_copula_samples.h5ad")
+
+    if os.path.exists(samples_path):
+        print(f"  Loading cached NegBinCopula samples from {samples_path}")
+        nbc_samples = sc.read_h5ad(samples_path)
+    else:
+        print("  Fitting NegBinCopula model (this can take a while)...")
+        nbc = NegBinCopula(mean_formula=cfg.negbin_copula.mean_formula)
+        nbc.fit(
+            adata_raw,
+            max_epochs=cfg.negbin_copula.max_epochs,
+            top_k=cfg.negbin_copula.top_k,
+        )
+        print("  Sampling from NegBinCopula...")
+        nbc_samples = nbc.sample(obs=adata_raw.obs)
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        nbc_samples.write_h5ad(samples_path)
+        print(f"  Saved NegBinCopula samples to {samples_path}")
+
+    # Normalize and log1p to match the space used for discriminability
+    processed_nbc = nbc_samples.copy()
+    sc.pp.normalize_total(processed_nbc, target_sum=1e4)
+    sc.pp.log1p(processed_nbc)
+
+    print(f"\n  NegBinCopula sample statistics (after normalize + log1p):")
+    print(f"    Mean: {processed_nbc.X.mean():.4f}, Std: {processed_nbc.X.std():.4f}")
+    print(f"    Zero fraction: {(processed_nbc.X == 0).mean():.4f}")
+
+    method_name = "KNN" if method.lower() == "knn" else "RF"
+    print(f"\n  Computing {method_name} discriminability vs real data...")
+    auc, acc = compute_discriminability(
+        adata_norm.X, processed_nbc.X, method=method, n_neighbors=n_neighbors
+    )
+    print(f"  NegBinCopula AUC:      {auc:.4f} (closer to 0.5 = better)")
+    print(f"  NegBinCopula Accuracy: {acc:.4f} (closer to 0.5 = better)")
+
+    nbc_labels = nbc_samples.obs["celltype"].values
+
+    return {
+        "negbincopula_auc": auc,
+        "negbincopula_accuracy": acc,
+        "negbincopula_zero_frac": float((processed_nbc.X == 0).mean()),
+        "negbincopula_mean": float(processed_nbc.X.mean()),
+    }, processed_nbc.X, nbc_labels
+
+
+def compare_vae_reconstruction_quality(vae, adata, method="rf", n_neighbors=10, device="cpu"):
     """Test VAE reconstruction to isolate VAE vs diffusion issues."""
     print(f"\n{'='*70}")
     print("VAE RECONSTRUCTION QUALITY CHECK")
@@ -265,8 +352,9 @@ def compare_vae_reconstruction_quality(vae, adata, device="cpu"):
     print(f"    Mean: {x_recon.mean():.4f}, Std: {x_recon.std():.4f}")
     print(f"    Zero fraction: {(x_recon == 0).mean():.4f}")
 
-    print(f"\n  Testing RF discriminability of VAE reconstruction...")
-    auc, acc = rf_discriminability(adata.X, x_recon)
+    method_name = "KNN" if method.lower() == "knn" else "RF"
+    print(f"\n  Testing {method_name} discriminability of VAE reconstruction...")
+    auc, acc = compute_discriminability(adata.X, x_recon, method=method, n_neighbors=n_neighbors)
     print(f"  VAE Recon AUC:      {auc:.4f} (closer to 0.5 = better)")
     print(f"  VAE Recon Accuracy: {acc:.4f} (closer to 0.5 = better)")
 
@@ -345,7 +433,7 @@ def load_simulated_data(load_path, expected_n_samples=None):
     return x_samples, z_samples, celltype_labels
 
 
-def evaluate_simulation_quality(real_data, sim_data, real_labels, sim_labels, le):
+def evaluate_simulation_quality(real_data, sim_data, real_labels, sim_labels, le, method="rf", n_neighbors=10):
     """Comprehensive evaluation of simulation quality."""
     print(f"\n{'='*70}")
     print("STEP 4: Evaluating Simulation Quality")
@@ -353,10 +441,11 @@ def evaluate_simulation_quality(real_data, sim_data, real_labels, sim_labels, le
 
     results = {}
 
-    print("\n[1/5] RF Discriminability...")
-    auc, acc = rf_discriminability(real_data, sim_data)
-    results["RF_auc"] = auc
-    results["RF_accuracy"] = acc
+    method_name = "KNN" if method.lower() == "knn" else "RF"
+    print(f"\n[1/5] {method_name} Discriminability...")
+    auc, acc = compute_discriminability(real_data, sim_data, method=method, n_neighbors=n_neighbors)
+    results[f"{method_name}_auc"] = auc
+    results[f"{method_name}_accuracy"] = acc
     print(f"  AUC:      {auc:.4f} (closer to 0.5 = better)")
     print(f"  Accuracy: {acc:.4f} (closer to 0.5 = better)")
 
@@ -407,7 +496,7 @@ def evaluate_simulation_quality(real_data, sim_data, real_labels, sim_labels, le
 # Visualization
 # ===========================
 
-def plot_results(real_data, sim_data, real_labels, sim_labels, le, results, save_dir, n_genes):
+def plot_results(real_data, sim_data, real_labels, sim_labels, le, results, save_dir, n_genes, method="rf"):
     """Create comprehensive visualization of results."""
     os.makedirs(save_dir, exist_ok=True)
 
@@ -415,37 +504,53 @@ def plot_results(real_data, sim_data, real_labels, sim_labels, le, results, save
     print("STEP 5: Creating Visualizations")
     print(f"{'='*70}")
 
+    method_name = "KNN" if method.lower() == "knn" else "RF"
+    auc_key = f"{method_name}_auc"
+    acc_key = f"{method_name}_accuracy"
+
+    has_nbc = "negbincopula_auc" in results
+
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
+    # --- AUC comparison: latent / VAE+Diffusion end-to-end / NegBinCopula / VAE recon ---
     ax = axes[0, 0]
-    metrics = ["Latent AUC", "Gene AUC", "VAE Recon AUC"]
-    values = [results["latent_auc"], results["RF_auc"], results["vae_recon_auc"]]
+    metrics = ["Latent AUC", "VAE+Diff AUC", "VAE Recon AUC"]
+    values = [results["latent_auc"], results[auc_key], results["vae_recon_auc"]]
+    if has_nbc:
+        metrics.append("NegBinCopula AUC")
+        values.append(results["negbincopula_auc"])
     colors = ["#e74c3c" if v > 0.6 else "#27ae60" for v in values]
     bars = ax.bar(metrics, values, color=colors, alpha=0.7, edgecolor="black", linewidth=2)
     ax.axhline(y=0.5, color="gray", linestyle="--", linewidth=2, label="Perfect (0.5)")
     ax.set_ylabel("AUC", fontsize=12, fontweight="bold")
-    ax.set_title("Discriminability Analysis\n(Lower = Better)", fontsize=13, fontweight="bold")
+    ax.set_title(f"Discriminability Analysis ({method_name})\n(Lower = Better)", fontsize=13, fontweight="bold")
     ax.set_ylim([0, 1])
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     for bar, val in zip(bars, values):
         ax.text(bar.get_x() + bar.get_width() / 2., bar.get_height() + 0.02,
                 f'{val:.3f}', ha='center', va='bottom', fontweight='bold', fontsize=9)
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right", fontsize=9)
 
+    # --- Accuracy comparison: latent / VAE+Diffusion / NegBinCopula ---
     ax = axes[0, 1]
-    metrics = ["Latent Acc", "Gene Acc"]
-    values = [results["latent_accuracy"], results["RF_accuracy"]]
+    metrics = ["Latent Acc", "VAE+Diff Acc"]
+    values = [results["latent_accuracy"], results[acc_key]]
+    if has_nbc:
+        metrics.append("NegBinCopula Acc")
+        values.append(results["negbincopula_accuracy"])
     colors = ["#e74c3c" if v > 0.6 else "#27ae60" for v in values]
     bars = ax.bar(metrics, values, color=colors, alpha=0.7, edgecolor="black", linewidth=2)
     ax.axhline(y=0.5, color="gray", linestyle="--", linewidth=2, label="Perfect (0.5)")
     ax.set_ylabel("Accuracy", fontsize=12, fontweight="bold")
-    ax.set_title("RF Discriminability Accuracy\n(Lower = Better)", fontsize=13, fontweight="bold")
+    ax.set_title(f"{method_name} Discriminability Accuracy\n(Lower = Better)", fontsize=13, fontweight="bold")
     ax.set_ylim([0, 1])
     ax.legend()
     ax.grid(axis="y", alpha=0.3)
     for bar, val in zip(bars, values):
         ax.text(bar.get_x() + bar.get_width() / 2., bar.get_height() + 0.02,
                 f'{val:.3f}', ha='center', va='bottom', fontweight='bold')
+    plt.setp(ax.get_xticklabels(), rotation=20, ha="right", fontsize=9)
 
     ax = axes[0, 2]
     metrics = ["Mean", "Variance"]
@@ -582,11 +687,15 @@ def plot_results(real_data, sim_data, real_labels, sim_labels, le, results, save
     plt.close()
 
 
-def print_summary(results):
+def print_summary(results, method="rf"):
     """Print a summary of evaluation results."""
     print(f"\n{'='*70}")
     print("FINAL EVALUATION SUMMARY")
     print(f"{'='*70}")
+
+    method_name = "KNN" if method.lower() == "knn" else "RF"
+    auc_key = f"{method_name}_auc"
+    acc_key = f"{method_name}_accuracy"
 
     print("\n--- VAE Reconstruction Quality (Baseline) ---")
     print(f"VAE Recon AUC:             {results['vae_recon_auc']:.4f} (target: 0.5)")
@@ -598,9 +707,12 @@ def print_summary(results):
     print(f"Real latent mean/std:        {results['real_latent_mean']:.4f} / {results['real_latent_std']:.4f}")
     print(f"Diff latent mean/std:        {results['diff_latent_mean']:.4f} / {results['diff_latent_std']:.4f}")
 
-    print("\n--- Gene Expression Space Quality (End-to-End) ---")
-    print(f"RF Discriminability AUC:  {results['RF_auc']:.4f} (target: 0.5)")
-    print(f"RF Discriminability Acc:  {results['RF_accuracy']:.4f} (target: 0.5)")
+    print(f"\n--- End-to-End Simulation Discriminability ({method_name}) ---")
+    print(f"{'Method':<30} {'AUC':>8}  {'Accuracy':>8}  {'Target'}")
+    print(f"{'-'*60}")
+    print(f"{'VAE+Diffusion':<30} {results[auc_key]:>8.4f}  {results[acc_key]:>8.4f}  0.5 (lower = better)")
+    if "negbincopula_auc" in results:
+        print(f"{'NegBinCopula':<30} {results['negbincopula_auc']:>8.4f}  {results['negbincopula_accuracy']:>8.4f}  0.5 (lower = better)")
 
     print("\n--- Gene Expression Statistics ---")
     print(f"Gene mean correlation:     {results['gene_mean_corr']:.4f} (target: 1.0)")
@@ -611,6 +723,8 @@ def print_summary(results):
 
     print("\n--- Data Statistics ---")
     print(f"Zero fraction (real/sim):  {results['real_zero_frac']:.4f} / {results['sim_zero_frac']:.4f}")
+    if "negbincopula_zero_frac" in results:
+        print(f"Zero fraction (NegBinCopula): {results['negbincopula_zero_frac']:.4f}")
     print(f"Genes per cell (real/sim): {results['mean_genes_per_cell_real']:.2f} / {results['mean_genes_per_cell_sim']:.2f}")
 
 
@@ -718,7 +832,7 @@ def diagnose_diffusion(diffusion, latent_vectors, device="cpu"):
 
 @hydra.main(
     config_path="../configs",
-    config_name="train_vae_diffusion_pred_v",
+    config_name="train_vae_diffusion",
     version_base="1.3",
 )
 def main(cfg: DictConfig) -> None:
@@ -733,6 +847,9 @@ def main(cfg: DictConfig) -> None:
         f"simulated_data_{cfg.diffusion.objective}.npz",
     )
 
+    discriminability_method = cfg.eval.get("discriminability_method", "rf")
+    n_neighbors = cfg.eval.get("n_neighbors", 10)
+
     print("=" * 70)
     print("VAE + LATENT DIFFUSION SIMULATION QUALITY TEST")
     print("=" * 70)
@@ -743,11 +860,14 @@ def main(cfg: DictConfig) -> None:
     print(f"  Diffusion timesteps: {cfg.diffusion.timesteps}")
     print(f"  Sampling steps: {cfg.diffusion.sampling_steps}")
     print(f"  Samples to generate: {cfg.eval.n_samples}")
+    print(f"  Discriminability method: {discriminability_method.upper()}")
+    if discriminability_method.lower() == "knn":
+        print(f"  KNN neighbors: {n_neighbors}")
 
     print(f"\n{'='*70}")
     print("LOADING DATA")
     print(f"{'='*70}")
-    adata = load_and_preprocess(cfg.paths.data_path, cfg.data.n_cells, cfg.data.n_genes, cfg.seed)
+    adata, adata_raw = load_and_preprocess(cfg.paths.data_path, cfg.data.n_cells, cfg.data.n_genes, cfg.seed)
     print(f"  Data shape: {adata.X.shape}")
     print(f"  Zero fraction: {(adata.X == 0).mean():.4f}")
     print(f"  Cell types: {adata.obs['celltype'].nunique()}")
@@ -757,7 +877,7 @@ def main(cfg: DictConfig) -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"  Using device: {device}")
-    vae_recon_metrics = compare_vae_reconstruction_quality(vae, adata, device=device)
+    vae_recon_metrics = compare_vae_reconstruction_quality(vae, adata, method=discriminability_method, n_neighbors=n_neighbors, device=device)
 
     print(f"\n{'='*70}")
     print("ENCODING TO LATENT SPACE")
@@ -814,32 +934,58 @@ def main(cfg: DictConfig) -> None:
         x_recon_subsample = vae.sample_from_latent(z_encoded).cpu().numpy()
         z_encoded_np = z_encoded.cpu().numpy()
 
-    recon_auc, recon_acc = rf_discriminability(X_subsample, x_recon_subsample)
+    recon_auc, recon_acc = compute_discriminability(X_subsample, x_recon_subsample, method=discriminability_method, n_neighbors=n_neighbors)
     print(f"  VAE Encode-Decode AUC: {recon_auc:.4f}, Acc: {recon_acc:.4f}")
 
-    latent_quality = evaluate_latent_space_quality(z_encoded_np, sim_latents)
-    results = evaluate_simulation_quality(adata.X, sim_data, real_celltype_labels, sampled_celltypes, le)
+    latent_quality = evaluate_latent_space_quality(z_encoded_np, sim_latents, method=discriminability_method, n_neighbors=n_neighbors)
+    results = evaluate_simulation_quality(adata.X, sim_data, real_celltype_labels, sampled_celltypes, le, method=discriminability_method, n_neighbors=n_neighbors)
     results.update(latent_quality)
     results.update(vae_recon_metrics)
 
+    # Run NegBinCopula baseline for end-to-end discriminability comparison
+    nbc_data = None
+    nbc_labels_full = None
+    try:
+        nbc_metrics, nbc_data, nbc_labels_full = run_negbin_copula(
+            adata_raw, adata,
+            checkpoint_dir=checkpoint_dir,
+            cfg=cfg,
+            method=discriminability_method,
+            n_neighbors=n_neighbors,
+        )
+        results.update(nbc_metrics)
+    except Exception as exc:
+        print(f"\n  Warning: NegBinCopula failed and will be skipped. Reason: {exc}")
+
     plot_results(adata.X, sim_data, real_celltype_labels, sampled_celltypes, le,
-                 results, results_dir, cfg.data.n_genes)
+                 results, results_dir, cfg.data.n_genes, method=discriminability_method)
 
     print(f"\n{'='*70}")
     print("GENERATING UMAP COMPARISON")
     print(f"{'='*70}")
     real_labels_str = le.inverse_transform(real_celltype_labels[subsample_idx])
     sim_labels_str = le.inverse_transform(sampled_celltypes)
+
+    data_list = [X_subsample, x_recon_subsample, sim_data]
+    labels_list = [real_labels_str, real_labels_str, sim_labels_str]
+    title_list = ["Real Data (Subsample)", "VAE Reconstruction", "VAE+Diffusion"]
+    if nbc_data is not None:
+        # Subsample NegBinCopula cells and carry the matching labels together
+        nbc_idx = np.random.choice(len(nbc_data), size=len(X_subsample), replace=False)
+        data_list.append(nbc_data[nbc_idx])
+        labels_list.append(nbc_labels_full[nbc_idx])
+        title_list.append("NegBinCopula")
+
     umap_save_path = os.path.join(results_dir, "umap_comparison.png")
     compare_umap(
-        data_list=[X_subsample, x_recon_subsample, sim_data],
-        labels_list=[real_labels_str, real_labels_str, sim_labels_str],
-        title_list=["Real Data (Subsample)", "VAE Reconstruction", "End-to-End Simulation"],
+        data_list=data_list,
+        labels_list=labels_list,
+        title_list=title_list,
         save_path=umap_save_path,
     )
     print(f"  Saved: {umap_save_path}")
 
-    print_summary(results)
+    print_summary(results, method=discriminability_method)
 
     print(f"\n{'='*70}")
     print(f"EXPERIMENT COMPLETE - Results saved to: {results_dir}")

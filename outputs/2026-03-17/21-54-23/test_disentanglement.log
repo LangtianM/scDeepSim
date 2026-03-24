@@ -1,0 +1,14 @@
+[2026-03-17 21:54:23,738][__main__][INFO] - ======================================================================
+[2026-03-17 21:54:23,738][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+[2026-03-17 21:54:23,738][__main__][INFO] - ======================================================================
+[2026-03-17 21:54:23,738][__main__][INFO] - 
+[1/4] Loading and preprocessing data...
+[2026-03-17 21:54:26,244][__main__][INFO] - Data shape: (10000, 2000)
+[2026-03-17 21:54:26,257][__main__][INFO] - Zero fraction: 0.9775
+[2026-03-17 21:54:26,258][__main__][INFO] - 
+[2/4] Training or loading VAE...
+[2026-03-17 21:54:26,260][__main__][INFO] - Found 37 celltypes, 3 batches, 10 stages
+[2026-03-17 21:54:26,260][__main__][INFO] - Supervision weight: 5.0
+[2026-03-17 21:54:26,260][__main__][INFO] - Loading checkpoint from /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/outputs/checkpoints/test_disentangle/disentangle_vae.ckpt
+[2026-03-17 21:54:26,321][__main__][INFO] - 
+[3/4] Encoding data and extracting latent subspaces...

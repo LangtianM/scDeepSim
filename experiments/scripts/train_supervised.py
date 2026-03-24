@@ -15,6 +15,7 @@ Usage:
     python scripts/train_supervised.py sweep.supervision_weights=[1.0,5.0,10.0]
 """
 
+from typing import Any
 import pyrootutils
 
 root = pyrootutils.setup_root(
@@ -132,7 +133,7 @@ def encode_and_ablate(vae, adata):
         z_original = vae.reparameterize(mu_z, logvar_z)
 
         z_ablated = z_original.clone()
-        celltype_slice = vae._sup_slices.get("celltype", slice(0, 0))
+        celltype_slice = vae._sup_slices.get("celltype", slice[int, int, Any](0, 0))
         z_ablated[:, celltype_slice] = 0.0
 
         print(f"  Ablated latent dims {celltype_slice.start}:{celltype_slice.stop}")

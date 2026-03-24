@@ -118,6 +118,18 @@ def compare_umap(
             raise ValueError("title_list must have the same length as data_list")
         titles = [str(t) for t in title_list]
 
+    # Build a shared label→color mapping so the same cell type gets the same
+    # color in every panel, regardless of how many panels there are.
+    all_labels = np.concatenate(
+        [np.asarray(lab) for lab in norm_labels if lab is not None]
+    ) if any(lab is not None for lab in norm_labels) else np.array([])
+    global_unique = np.unique(all_labels) if len(all_labels) > 0 else np.array([])
+    colormap = plt.get_cmap(cmap)
+    n_global = max(len(global_unique), 1)
+    shared_color_dict = {
+        label: colormap(i / n_global) for i, label in enumerate(global_unique)
+    }
+
     # Concatenate datasets for consistent UMAP transformation
     sizes = [ds.shape[0] for ds in datasets]
     data_combined = np.vstack(datasets)
@@ -163,6 +175,7 @@ def compare_umap(
             cmap=cmap,
             alpha=alpha,
             s=s,
+            color_dict=shared_color_dict if shared_color_dict else None,
         )
 
     plt.tight_layout()
@@ -258,6 +271,7 @@ def plot_umap(
     show_legend: bool = True,
     xlabel: str = "UMAP 1",
     ylabel: str = "UMAP 2",
+    color_dict: Optional[dict] = None,
 ) -> plt.Axes:
     """
     Plot a single UMAP embedding.
@@ -302,15 +316,18 @@ def plot_umap(
         labels = np.asarray(labels)
         unique_labels = np.unique(labels)
 
-        # Use colormap
-        colors = plt.get_cmap(cmap)
+        # Prefer a globally-consistent color dict; fall back to per-panel colormap.
+        if color_dict is None:
+            colormap = plt.get_cmap(cmap)
+            n = max(len(unique_labels), 1)
+            color_dict = {label: colormap(i / n) for i, label in enumerate(unique_labels)}
 
-        for i, label in enumerate(unique_labels):
+        for label in unique_labels:
             mask = labels == label
             ax.scatter(
                 embedding[mask, 0],
                 embedding[mask, 1],
-                c=[colors(i / len(unique_labels))],
+                c=[color_dict.get(label, (0.5, 0.5, 0.5, 1.0))],
                 label=str(label),
                 alpha=alpha,
                 s=s,

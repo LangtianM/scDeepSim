@@ -1,0 +1,33 @@
+seed: 42
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+  checkpoint_dir: ${paths.root_dir}/experiments/outputs/checkpoints/test_disentangle
+  log_dir: ${paths.root_dir}/experiments/outputs/lightning_logs/test_disentangle
+data:
+  n_cells: 1000
+  n_genes: 500
+vae:
+  latent_dim: 128
+  enc_hidden:
+  - 512
+  - 256
+  dec_hidden:
+  - 256
+  - 512
+  input_dropout: 0.1
+  beta: 1.0
+  beta_warmup_epochs: 10
+  zero_inflated: false
+  sup_head_hidden: 64
+  max_epochs: 1
+  batch_size: 256
+supervision:
+  weight: 5.0
+  celltype_latent_dims: 16
+  batch_latent_dims: 16
+  stage_latent_dims: 16
+eval:
+  rf_n_estimators: 100
+  rf_max_depth: 10
+  test_size: 0.2
