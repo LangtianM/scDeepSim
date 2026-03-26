@@ -4,15 +4,19 @@
 
 ## Goals & Background
 
-Among existing simulators, there is a basic trade-off between simulation quality and controllability. This is because the most accurate simulators are often based on deep learning models, which don’t come with simple parameters that map onto interpretable data characteristics like means, variances, or zero-inflation rates.
+Among existing simulators, there is a fundamental trade-off between simulation quality and controllability. The most accurate simulators are often based on deep learning models, which do not expose interpretable parameters that map onto data characteristics such as means, variances, or zero-inflation rates. Classical statistical simulators offer explicit parametric control over these characteristics but fail to capture the complex, high-dimensional structure of real single-cell data.
 
-This study adapts semi-supervised variational autoencoders and classifier-free guided latent diffusion models for controlling deep-learning based generative models of single-cell dation.
+This study addresses this trade-off by adapting semi-supervised variational autoencoders and classifier-free guided latent diffusion models for controlled deep-learning-based generation of single-cell data.
 
-**Expected outcomes:**
+**Core Claim:** The trade-off between simulation quality and controllability is not fundamental. Modern generative models can be trained to produce high-fidelity synthetic data while still supporting explicit control over biologically meaningful signals such as batch effects and developmental trajectories.
 
-    We evaluate this approach by applying it to benchmarks with complex experimental designs, including those with varying signal strengths. 
+**Expected Outcomes:**
 
-    We evaluate the quality of simulated data before and after control factors have been applied. We conclude that the trade-off between simulation quality and controllability is not fundamental, and that modern generative models can be used to design synthetic data for realistic benchmarking experiments.
+We evaluate this approach on benchmark datasets with complex experimental designs, including those with varying signal strengths.
+
+We evaluate the quality of simulated data before and after control factors have been applied. We demonstrate that our approach retains high simulation quality even after manipulation, whereas classical methods either lack controllability or sacrifice realism when it is applied.
+
+---
 
 ## The Generative Model
 
@@ -24,39 +28,143 @@ The semi-supervised VAE is a variational autoencoder that uses:
 
 - a normal distribution as the encoder $q_\phi(z|x)$,
 - a zero-inflated truncated normal distribution as the decoder $p_\theta(x|z)$,
-- supervised heads for covariates (e.g. cell type, batch, stage).
+- supervised classification heads for covariates (e.g., cell type, batch, developmental stage).
 
-The design of the encoder and decoder is inspired by the distributional properties of the log-normalised gene expression data. Such specification helps to improve the quality of the generated data. In previous experiments, we also tried a plain ae and a zinb vae, but the simulation quality was not satisfactory.
+The decoder distribution is motivated by the empirical properties of log-normalised gene expression: values are non-negative, right-skewed, and exhibit excess zeros. In previous experiments we also tried a plain AE and a ZINB VAE, but simulation quality was not satisfactory; the truncated normal decoder provides the best balance (see discussion on library size below).
 
-The design of the semi-supervised heads aims to disentangle the latent variables with respect to the provided covariates to achieve controlled generation.
+The supervised heads serve a disentanglement objective: they encourage known covariate information to concentrate in designated subsets of latent dimensions, while biological variation unaccounted for by labels is captured in the remaining dimensions. For example, cell type information is encoded in the first $d_c$ latent dimensions and batch information in the next $d_b$ dimensions. This factorization enables targeted manipulation: introducing batch effect by shifting only the batch-specific subspace without disturbing the cell-type subspace.
 
-For example, we can force the information about cell type to be encoded in the first few latent dimensions, and the information about batch to be encoded in the next few latent dimensions, so that the embeddings of cell type and batch are well-separated in the latent space. By doing so, we can introudce batch effect signals without affecting cell type information by manipulating the values of the batch embedding and remaining the cell type embedding unchanged.
+### Why Log-Normalised Space? The Library Size Problem
+
+A critical design decision in this work is to model gene expression in the **log-normalised space** rather than the raw count space. This choice is motivated by the challenge posed by **library size** (total UMI count per cell), which varies dramatically across cells due primarily to technical factors (sequencing depth, capture efficiency).
+
+**The problem with raw count space (ZINB-VAE):** A VAE with a zero-inflated negative binomial (ZINB) decoder operating on raw counts must implicitly learn the library size distribution in addition to the biological expression patterns. In our previous experiments, this approach performed poorly because library size is too noisy and variable to be reliably captured by a generative model. The model conflates library-size-driven variation with biological variation, leading to unrealistic simulated counts.
+
+**scVI's workaround and its limitation:** scVI addresses this problem by conditioning the decoder on the observed library size of each cell. This enables good reconstruction quality (posterior sampling), because the model only needs to learn the expression profile given a known library size. However, this creates a fundamental barrier to genuine simulation: generating a truly new cell requires specifying a library size that does not come from any real observation. scVI's prior sampling mode works around this by borrowing library sizes from real cells (see `sample_from_prior` in `benchmark_simulation.py`), but this dependency means it is not fully generative — the simulated cells are anchored to real cells through their library sizes.
+
+**Our approach:** By working in log-normalised space ($\log(1 + 10^4 \cdot x_i / \sum_j x_j)$), library size is factored out before the data reaches the model. The TN-VAE decoder models the distribution of normalised expression values directly. The diffusion model generates latent vectors in this normalised space, so no library size information is needed at generation time. This is what enables **genuine simulation**: entirely new samples can be generated without reference to any real cell.
+
+**Future experiment:** A systematic comparison of ZINB-VAE (raw count space) vs. TN-VAE (log-normalised space) would formally validate this design choice. It would also be informative to test a ZINB-VAE with explicit library size conditioning (as scVI does) to diagnose whether the ZINB decoder itself or the library size modelling is the root cause of poor performance in raw space.
 
 ### Latent Diffusion Model
 
 ```text
-scdeepsim/src/scdeepsim/diffusion_core.py 
+scdeepsim/src/scdeepsim/diffusion_core.py
 scdeepsim/src/scdeepsim/diffusion_model.py
 scdeepsim/src/scdeepsim/lightning_diffusion.py
 ```
 
-The latent diffusion model is a denoising diffusion model that uses a U-net style MLP model to denoise the latent variables. It is trained on the encoded single-cell data with provided labels. The model is trained using the classifier-free guidance technique to improve the controllability of the generated data and a $v$-parameterization to improve the stability of the training process.
+The latent diffusion model is a denoising diffusion probabilistic model (DDPM) operating in the VAE's latent space. It uses a U-Net-style MLP to denoise latent vectors, trained on encoded single-cell data with class labels. Two design choices are worth noting:
+
+- **Classifier-free guidance (CFG):** During training, labels are randomly dropped to train an unconditional model in tandem. At inference, the conditional and unconditional score estimates are interpolated to control the strength of label conditioning. This is how cell type (or other covariate) conditioning is enforced at generation time.
+- **$v$-parameterization:** Instead of predicting noise directly, the model predicts the velocity $v = \sqrt{\bar\alpha}\,\epsilon - \sqrt{1-\bar\alpha}\,x_0$. This improves training stability and sample quality, especially in low-step regimes.
+
+---
 
 ## Proposed Control Methods
 
 ### Batch Effect Control
 
-(To be implemented)
+**Status:** A legacy direction-finding function over the full latent space exists in `scdeepsim/src/scdeepsim/control.py`. The direction-finding function restricted to the disentangled batch subspace and the $\alpha$-parameterised generation step are not yet implemented.
 
-Identify a direction in the batch effect latent subspace, then move the latent variables along this direction to introduce batch effect signals.
+#### Core Method: Geometric Manipulation in the Batch Subspace
 
-A simple way to identify the batch effect direction is to choose a reference batch and calculate the mean shift of each batch to the reference batch.
+The key idea is to operate entirely in the disentangled batch subspace of the latent space. After training the semi-supervised VAE with batch labels, the batch subspace occupies dimensions $[d_c,\; d_c + d_b)$ of the latent vector. We compute a batch direction $\delta_b$ from the training data, then apply it to generated latents with a controllable strength coefficient $\alpha$:
 
-(Are there any cleverer ways to define a batch effect direction?)
+$$z' = z + \alpha \cdot \delta_b$$
+
+where:
+
+- $\alpha = 0$: no batch effect,
+- $0 < \alpha < 1$: weaker-than-observed effect (interpolation),
+- $\alpha = 1$: effect matching the observed batch difference,
+- $\alpha > 1$: stronger-than-observed effect (extrapolation).
+
+This is a post-hoc geometric operation — no retraining is needed. The disentanglement ensures the shift only modifies batch-related structure by construction.
+
+**Why not CFG-based batch conditioning?** Although the diffusion model already supports classifier-free guidance, CFG cannot generate data that is out of the distribution of the training data. CFG reweights existing conditional modes but cannot interpolate between or extrapolate beyond observed batch distributions. Our goal requires producing data with *arbitrary signal strength*, including strengths not represented in the training data. The geometric manipulation approach with the $\alpha$ parameter naturally supports this.
+
+#### Direction-Finding Methods
+
+The choice of how to compute $\delta_b$ determines how much distributional information is captured.
+
+**1. Mean-shift direction (first-moment only):**
+
+The simplest approach estimates the batch direction as the cell-type-stratified mean shift relative to a reference batch:
+
+$$\delta_b = \frac{1}{|C|} \sum_{c \in C} \left( \bar{z}_{b,c} - \bar{z}_{\text{ref},c} \right)$$
+
+where $\bar{z}_{b,c}$ is the centroid of cell type $c$ in batch $b$'s batch subspace. The cell-type stratification ensures the direction captures batch-specific effects rather than confounded cell-composition differences between batches.
+
+**Limitation:** This captures only the first-moment difference. If two batches differ in variance or covariance structure (e.g., one batch has more spread in certain genes), the mean-shift direction will not represent this.
+
+**2. Linear Discriminant Analysis (LDA) direction:**
+
+Find the direction that maximally separates batch centroids while minimizing within-batch variance. This is more robust than mean-shift when batch differences are not well-aligned with the coordinate axes of the batch subspace.
+
+**3. Optimal transport (OT) direction:**
+
+OT provides the richest characterisation of batch differences by finding the map that transforms one batch's distribution into another while minimizing transport cost. Unlike the mean-shift approach, OT captures differences in mean, variance, covariance, and higher moments.
+
+**Gaussian OT (closed form).** When the batch distributions in the subspace are approximately Gaussian ($P_{\text{ref}} = \mathcal{N}(\mu_1, \Sigma_1)$, $P_{\text{target}} = \mathcal{N}(\mu_2, \Sigma_2)$), the OT map has a closed-form solution:
+
+$$T(z) = \mu_2 + A\,(z - \mu_1), \quad A = \Sigma_1^{-1/2}\bigl(\Sigma_1^{1/2}\,\Sigma_2\,\Sigma_1^{1/2}\bigr)^{1/2}\Sigma_1^{-1/2}$$
+
+Note that when $\Sigma_1 = \Sigma_2$, $A = I$ and the OT map reduces to a pure translation $T(z) = z + (\mu_2 - \mu_1)$, recovering the mean-shift approach as a special case.
+
+**McCann displacement interpolation for arbitrary signal strength.** The Wasserstein geodesic between the two distributions is parameterised by $\alpha$:
+
+$$T_\alpha(z) = \bigl[(1-\alpha)\,I + \alpha\,A\bigr](z - \mu_1) + (1-\alpha)\,\mu_1 + \alpha\,\mu_2$$
+
+- $\alpha \in (0,1)$: interpolation along the Wasserstein geodesic — the theoretically optimal path in distribution space.
+- $\alpha = 1$: the full OT map, transforming the reference distribution to the target.
+- $\alpha > 1$: extrapolation beyond the target distribution. This is mathematically well-defined: the affine map extends naturally. Since we operate in a low-dimensional disentangled subspace, moderate extrapolation ($\alpha \lesssim 2$) should remain in a reasonable region of the latent space.
+
+**Empirical (non-Gaussian) OT.** When the batch distributions are not well-approximated by Gaussians, we can use discrete OT (e.g., via the POT library) to compute an empirical coupling matrix. Displacement interpolation is then defined cell-by-cell via the coupling. This is more expensive but captures the full distributional difference. For the typical batch subspace dimensionality ($d_b \sim 5$--$20$) and dataset sizes ($n \sim 10^3$--$10^4$), this is computationally feasible.
+
+**Hierarchy of approaches (from simple to expressive):**
+
+| Method | What it captures | Cost | When to use |
+|---|---|---|---|
+| Mean shift | First moment only | Negligible | Quick baseline; sufficient if batches differ only in location |
+| LDA direction | Discriminative direction | Low | When batch differences are not axis-aligned |
+| Gaussian OT | Mean + covariance | Low (closed form) | When batches differ in spread or correlation structure |
+| Empirical OT | Full distribution | Moderate (OT solver) | When Gaussian assumption is poor |
+
+**Recommended next steps:**
+
+1. Implement the $\alpha$-parameterised batch direction shift in the generation pipeline, starting with the mean-shift direction restricted to the batch subspace.
+2. Implement the Gaussian OT direction to compare against mean-shift.
+3. Evaluate both with the dose-response metrics defined below.
+
+---
 
 ### Pseudo-time Control
 
-(TBD)
+**Status:** Not yet implemented.
+
+Pseudo-time represents a cell's position along a continuous developmental or differentiation trajectory. Controlling pseudo-time in simulation means being able to generate cells at any desired developmental stage, including intermediate stages not densely represented in the training data. As with batch effect control, we need the ability to interpolate and extrapolate beyond observed pseudo-time values, which rules out CFG-based conditioning (same reasoning as for batch effects: CFG cannot generate out-of-distribution data).
+
+**Proposed approach — latent trajectory manipulation:**
+
+The approach mirrors the geometric manipulation strategy used for batch effects, but operates along a continuous trajectory rather than discrete category shifts.
+
+1. Run trajectory inference (e.g., Diffusion Pseudotime, Monocle 3, or PAGA) on the VAE latent space to extract a smooth principal curve $\gamma(t)$, parameterised by arc-length pseudo-time $t \in [0, 1]$.
+2. To generate cells at a desired pseudo-time $\tau$:
+   - Find the point $\gamma(\tau)$ on the curve.
+   - Estimate the local covariance $\Sigma(\tau)$ from real cells in a neighbourhood of $\gamma(\tau)$.
+   - Sample latents: $z \sim \mathcal{N}(\gamma(\tau),\; \Sigma(\tau))$.
+   - Decode via the VAE.
+3. **Interpolation** ($\tau$ at any value within $[0, 1]$) is naturally supported, including at positions not densely represented in the training data.
+4. **Extrapolation** ($\tau$ slightly beyond $[0, 1]$) can be achieved by extending the fitted curve via its tangent direction at the endpoints.
+
+**Signal strength parameter:** An additional coefficient can control the spread around the trajectory point (scaling $\Sigma(\tau)$) or the speed of progression along the tangent direction.
+
+**Limitation:** This approach relies on the quality of the trajectory inference in the latent space. If the latent trajectory is not smooth or is poorly estimated, the generated cells at interpolated positions may be unrealistic.
+
+**Evaluation:** Measure whether the generated pseudo-time distribution matches the specified distribution, and whether downstream trajectory inference on the generated data recovers the expected topology (graph structure and ordering).
+
+---
 
 ## Experiments
 
@@ -64,72 +172,126 @@ A simple way to identify the batch effect direction is to choose a reference bat
 
 ```text
 experiments/scripts/train_vae_diffusion.py
+experiments/scripts/benchmark_simulation.py
 ```
 
-We plot the Umap comparison across real data and different simulation methods, including:
+We compare the following methods using UMAP visualisation and an RF-based discriminability test (real vs. simulated). An important distinction is between **reconstruction** (feeding real data through an encoder-decoder pipeline) and **genuine simulation** (generating entirely new samples without access to original observations). Only genuine simulation methods are appropriate baselines for our VAE+Diffusion pipeline.
 
-- VAE reconstruction. This means the data obtained by $\text{Decoder}(\text{Encoder}(x))$, where $x$ is the original data. It is not generating any "new data" in the sense of simulation, but serves as a baseline to identify the best possible simulation quality that can be achieved by the generative model.
-- VAE+Diffusion. Our proposed method that combines the VAE and the latent diffusion model. The latents are sampled from the diffusion model and then decoded by the VAE to generate the synthetic data.
-- NegBinCopula. A baseline that uses the negative binomial copula model form our scdesigner package' as a representative of the classical simulation methods
+**Genuine simulation methods:**
+
+- **VAE+Diffusion (ours):** Latents are sampled from the diffusion model and decoded by the VAE. No original observation is required at generation time. This is the proposed end-to-end generative pipeline.
+- **NegBinCopula:** A classical statistical baseline from the `scdesigner` package. Generates new samples from a fitted parametric model.
+
+**Reconstruction methods (not genuine simulation):**
+
+- **VAE reconstruction** ($\text{Decoder}(\text{Encoder}(x))$): Serves as an upper-bound baseline for the best quality our model can achieve by construction.
+- **scVI posterior sampling** (`posterior_predictive_sample`): Produces $\text{Decoder}(\text{Encoder}(x))$ with the original cell's library size. This is reconstruction, not genuine simulation. We can compare this against our VAE reconstruction as a **reconstruction quality** benchmark.
+- **scVI prior sampling:** Although it samples $z$ from the prior $\mathcal{N}(0, I)$, it still requires externally supplied library sizes from real cells (see `sample_from_prior` in `benchmark_simulation.py`, which draws `latent_library` from real observations). This dependency on real-cell library sizes means it is not fully generative. See the discussion on library size above.
 
 ![Umap Comparison](../experiments/outputs/checkpoints/vae_diffusion/results/umap_comparison.png)
 
-The umap comparison shows that the VAE+Diffusion method is much better to generate data that is more similar to the real data and capture the complicated patterns of the real data compared to the classical simulation methods.
+The UMAP comparison shows that VAE+Diffusion captures the complex cluster structure and inter-cluster relationships of the real data much more faithfully than the classical NegBinCopula method.
 
 ![Gene Expression Scatter](../experiments/outputs/checkpoints/vae_diffusion/results/gene_expression_scatter.png)
 
-We also plot the gene expression scatter comparison across real data and different simulation methods. The simulated mean and variance generally align well with the real data, despite the simulated variance being slightly smaller than the real data.
+The per-gene mean and variance of simulated data align closely with the real data. The simulated variance is slightly underestimated, which is a known tendency of VAE-based models (posterior collapse reduces the effective expressiveness of the decoder).
 
 ![Quality Metrics Summary](../experiments/outputs/checkpoints/vae_diffusion/results/quality_metrics_summary.png)
 
-We investigated the discriminability of the simulated data and the real data on different aspects by applying an RF classifier to:
+We assess discriminability via an RF classifier trained to distinguish real from simulated data. **A lower AUC (closer to 0.5) indicates better simulation quality** — the simulated data is harder to distinguish from real data.
 
-- The diffusion simulated latents and the real latents given by $\text{Encoder}(x)$. The results are laballed as "Latent AUC" and "Latent Acc".
-- The VAE reconstructed data and the real data given by $\text{Decoder}(\text{Encoder}(x))$. The results are laballed as "VAE Recon AUC"
-- The VAE+Diffusion simulated data and the real data, labelled as "VAE+Diff AUC" and "VAE+Diff Acc"
-- The negative binomial copula simulated data and the real data, labelled as "NegBinCopula AUC" and "NegBinCopula Acc".
+The four measurements are not directly comparable because they operate in different spaces:
 
-The results show that the Diffusion and VAE work well separately, achieving an AUC of around 0.7. However, when combined, the VAE+Diffusion method achieves a much higher AUC of around 0.96. Nevertheless, it still outperforms the negative binomial copula method, achieving an AUC of 0.999.
+- **Latent AUC (~0.7):** Discriminability of diffusion-sampled latents vs. real encoded latents (in latent space). An AUC of ~0.7 indicates the diffusion model generates reasonably realistic latents, though not perfect.
+- **VAE Recon AUC:** Discriminability of VAE reconstructions vs. real data (in gene space). This is an upper-bound reference for the pipeline quality.
+- **VAE+Diff AUC (~0.96):** Discriminability of the end-to-end pipeline vs. real data (in gene space). The increase from ~0.7 (latent) to ~0.96 (gene space) reflects accumulated error from the decoding step.
+- **NegBinCopula AUC (~0.999):** Nearly perfectly distinguishable from real data.
 
-Todo: compare simulation quality with standard traditional simulation method scDesign3 (R package) and current deep learning based simulation method (haven't investigated which to compare with).
+In a fair comparison in gene space, VAE+Diffusion (AUC ~0.96) substantially outperforms NegBinCopula (AUC ~0.999). The remaining gap between the diffusion-latent quality (~0.7) and gene-space quality (~0.96) motivates investigating whether decoder quality or diffusion quality is the dominant bottleneck.
+
+**Todo:**
+
+- [ ] Add scDesign3 (R package) as a genuine simulation benchmark; it is currently the state-of-the-art classical method and an important reference point.
+- [ ] Reframe scVI comparison: compare scVI posterior against our VAE reconstruction (reconstruction quality), and note that scVI prior sampling is not fully generative due to library size dependence.
+- [ ] Ablation: systematic comparison of TN-VAE (log-normalised space) vs. ZINB-VAE (raw count space) to formally validate the choice of working in log-normalised space. See the library size discussion above.
+
+---
 
 ### Disentanglement Evaluation
 
-We evaluate the disentanglement of the latent variables by the semi-supervised VAE. We train the VAE semi-supervised on cell type labels with different supervision weights, from 1.0 to 7.0 and another random forest classifier to classify the cell type based on the cell type latent variables and other latent variables. We observe that the auc on cell type latents is consistenly growing while the auc on other latent variables is decreasing to be close to random chance. In the meantime, the simulation quality (AUC: Real vs Simulated) is not affected much.
+We evaluate the disentanglement of latent variables produced by the semi-supervised VAE by varying the supervision weight from 1.0 to 7.0. A secondary RF classifier is trained to predict cell type from (a) the cell-type latent subspace and (b) the remaining latent dimensions.
 
 ![Disentanglement Evaluation](../experiments/outputs/checkpoints/test_supervised/tn_vae/supervised_weight_comparison.png)
 
-### Todo: Introduced Batch Effec Signal Measurement
+As the supervision weight increases, the AUC on cell-type latents consistently rises while the AUC on the remaining dimensions approaches chance level. Critically, the overall simulation quality (real vs. simulated AUC) is not substantially affected, confirming that enforcing disentanglement does not degrade the generative quality.
 
-We want to measure whether we successfully introduced batch effect signals by manipulating the batch embedding. Since we are actually defining a "batch effect direction", it's hard to argue that it is a 'real' direction. But we can still argue that a batch effect is introduced without affecting biological signals using metrics discussed below.
+**Next step:** Replicate this evaluation with batch labels to verify that the batch subspace is similarly disentangled before attempting batch effect control experiments.
 
-#### Batch Effect Signal
+---
 
-We may use the following metrics for the strength of the batch effect signal. (Not decided, to be discussed)
+### Batch Effect Signal Measurement
 
-- Batch ASW: are cells within the same batch close to each other and far from other batches?
+**Status:** Metric selection not yet finalised.
+
+After introducing batch effect signals via latent manipulation, we need to verify two things: (a) the batch signal is present and its strength is controllable via $\alpha$, and (b) biological signals (cell type structure) are preserved. Note that introducing batch effects is *expected* to change marginal gene-expression statistics and make the data look different from the unmanipulated simulation -- that is the whole point. Therefore, standard real-vs.-simulated discriminability tests are not directly applicable to the manipulated data (there is no "manipulated real data" to compare against).
+
+#### Dose-Response Evaluation of Batch Effect Strength
+
+The central evaluation is a **dose-response curve**: for a range of $\alpha$ values (e.g., $\alpha \in \{0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0\}$), compute the following batch separation metrics and plot them as a function of $\alpha$.
+
+- **Batch ASW (Average Silhouette Width):** Measures whether cells from the same batch are closer to each other than to cells from other batches. Higher ASW (closer to +1) indicates stronger batch separation.
 
 $$
-s(i)=\frac{b(i)-a(i)}{\max (a(i), b(i))}
+s(i) = \frac{b(i) - a(i)}{\max(a(i), b(i))}
 $$
 
-- iLISI
+  where $a(i)$ is the mean intra-batch distance and $b(i)$ is the mean nearest-batch distance for cell $i$.
+
+- **iLISI (integration LISI):** Measures local mixing of batch labels. Higher iLISI indicates more mixing; lower iLISI indicates stronger batch separation. We expect iLISI to decrease monotonically with $\alpha$.
 
 $$
-\mathrm{LISI}=\frac{1}{\sum_c p_c^2}
+\text{LISI} = \frac{1}{\sum_c p_c^2}
 $$
 
-- kBET: reject $H_0$ that data are from the same distribution
+- **kBET (k-nearest neighbour Batch Effect Test):** Tests the null hypothesis that local neighbourhood composition matches the global batch proportion. Higher rejection rate indicates a stronger batch effect.
 
-#### Biological Signal
+**Expected outcome:** A monotonically increasing trend in Batch ASW and kBET rejection rate, and a monotonically decreasing trend in iLISI, as $\alpha$ increases. This demonstrates that the batch signal strength is **continuously tunable** via the $\alpha$ parameter.
 
-We may use the following metrics to prove that the biological signals are not affected by the batch effect manipulation.
+#### Biological Signal Preservation
 
-- Cell cycle conservation: still able to classify data into celltypes with high acc
-- ASW
-- Isolated labels ASW
-- cLISI: LISI on cell types
+These metrics should remain **stable across all $\alpha$ values**, confirming that the disentanglement is effective and batch manipulation does not leak into the biological subspace.
 
-#### Open Questions
+- **Cell type classification accuracy:** Train an RF classifier on cell type labels using the manipulated data. High accuracy confirms that cell types remain separable.
+- **Cell type ASW (cASW):** Measures whether cells cluster by cell type after manipulation. Should remain high.
+- **Isolated labels ASW:** Evaluates whether rare cell types are still correctly separated.
+- **cLISI (cell type LISI):** Measures local mixing of cell type labels. Should remain low (cells of the same type stay together).
 
-- How could we argue that the manipulated data provided by our simulator still have superior simulation quality than that from traditional simulation methods?
+Plot the biological metrics alongside the batch metrics as a function of $\alpha$. The key finding would be that batch metrics change continuously with $\alpha$ while biological metrics remain flat.
+
+#### Validating Realism of the Introduced Batch Effects
+
+**Challenge:** We cannot directly use real-vs.-simulated discriminability to assess the manipulated data, because we are generating data with batch effects that do not exist in reality. We need alternative strategies to argue the introduced effects are realistic.
+
+**Proposed validation strategies:**
+
+1. **Held-out batch validation:** Take a dataset with known real batch effects. Train the model on only the reference batch. Generate data for the target batches using the learned batch directions (with $\alpha = 1$). Compare the generated target-batch data against the held-out real target-batch data using per-gene correlations, UMAP overlap, and batch-separation metrics. This directly tests whether the model can recover a known batch effect.
+
+2. **Round-trip validation:** Train the model on a multi-batch dataset. Use the learned batch direction to "remove" the batch effect from one batch (shift by $-\alpha \cdot \delta_b$, with $\alpha = 1$). Check whether the result aligns with the reference batch in latent space. Then re-introduce the effect (shift by $+\alpha \cdot \delta_b$) and verify recovery. Alignment quality indicates that the direction captures the true batch structure.
+
+3. **Qualitative plausibility (UMAP visualisation):** Show UMAP visualisations of simulated data at different $\alpha$ values ($0, 0.5, 1.0, 1.5, 2.0$). The cluster topology should deform smoothly as $\alpha$ increases, without producing artifacts or unrealistic cluster fragmentation.
+
+---
+
+## Summary of Open Tasks
+
+| Task | Priority | Status |
+|---|---|---|
+| Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only) | High | Not started (legacy `control.py` exists for full space) |
+| Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels) | High | Not started |
+| Implement Gaussian OT direction finding (compare against mean-shift) | High | Not started |
+| Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics) | High | Not started |
+| Held-out batch validation experiment | Medium | Not started |
+| Implement pseudo-time trajectory manipulation | Medium | Not started |
+| Add scDesign3 to genuine simulation benchmark | Medium | Not started |
+| Reframe scVI comparison (reconstruction quality only) | Medium | Not started |
+| Library size ablation: TN-VAE (log-normalised) vs. ZINB-VAE (raw counts) | Low | Not started |
