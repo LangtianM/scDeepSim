@@ -282,6 +282,13 @@ Plot the biological metrics alongside the batch metrics as a function of $\alpha
 
 ---
 
+## Experiment and Coding Disciplines
+
+- Use `Hydra` to manage experiments, keep experiments reproducible and trackable.
+- Decoupling and clearity over reusability.
+
+---
+
 ## Summary of Open Tasks
 
 | Task | Priority | Status |
