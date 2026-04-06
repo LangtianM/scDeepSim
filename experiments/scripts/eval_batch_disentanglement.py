@@ -74,12 +74,13 @@ def train_or_load_vae(adata, n_celltypes, n_batches, batch_weight, cfg):
 
     Set ``cfg.load_checkpoint`` to True to skip training and load from disk.
     """
+    run_dir = os.getcwd()
     ckpt_path = os.path.join(
-        cfg.paths.checkpoint_dir,
+        run_dir, "checkpoints",
         f"batch_weight_{batch_weight:.1f}",
         "trained_vae.ckpt",
     )
-    log_dir = os.path.join(cfg.paths.log_dir, f"batch_weight_{batch_weight:.1f}")
+    log_dir = os.path.join(run_dir, "lightning_logs", f"batch_weight_{batch_weight:.1f}")
 
     if cfg.get("load_checkpoint", False) and os.path.exists(ckpt_path):
         log.info(f"  Loading checkpoint from {ckpt_path}")
@@ -345,7 +346,7 @@ def print_summary(all_results, n_batches, n_celltypes):
 
 
 def plot_results(all_results, n_batches, n_celltypes, save_path):
-    """Two-panel figure: disentanglement metrics and simulation quality vs weight."""
+    """Single-panel figure: disentanglement metrics and simulation quality vs weight."""
     weights = [r["weight"] for r in all_results]
 
     batch_on_batch = [r["disentanglement"]["batch_on_z_batch"]["bal_acc"] for r in all_results]
@@ -357,43 +358,96 @@ def plot_results(all_results, n_batches, n_celltypes, save_path):
     batch_random = 1.0 / n_batches
     ct_random = 1.0 / n_celltypes
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+    fig, ax = plt.subplots(figsize=(12, 7))
 
-    # -- Left panel: disentanglement --
-    ax1.plot(weights, batch_on_batch, "o-", lw=2.5, ms=8, color="#2ecc71",
-             label="Batch class. on batch dims")
-    ax1.plot(weights, batch_on_other, "s-", lw=2.5, ms=8, color="#e74c3c",
-             label="Batch class. on other dims")
-    ax1.plot(weights, ct_on_ct, "^-", lw=2.5, ms=8, color="#9b59b6",
-             label="CT class. on celltype dims")
-    ax1.plot(weights, ct_on_batch, "D-", lw=2.5, ms=8, color="#e67e22",
-             label="CT class. on batch dims")
-    ax1.axhline(batch_random, ls="--", lw=1.5, color="#95a5a6", alpha=0.6,
-                label=f"Batch random ({batch_random:.3f})")
-    ax1.axhline(ct_random, ls=":", lw=1.5, color="#bdc3c7", alpha=0.6,
-                label=f"CT random ({ct_random:.3f})")
+    ax.plot(
+        weights,
+        batch_on_batch,
+        "o-",
+        linewidth=3,
+        markersize=10,
+        color="#2ecc71",
+        label="Batch Class. on Batch Dims (Bal. Acc)",
+        alpha=0.8,
+    )
+    ax.plot(
+        weights,
+        batch_on_other,
+        "s-",
+        linewidth=3,
+        markersize=10,
+        color="#e74c3c",
+        label="Batch Class. on Other Dims (Bal. Acc)",
+        alpha=0.8,
+    )
+    ax.plot(
+        weights,
+        ct_on_ct,
+        "^-",
+        linewidth=3,
+        markersize=10,
+        color="#9b59b6",
+        label="CT Class. on Celltype Dims (Bal. Acc)",
+        alpha=0.8,
+    )
+    ax.plot(
+        weights,
+        ct_on_batch,
+        "D-",
+        linewidth=3,
+        markersize=10,
+        color="#e67e22",
+        label="CT Class. on Batch Dims (Bal. Acc)",
+        alpha=0.8,
+    )
+    ax.plot(
+        weights,
+        recon_auc,
+        "v-",
+        linewidth=3,
+        markersize=10,
+        color="#3498db",
+        label="Recon Simulation Quality (AUC: Real vs Sim)",
+        alpha=0.8,
+    )
 
-    ax1.set_xlabel("Batch Supervision Weight", fontsize=13, fontweight="bold")
-    ax1.set_ylabel("Balanced Accuracy", fontsize=13, fontweight="bold")
-    ax1.set_title("Batch Disentanglement", fontsize=14, fontweight="bold")
-    ax1.set_xticks(weights)
-    ax1.set_ylim([0.0, 1.05])
-    ax1.legend(fontsize=9, loc="best", framealpha=0.9)
-    ax1.grid(True, alpha=0.3, ls="--")
+    ax.axhline(
+        batch_random,
+        color="#95a5a6",
+        linestyle="--",
+        linewidth=2,
+        alpha=0.5,
+        label=f"Batch Random ({batch_random:.3f})",
+    )
+    ax.axhline(
+        ct_random,
+        color="#bdc3c7",
+        linestyle=":",
+        linewidth=2,
+        alpha=0.5,
+        label=f"CT Random ({ct_random:.3f})",
+    )
+    ax.axhline(
+        0.5,
+        color="#3498db",
+        linestyle=":",
+        linewidth=2,
+        alpha=0.4,
+        label="Perfect Simulation (0.5)",
+    )
 
-    # -- Right panel: simulation quality --
-    ax2.plot(weights, recon_auc, "o-", lw=2.5, ms=8, color="#3498db",
-             label="Recon AUC (real vs sim)")
-    ax2.axhline(0.5, ls=":", lw=1.5, color="#3498db", alpha=0.4,
-                label="Perfect simulation (0.5)")
-
-    ax2.set_xlabel("Batch Supervision Weight", fontsize=13, fontweight="bold")
-    ax2.set_ylabel("AUC", fontsize=13, fontweight="bold")
-    ax2.set_title("Simulation Quality", fontsize=14, fontweight="bold")
-    ax2.set_xticks(weights)
-    ax2.set_ylim([0.4, 1.05])
-    ax2.legend(fontsize=10, loc="best", framealpha=0.9)
-    ax2.grid(True, alpha=0.3, ls="--")
+    ax.set_xlabel("Batch Supervision Weight", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Score", fontsize=14, fontweight="bold")
+    ax.set_title(
+        "Effect of Batch Supervision Weight on Disentanglement and Simulation Quality",
+        fontsize=15,
+        fontweight="bold",
+        pad=20,
+    )
+    ax.set_xticks(weights)
+    ax.set_ylim([0.0, 1.05])
+    ax.grid(True, alpha=0.3, linestyle="--")
+    ax.legend(fontsize=9, loc="best", framealpha=0.95, ncol=2)
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
@@ -429,9 +483,7 @@ def main(cfg: DictConfig) -> None:
 
     print_summary(all_results, n_batches, n_celltypes)
 
-    plot_path = os.path.join(
-        cfg.paths.checkpoint_dir, "batch_supervised_weight_comparison.png"
-    )
+    plot_path = os.path.join(os.getcwd(), "batch_supervised_weight_comparison.png")
     plot_results(all_results, n_batches, n_celltypes, plot_path)
 
     log.info("")

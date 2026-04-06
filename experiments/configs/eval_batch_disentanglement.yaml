@@ -4,8 +4,6 @@ load_checkpoint: false
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
   data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
-  checkpoint_dir: ${paths.root_dir}/experiments/outputs/checkpoints/batch_disentanglement
-  log_dir: ${paths.root_dir}/experiments/outputs/lightning_logs/batch_disentanglement
 
 data:
   n_cells: 10000
