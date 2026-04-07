@@ -1,3 +1,0 @@
-- vae.max_epochs=2
-- data.n_cells=2000
-- data.n_genes=500
