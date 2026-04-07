@@ -1,5 +1,4 @@
 seed: 42
-load_checkpoint: false
 
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}

@@ -7,6 +7,8 @@ then evaluates:
   2. Whether batch info leaks into other latent dimensions
   3. Whether simulation quality is preserved
 
+Each run retrains from scratch for full reproducibility.
+
 Usage:
     python scripts/eval_batch_disentanglement.py
     python scripts/eval_batch_disentanglement.py sweep.batch_weights=[1.0,3.0,7.0]
@@ -20,11 +22,13 @@ root = pyrootutils.setup_root(
 
 import os
 import logging
+import subprocess
 import numpy as np
 import torch
 import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 import hydra
+from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
@@ -37,6 +41,26 @@ from scdeepsim.quality import rf_discriminability
 from experiments.src.utils import load_and_preprocess
 
 log = logging.getLogger(__name__)
+
+
+def save_git_info(output_dir):
+    """Save git hash and uncommitted diff into the run directory."""
+    hash_path = os.path.join(output_dir, "git_hash.txt")
+    diff_path = os.path.join(output_dir, "git_diff.patch")
+    try:
+        git_hash = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
+        ).stdout.strip()
+        with open(hash_path, "w") as f:
+            f.write(git_hash + "\n")
+        git_diff = subprocess.run(
+            ["git", "diff"], capture_output=True, text=True
+        ).stdout
+        with open(diff_path, "w") as f:
+            f.write(git_diff)
+        log.info(f"Git hash: {git_hash}")
+    except FileNotFoundError:
+        log.warning("git not found -- skipping git info capture")
 
 
 # ---------------------------------------------------------------------------
@@ -69,23 +93,9 @@ def prepare_data(cfg):
 # VAE training
 # ---------------------------------------------------------------------------
 
-def train_or_load_vae(adata, n_celltypes, n_batches, batch_weight, cfg):
-    """Train a VAE with fixed celltype weight and variable batch weight.
-
-    Set ``cfg.load_checkpoint`` to True to skip training and load from disk.
-    """
-    run_dir = os.getcwd()
-    ckpt_path = os.path.join(
-        run_dir, "checkpoints",
-        f"batch_weight_{batch_weight:.1f}",
-        "trained_vae.ckpt",
-    )
-    log_dir = os.path.join(run_dir, "lightning_logs", f"batch_weight_{batch_weight:.1f}")
-
-    if cfg.get("load_checkpoint", False) and os.path.exists(ckpt_path):
-        log.info(f"  Loading checkpoint from {ckpt_path}")
-        vae = TruncatedNormalVAE.load_from_checkpoint(ckpt_path)
-        return vae
+def train_vae(adata, n_celltypes, n_batches, batch_weight, cfg):
+    """Train a VAE with fixed celltype weight and variable batch weight."""
+    output_dir = HydraConfig.get().runtime.output_dir
 
     supervised_config = [
         {
@@ -132,16 +142,13 @@ def train_or_load_vae(adata, n_celltypes, n_batches, batch_weight, cfg):
         accelerator="auto",
         devices="auto",
         log_every_n_steps=50,
-        enable_checkpointing=True,
+        enable_checkpointing=False,
         logger=True,
-        default_root_dir=log_dir,
+        default_root_dir=output_dir,
         gradient_clip_val=vae.gradient_clip_val,
     )
 
     trainer.fit(vae, data_module)
-    os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
-    trainer.save_checkpoint(ckpt_path)
-
     return vae
 
 
@@ -278,7 +285,7 @@ def run_single_weight(adata, n_celltypes, n_batches, batch_weight, cfg):
     log.info("=" * 70)
 
     log.info("[1/4] Training VAE...")
-    vae = train_or_load_vae(adata, n_celltypes, n_batches, batch_weight, cfg)
+    vae = train_vae(adata, n_celltypes, n_batches, batch_weight, cfg)
 
     log.info("[2/4] Encoding data...")
     latents = encode_data(vae, adata)
@@ -469,6 +476,9 @@ def main(cfg: DictConfig) -> None:
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
 
+    output_dir = HydraConfig.get().runtime.output_dir
+    save_git_info(output_dir)
+
     log.info("=" * 70)
     log.info("Batch Disentanglement Evaluation")
     log.info("=" * 70)
@@ -483,7 +493,7 @@ def main(cfg: DictConfig) -> None:
 
     print_summary(all_results, n_batches, n_celltypes)
 
-    plot_path = os.path.join(os.getcwd(), "batch_supervised_weight_comparison.png")
+    plot_path = os.path.join(HydraConfig.get().runtime.output_dir, "batch_supervised_weight_comparison.png")
     plot_results(all_results, n_batches, n_celltypes, plot_path)
 
     log.info("")
