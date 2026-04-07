@@ -251,7 +251,7 @@ def plot_single_umap(ref_X, target_X, shifted_dict, ref_batch, target_batch,
     alpha_min = min(0.0, min(alpha_values))
     alpha_max = max(1.0, max(alpha_values))
     norm = mcolors.Normalize(vmin=alpha_min, vmax=alpha_max)
-    cmap = plt.cm.coolwarm
+    cmap = plt.cm.viridis
 
     fig, ax = plt.subplots(figsize=(8, 7))
 
@@ -261,20 +261,20 @@ def plot_single_umap(ref_X, target_X, shifted_dict, ref_batch, target_batch,
 
         if label == "ref":
             color = cmap(norm(0.0))
-            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.5, color=color,
+            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.6, color=color,
                        marker="^",
                        label=f"Ref: {ref_batch} (original)", zorder=3,
                        edgecolors="none")
         elif label == "target":
             color = cmap(norm(1.0))
-            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.5, color=color,
+            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.6, color=color,
                        marker="s",
                        label=f"Target: {target_batch} (original)", zorder=3,
                        edgecolors="none")
         else:
             alpha_val = label
             color = cmap(norm(alpha_val))
-            ax.scatter(xy[:, 0], xy[:, 1], s=3, alpha=0.35, color=color,
+            ax.scatter(xy[:, 0], xy[:, 1], s=3, alpha=0.3, color=color,
                        label=f"alpha={alpha_val}", zorder=2,
                        edgecolors="none")
 
@@ -294,6 +294,76 @@ def plot_single_umap(ref_X, target_X, shifted_dict, ref_batch, target_batch,
     os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
     plt.savefig(save_path, dpi=200, bbox_inches="tight")
     log.info(f"UMAP saved to {save_path}")
+    plt.close()
+
+
+def plot_single_pca(ref_X, target_X, shifted_dict, ref_batch, target_batch,
+                    save_path):
+    """Single PCA plot with continuous colour gradient across alpha values.
+
+    Same visual strategy as :func:`plot_single_umap` but uses the first two
+    principal components instead of UMAP coordinates.
+    """
+    chunks = [ref_X, target_X]
+    chunk_labels = ["ref", "target"]
+    for alpha in sorted(shifted_dict):
+        chunks.append(shifted_dict[alpha])
+        chunk_labels.append(alpha)
+
+    combined = np.vstack(chunks)
+    offsets = np.cumsum([0] + [c.shape[0] for c in chunks])
+
+    tmp = ad.AnnData(X=combined)
+    sc.pp.pca(tmp, n_comps=30)
+    pca_coords = tmp.obsm["X_pca"][:, :2]
+
+    alpha_values = sorted(shifted_dict.keys())
+    alpha_min = min(0.0, min(alpha_values))
+    alpha_max = max(1.0, max(alpha_values))
+    norm = mcolors.Normalize(vmin=alpha_min, vmax=alpha_max)
+    cmap = plt.cm.viridis
+
+    fig, ax = plt.subplots(figsize=(8, 7))
+
+    for i, label in enumerate(chunk_labels):
+        start, end = offsets[i], offsets[i + 1]
+        xy = pca_coords[start:end]
+
+        if label == "ref":
+            color = cmap(norm(0.0))
+            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.6, color=color,
+                       marker="^",
+                       label=f"Ref: {ref_batch} (original)", zorder=3,
+                       edgecolors="none")
+        elif label == "target":
+            color = cmap(norm(1.0))
+            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.6, color=color,
+                       marker="s",
+                       label=f"Target: {target_batch} (original)", zorder=3,
+                       edgecolors="none")
+        else:
+            alpha_val = label
+            color = cmap(norm(alpha_val))
+            ax.scatter(xy[:, 0], xy[:, 1], s=3, alpha=0.3, color=color,
+                       label=f"alpha={alpha_val}", zorder=2,
+                       edgecolors="none")
+
+    ax.set_xlabel("PC1", fontsize=10)
+    ax.set_ylabel("PC2", fontsize=10)
+    ax.set_title("Batch Interpolation / Extrapolation (PCA)", fontsize=12,
+                 fontweight="bold")
+
+    ax.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), fontsize=8,
+              markerscale=3, frameon=True)
+
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=ax, fraction=0.03, pad=0.01)
+    cbar.set_label("alpha", fontsize=10)
+
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    plt.savefig(save_path, dpi=200, bbox_inches="tight")
+    log.info(f"PCA plot saved to {save_path}")
     plt.close()
 
 
@@ -376,8 +446,8 @@ def main(cfg: DictConfig) -> None:
 
         shifted_expr[alpha] = x_shifted
 
-    # -- 5. single UMAP --
-    log.info("[5/5] Plotting UMAP...")
+    # -- 5. visualisation --
+    log.info("[5/5] Plotting UMAP and PCA...")
     ref_X = adata.X[ref_mask] if not hasattr(adata.X, "toarray") else adata.X[ref_mask].toarray()
     target_X = adata.X[target_mask] if not hasattr(adata.X, "toarray") else adata.X[target_mask].toarray()
 
@@ -385,6 +455,12 @@ def main(cfg: DictConfig) -> None:
     plot_single_umap(
         ref_X, target_X, shifted_expr,
         ref_batch, target_batch, umap_path,
+    )
+
+    pca_path = os.path.join(results_dir, "pca_batch_interpolation.png")
+    plot_single_pca(
+        ref_X, target_X, shifted_expr,
+        ref_batch, target_batch, pca_path,
     )
 
     log.info("")
