@@ -261,12 +261,14 @@ def plot_single_umap(ref_X, target_X, shifted_dict, ref_batch, target_batch,
 
         if label == "ref":
             color = cmap(norm(0.0))
-            ax.scatter(xy[:, 0], xy[:, 1], s=4, alpha=0.5, color=color,
+            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.5, color=color,
+                       marker="^",
                        label=f"Ref: {ref_batch} (original)", zorder=3,
                        edgecolors="none")
         elif label == "target":
             color = cmap(norm(1.0))
-            ax.scatter(xy[:, 0], xy[:, 1], s=4, alpha=0.5, color=color,
+            ax.scatter(xy[:, 0], xy[:, 1], s=8, alpha=0.5, color=color,
+                       marker="s",
                        label=f"Target: {target_batch} (original)", zorder=3,
                        edgecolors="none")
         else:
