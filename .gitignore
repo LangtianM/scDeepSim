@@ -7,7 +7,6 @@ checkpoints/
 checkpoints/*
 tests/__pycache__/test_diffusion_components.cpython-312-pytest-9.0.1.pyc
 *.pyc
-*.png
 experiments/outputs/*
 *_plan.md
 .agents/
