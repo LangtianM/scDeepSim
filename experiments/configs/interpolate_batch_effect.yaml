@@ -2,12 +2,12 @@ seed: 42
 
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
-  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+  data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
 
 data:
   n_cells: 10000
   n_genes: 2000
-  batch_key: sequencing.batch
+  batch_key: tech
 
 vae:
   latent_dim: 128
