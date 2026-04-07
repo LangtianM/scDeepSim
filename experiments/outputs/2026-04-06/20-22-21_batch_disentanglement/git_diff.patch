@@ -1,0 +1,1688 @@
+diff --git a/.gitignore b/.gitignore
+index 945e3e2..8058027 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -7,8 +7,7 @@ checkpoints/
+ checkpoints/*
+ tests/__pycache__/test_diffusion_components.cpython-312-pytest-9.0.1.pyc
+ *.pyc
+-*.png
+-experiments/outputs/*
++experiments/outputs/
+ *_plan.md
+ .agents/
+ .vscode/
+diff --git a/outputs/2026-03-17/21-52-11/.hydra/config.yaml b/outputs/2026-03-17/21-52-11/.hydra/config.yaml
+deleted file mode 100644
+index 80d6259..0000000
+--- a/outputs/2026-03-17/21-52-11/.hydra/config.yaml
++++ /dev/null
+@@ -1,33 +0,0 @@
+-seed: 42
+-paths:
+-  root_dir: ${oc.env:PROJECT_ROOT}
+-  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+-  checkpoint_dir: ${paths.root_dir}/experiments/outputs/checkpoints/test_disentangle
+-  log_dir: ${paths.root_dir}/experiments/outputs/lightning_logs/test_disentangle
+-data:
+-  n_cells: 1000
+-  n_genes: 500
+-vae:
+-  latent_dim: 128
+-  enc_hidden:
+-  - 512
+-  - 256
+-  dec_hidden:
+-  - 256
+-  - 512
+-  input_dropout: 0.1
+-  beta: 1.0
+-  beta_warmup_epochs: 10
+-  zero_inflated: false
+-  sup_head_hidden: 64
+-  max_epochs: 1
+-  batch_size: 256
+-supervision:
+-  weight: 5.0
+-  celltype_latent_dims: 16
+-  batch_latent_dims: 16
+-  stage_latent_dims: 16
+-eval:
+-  rf_n_estimators: 100
+-  rf_max_depth: 10
+-  test_size: 0.2
+diff --git a/outputs/2026-03-17/21-52-11/.hydra/hydra.yaml b/outputs/2026-03-17/21-52-11/.hydra/hydra.yaml
+deleted file mode 100644
+index 2b1c022..0000000
+--- a/outputs/2026-03-17/21-52-11/.hydra/hydra.yaml
++++ /dev/null
+@@ -1,157 +0,0 @@
+-hydra:
+-  run:
+-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-  sweep:
+-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-    subdir: ${hydra.job.num}
+-  launcher:
+-    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+-  sweeper:
+-    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+-    max_batch_size: null
+-    params: null
+-  help:
+-    app_name: ${hydra.job.name}
+-    header: '${hydra.help.app_name} is powered by Hydra.
+-
+-      '
+-    footer: 'Powered by Hydra (https://hydra.cc)
+-
+-      Use --hydra-help to view Hydra specific help
+-
+-      '
+-    template: '${hydra.help.header}
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (group=option)
+-
+-
+-      $APP_CONFIG_GROUPS
+-
+-
+-      == Config ==
+-
+-      Override anything in the config (foo.bar=value)
+-
+-
+-      $CONFIG
+-
+-
+-      ${hydra.help.footer}
+-
+-      '
+-  hydra_help:
+-    template: 'Hydra (${hydra.runtime.version})
+-
+-      See https://hydra.cc for more info.
+-
+-
+-      == Flags ==
+-
+-      $FLAGS_HELP
+-
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+-      to command line)
+-
+-
+-      $HYDRA_CONFIG_GROUPS
+-
+-
+-      Use ''--cfg hydra'' to Show the Hydra config.
+-
+-      '
+-    hydra_help: ???
+-  hydra_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][HYDRA] %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-    loggers:
+-      logging_example:
+-        level: DEBUG
+-    disable_existing_loggers: false
+-  job_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-      file:
+-        class: logging.FileHandler
+-        formatter: simple
+-        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-      - file
+-    disable_existing_loggers: false
+-  env: {}
+-  mode: RUN
+-  searchpath: []
+-  callbacks: {}
+-  output_subdir: .hydra
+-  overrides:
+-    hydra:
+-    - hydra.mode=RUN
+-    task:
+-    - vae.max_epochs=1
+-    - data.n_cells=1000
+-    - data.n_genes=500
+-  job:
+-    name: test_disentanglement
+-    chdir: null
+-    override_dirname: data.n_cells=1000,data.n_genes=500,vae.max_epochs=1
+-    id: ???
+-    num: ???
+-    config_name: train_disentangle
+-    env_set: {}
+-    env_copy: []
+-    config:
+-      override_dirname:
+-        kv_sep: '='
+-        item_sep: ','
+-        exclude_keys: []
+-  runtime:
+-    version: 1.3.2
+-    version_base: '1.3'
+-    cwd: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-    config_sources:
+-    - path: hydra.conf
+-      schema: pkg
+-      provider: hydra
+-    - path: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/configs
+-      schema: file
+-      provider: main
+-    - path: ''
+-      schema: structured
+-      provider: schema
+-    output_dir: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/outputs/2026-03-17/21-52-11
+-    choices:
+-      hydra/env: default
+-      hydra/callbacks: null
+-      hydra/job_logging: default
+-      hydra/hydra_logging: default
+-      hydra/hydra_help: default
+-      hydra/help: default
+-      hydra/sweeper: basic
+-      hydra/launcher: basic
+-      hydra/output: default
+-  verbose: false
+diff --git a/outputs/2026-03-17/21-52-11/.hydra/overrides.yaml b/outputs/2026-03-17/21-52-11/.hydra/overrides.yaml
+deleted file mode 100644
+index 1e46613..0000000
+--- a/outputs/2026-03-17/21-52-11/.hydra/overrides.yaml
++++ /dev/null
+@@ -1,3 +0,0 @@
+-- vae.max_epochs=1
+-- data.n_cells=1000
+-- data.n_genes=500
+diff --git a/outputs/2026-03-17/21-52-11/test_disentanglement.log b/outputs/2026-03-17/21-52-11/test_disentanglement.log
+deleted file mode 100644
+index 8d4a9c3..0000000
+--- a/outputs/2026-03-17/21-52-11/test_disentanglement.log
++++ /dev/null
+@@ -1,20 +0,0 @@
+-[2026-03-17 21:52:11,273][__main__][INFO] - ======================================================================
+-[2026-03-17 21:52:11,274][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+-[2026-03-17 21:52:11,274][__main__][INFO] - ======================================================================
+-[2026-03-17 21:52:11,274][__main__][INFO] - 
+-[1/4] Loading and preprocessing data...
+-[2026-03-17 21:52:14,026][__main__][INFO] - Data shape: (1000, 500)
+-[2026-03-17 21:52:14,026][__main__][INFO] - Zero fraction: 0.9670
+-[2026-03-17 21:52:14,028][__main__][INFO] - 
+-[2/4] Training or loading VAE...
+-[2026-03-17 21:52:14,029][__main__][INFO] - Found 36 celltypes, 3 batches, 10 stages
+-[2026-03-17 21:52:14,029][__main__][INFO] - Supervision weight: 5.0
+-[2026-03-17 21:52:14,173][__main__][INFO] - Training VAE...
+-[2026-03-17 21:52:17,389][__main__][INFO] - Checkpoint saved to /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/outputs/checkpoints/test_disentangle/disentangle_vae.ckpt
+-[2026-03-17 21:52:17,389][__main__][INFO] - 
+-[3/4] Encoding data and extracting latent subspaces...
+-[2026-03-17 21:52:17,413][__main__][INFO] - Celltype latent dims: 0:16
+-[2026-03-17 21:52:17,414][__main__][INFO] - Batch latent dims: 16:32
+-[2026-03-17 21:52:17,414][__main__][INFO] - Stage latent dims: 32:48
+-[2026-03-17 21:52:17,414][__main__][INFO] - 
+-[4/4] Evaluating disentanglement...
+diff --git a/outputs/2026-03-17/21-52-32/.hydra/config.yaml b/outputs/2026-03-17/21-52-32/.hydra/config.yaml
+deleted file mode 100644
+index 80d6259..0000000
+--- a/outputs/2026-03-17/21-52-32/.hydra/config.yaml
++++ /dev/null
+@@ -1,33 +0,0 @@
+-seed: 42
+-paths:
+-  root_dir: ${oc.env:PROJECT_ROOT}
+-  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+-  checkpoint_dir: ${paths.root_dir}/experiments/outputs/checkpoints/test_disentangle
+-  log_dir: ${paths.root_dir}/experiments/outputs/lightning_logs/test_disentangle
+-data:
+-  n_cells: 1000
+-  n_genes: 500
+-vae:
+-  latent_dim: 128
+-  enc_hidden:
+-  - 512
+-  - 256
+-  dec_hidden:
+-  - 256
+-  - 512
+-  input_dropout: 0.1
+-  beta: 1.0
+-  beta_warmup_epochs: 10
+-  zero_inflated: false
+-  sup_head_hidden: 64
+-  max_epochs: 1
+-  batch_size: 256
+-supervision:
+-  weight: 5.0
+-  celltype_latent_dims: 16
+-  batch_latent_dims: 16
+-  stage_latent_dims: 16
+-eval:
+-  rf_n_estimators: 100
+-  rf_max_depth: 10
+-  test_size: 0.2
+diff --git a/outputs/2026-03-17/21-52-32/.hydra/hydra.yaml b/outputs/2026-03-17/21-52-32/.hydra/hydra.yaml
+deleted file mode 100644
+index 6aae62e..0000000
+--- a/outputs/2026-03-17/21-52-32/.hydra/hydra.yaml
++++ /dev/null
+@@ -1,157 +0,0 @@
+-hydra:
+-  run:
+-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-  sweep:
+-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-    subdir: ${hydra.job.num}
+-  launcher:
+-    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+-  sweeper:
+-    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+-    max_batch_size: null
+-    params: null
+-  help:
+-    app_name: ${hydra.job.name}
+-    header: '${hydra.help.app_name} is powered by Hydra.
+-
+-      '
+-    footer: 'Powered by Hydra (https://hydra.cc)
+-
+-      Use --hydra-help to view Hydra specific help
+-
+-      '
+-    template: '${hydra.help.header}
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (group=option)
+-
+-
+-      $APP_CONFIG_GROUPS
+-
+-
+-      == Config ==
+-
+-      Override anything in the config (foo.bar=value)
+-
+-
+-      $CONFIG
+-
+-
+-      ${hydra.help.footer}
+-
+-      '
+-  hydra_help:
+-    template: 'Hydra (${hydra.runtime.version})
+-
+-      See https://hydra.cc for more info.
+-
+-
+-      == Flags ==
+-
+-      $FLAGS_HELP
+-
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+-      to command line)
+-
+-
+-      $HYDRA_CONFIG_GROUPS
+-
+-
+-      Use ''--cfg hydra'' to Show the Hydra config.
+-
+-      '
+-    hydra_help: ???
+-  hydra_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][HYDRA] %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-    loggers:
+-      logging_example:
+-        level: DEBUG
+-    disable_existing_loggers: false
+-  job_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-      file:
+-        class: logging.FileHandler
+-        formatter: simple
+-        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-      - file
+-    disable_existing_loggers: false
+-  env: {}
+-  mode: RUN
+-  searchpath: []
+-  callbacks: {}
+-  output_subdir: .hydra
+-  overrides:
+-    hydra:
+-    - hydra.mode=RUN
+-    task:
+-    - vae.max_epochs=1
+-    - data.n_cells=1000
+-    - data.n_genes=500
+-  job:
+-    name: test_disentanglement
+-    chdir: null
+-    override_dirname: data.n_cells=1000,data.n_genes=500,vae.max_epochs=1
+-    id: ???
+-    num: ???
+-    config_name: train_disentangle
+-    env_set: {}
+-    env_copy: []
+-    config:
+-      override_dirname:
+-        kv_sep: '='
+-        item_sep: ','
+-        exclude_keys: []
+-  runtime:
+-    version: 1.3.2
+-    version_base: '1.3'
+-    cwd: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-    config_sources:
+-    - path: hydra.conf
+-      schema: pkg
+-      provider: hydra
+-    - path: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/configs
+-      schema: file
+-      provider: main
+-    - path: ''
+-      schema: structured
+-      provider: schema
+-    output_dir: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/outputs/2026-03-17/21-52-32
+-    choices:
+-      hydra/env: default
+-      hydra/callbacks: null
+-      hydra/job_logging: default
+-      hydra/hydra_logging: default
+-      hydra/hydra_help: default
+-      hydra/help: default
+-      hydra/sweeper: basic
+-      hydra/launcher: basic
+-      hydra/output: default
+-  verbose: false
+diff --git a/outputs/2026-03-17/21-52-32/.hydra/overrides.yaml b/outputs/2026-03-17/21-52-32/.hydra/overrides.yaml
+deleted file mode 100644
+index 1e46613..0000000
+--- a/outputs/2026-03-17/21-52-32/.hydra/overrides.yaml
++++ /dev/null
+@@ -1,3 +0,0 @@
+-- vae.max_epochs=1
+-- data.n_cells=1000
+-- data.n_genes=500
+diff --git a/outputs/2026-03-17/21-52-32/test_disentanglement.log b/outputs/2026-03-17/21-52-32/test_disentanglement.log
+deleted file mode 100644
+index b6b17fc..0000000
+--- a/outputs/2026-03-17/21-52-32/test_disentanglement.log
++++ /dev/null
+@@ -1,57 +0,0 @@
+-[2026-03-17 21:52:32,647][__main__][INFO] - ======================================================================
+-[2026-03-17 21:52:32,648][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+-[2026-03-17 21:52:32,648][__main__][INFO] - ======================================================================
+-[2026-03-17 21:52:32,648][__main__][INFO] - 
+-[1/4] Loading and preprocessing data...
+-[2026-03-17 21:52:35,124][__main__][INFO] - Data shape: (1000, 500)
+-[2026-03-17 21:52:35,124][__main__][INFO] - Zero fraction: 0.9670
+-[2026-03-17 21:52:35,125][__main__][INFO] - 
+-[2/4] Training or loading VAE...
+-[2026-03-17 21:52:35,126][__main__][INFO] - Found 36 celltypes, 3 batches, 10 stages
+-[2026-03-17 21:52:35,126][__main__][INFO] - Supervision weight: 5.0
+-[2026-03-17 21:52:35,126][__main__][INFO] - Loading checkpoint from /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/outputs/checkpoints/test_disentangle/disentangle_vae.ckpt
+-[2026-03-17 21:52:35,190][__main__][INFO] - 
+-[3/4] Encoding data and extracting latent subspaces...
+-[2026-03-17 21:52:35,196][__main__][INFO] - Celltype latent dims: 0:16
+-[2026-03-17 21:52:35,196][__main__][INFO] - Batch latent dims: 16:32
+-[2026-03-17 21:52:35,197][__main__][INFO] - Stage latent dims: 32:48
+-[2026-03-17 21:52:35,197][__main__][INFO] - 
+-[4/4] Evaluating disentanglement...
+-[2026-03-17 21:52:35,198][__main__][WARNING] - Stratified split failed (dataset too small), using random split
+-[2026-03-17 21:52:35,198][__main__][INFO] - ======================================================================
+-[2026-03-17 21:52:35,198][__main__][INFO] - Random Chance - Celltype: 0.0278 | Batch: 0.3333 | Stage: 0.1000
+-[2026-03-17 21:52:35,198][__main__][INFO] - ======================================================================
+-[2026-03-17 21:52:35,198][__main__][INFO] - 
+-Celltype Classification Results:
+-[2026-03-17 21:52:35,309][__main__][INFO] -   on z_celltype      | Acc: 0.1350 | Bal.Acc: 0.0359
+-[2026-03-17 21:52:35,399][__main__][INFO] -   on z_batch         | Acc: 0.1050 | Bal.Acc: 0.0283
+-[2026-03-17 21:52:35,486][__main__][INFO] -   on z_stage         | Acc: 0.1500 | Bal.Acc: 0.0382
+-[2026-03-17 21:52:35,486][__main__][INFO] - 
+-Batch Classification Results:
+-[2026-03-17 21:52:35,564][__main__][INFO] -   on z_celltype      | Acc: 0.5600 | Bal.Acc: 0.3304
+-[2026-03-17 21:52:35,637][__main__][INFO] -   on z_batch         | Acc: 0.5300 | Bal.Acc: 0.3158
+-[2026-03-17 21:52:35,721][__main__][INFO] -   on z_stage         | Acc: 0.5750 | Bal.Acc: 0.3392
+-[2026-03-17 21:52:35,721][__main__][INFO] - 
+-Stage Classification Results:
+-[2026-03-17 21:52:35,807][__main__][INFO] -   on z_celltype      | Acc: 0.1850 | Bal.Acc: 0.1301
+-[2026-03-17 21:52:35,893][__main__][INFO] -   on z_batch         | Acc: 0.1950 | Bal.Acc: 0.1374
+-[2026-03-17 21:52:35,979][__main__][INFO] -   on z_stage         | Acc: 0.1600 | Bal.Acc: 0.1144
+-[2026-03-17 21:52:35,979][__main__][INFO] - 
+-======================================================================
+-[2026-03-17 21:52:35,979][__main__][INFO] - Disentanglement Assessment:
+-[2026-03-17 21:52:35,979][__main__][INFO] - ======================================================================
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✗ Celltype poorly encoded in its own dims (bal.acc: 0.0359)
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✓ Celltype NOT in batch dims (bal.acc: 0.0283 ≈ random: 0.0278)
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✓ Celltype NOT in stage dims (bal.acc: 0.0382 ≈ random: 0.0278)
+-[2026-03-17 21:52:35,979][__main__][INFO] - 
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✗ Batch poorly encoded in its own dims (bal.acc: 0.3158)
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✓ Batch NOT in celltype dims (bal.acc: 0.3304 ≈ random: 0.3333)
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✓ Batch NOT in stage dims (bal.acc: 0.3392 ≈ random: 0.3333)
+-[2026-03-17 21:52:35,979][__main__][INFO] - 
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✗ Stage poorly encoded in its own dims (bal.acc: 0.1144)
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✓ Stage NOT in celltype dims (bal.acc: 0.1301 ≈ random: 0.1000)
+-[2026-03-17 21:52:35,979][__main__][INFO] - ✓ Stage NOT in batch dims (bal.acc: 0.1374 ≈ random: 0.1000)
+-[2026-03-17 21:52:35,979][__main__][INFO] - 
+-======================================================================
+-[2026-03-17 21:52:35,979][__main__][INFO] - EXPERIMENT COMPLETE
+-[2026-03-17 21:52:35,979][__main__][INFO] - ======================================================================
+diff --git a/outputs/2026-03-17/21-54-23/.hydra/config.yaml b/outputs/2026-03-17/21-54-23/.hydra/config.yaml
+deleted file mode 100644
+index 3eca8bf..0000000
+--- a/outputs/2026-03-17/21-54-23/.hydra/config.yaml
++++ /dev/null
+@@ -1,33 +0,0 @@
+-seed: 42
+-paths:
+-  root_dir: ${oc.env:PROJECT_ROOT}
+-  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+-  checkpoint_dir: ${paths.root_dir}/experiments/outputs/checkpoints/test_disentangle
+-  log_dir: ${paths.root_dir}/experiments/outputs/lightning_logs/test_disentangle
+-data:
+-  n_cells: 10000
+-  n_genes: 2000
+-vae:
+-  latent_dim: 128
+-  enc_hidden:
+-  - 512
+-  - 256
+-  dec_hidden:
+-  - 256
+-  - 512
+-  input_dropout: 0.1
+-  beta: 1.0
+-  beta_warmup_epochs: 10
+-  zero_inflated: false
+-  sup_head_hidden: 64
+-  max_epochs: 50
+-  batch_size: 256
+-supervision:
+-  weight: 5.0
+-  celltype_latent_dims: 16
+-  batch_latent_dims: 16
+-  stage_latent_dims: 16
+-eval:
+-  rf_n_estimators: 100
+-  rf_max_depth: 10
+-  test_size: 0.2
+diff --git a/outputs/2026-03-17/21-54-23/.hydra/hydra.yaml b/outputs/2026-03-17/21-54-23/.hydra/hydra.yaml
+deleted file mode 100644
+index b5d5e2d..0000000
+--- a/outputs/2026-03-17/21-54-23/.hydra/hydra.yaml
++++ /dev/null
+@@ -1,154 +0,0 @@
+-hydra:
+-  run:
+-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-  sweep:
+-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-    subdir: ${hydra.job.num}
+-  launcher:
+-    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+-  sweeper:
+-    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+-    max_batch_size: null
+-    params: null
+-  help:
+-    app_name: ${hydra.job.name}
+-    header: '${hydra.help.app_name} is powered by Hydra.
+-
+-      '
+-    footer: 'Powered by Hydra (https://hydra.cc)
+-
+-      Use --hydra-help to view Hydra specific help
+-
+-      '
+-    template: '${hydra.help.header}
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (group=option)
+-
+-
+-      $APP_CONFIG_GROUPS
+-
+-
+-      == Config ==
+-
+-      Override anything in the config (foo.bar=value)
+-
+-
+-      $CONFIG
+-
+-
+-      ${hydra.help.footer}
+-
+-      '
+-  hydra_help:
+-    template: 'Hydra (${hydra.runtime.version})
+-
+-      See https://hydra.cc for more info.
+-
+-
+-      == Flags ==
+-
+-      $FLAGS_HELP
+-
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+-      to command line)
+-
+-
+-      $HYDRA_CONFIG_GROUPS
+-
+-
+-      Use ''--cfg hydra'' to Show the Hydra config.
+-
+-      '
+-    hydra_help: ???
+-  hydra_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][HYDRA] %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-    loggers:
+-      logging_example:
+-        level: DEBUG
+-    disable_existing_loggers: false
+-  job_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-      file:
+-        class: logging.FileHandler
+-        formatter: simple
+-        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-      - file
+-    disable_existing_loggers: false
+-  env: {}
+-  mode: RUN
+-  searchpath: []
+-  callbacks: {}
+-  output_subdir: .hydra
+-  overrides:
+-    hydra:
+-    - hydra.mode=RUN
+-    task: []
+-  job:
+-    name: test_disentanglement
+-    chdir: null
+-    override_dirname: ''
+-    id: ???
+-    num: ???
+-    config_name: train_disentangle
+-    env_set: {}
+-    env_copy: []
+-    config:
+-      override_dirname:
+-        kv_sep: '='
+-        item_sep: ','
+-        exclude_keys: []
+-  runtime:
+-    version: 1.3.2
+-    version_base: '1.3'
+-    cwd: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-    config_sources:
+-    - path: hydra.conf
+-      schema: pkg
+-      provider: hydra
+-    - path: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/configs
+-      schema: file
+-      provider: main
+-    - path: ''
+-      schema: structured
+-      provider: schema
+-    output_dir: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/outputs/2026-03-17/21-54-23
+-    choices:
+-      hydra/env: default
+-      hydra/callbacks: null
+-      hydra/job_logging: default
+-      hydra/hydra_logging: default
+-      hydra/hydra_help: default
+-      hydra/help: default
+-      hydra/sweeper: basic
+-      hydra/launcher: basic
+-      hydra/output: default
+-  verbose: false
+diff --git a/outputs/2026-03-17/21-54-23/.hydra/overrides.yaml b/outputs/2026-03-17/21-54-23/.hydra/overrides.yaml
+deleted file mode 100644
+index fe51488..0000000
+--- a/outputs/2026-03-17/21-54-23/.hydra/overrides.yaml
++++ /dev/null
+@@ -1 +0,0 @@
+-[]
+diff --git a/outputs/2026-03-17/21-54-23/test_disentanglement.log b/outputs/2026-03-17/21-54-23/test_disentanglement.log
+deleted file mode 100644
+index 25f0c67..0000000
+--- a/outputs/2026-03-17/21-54-23/test_disentanglement.log
++++ /dev/null
+@@ -1,14 +0,0 @@
+-[2026-03-17 21:54:23,738][__main__][INFO] - ======================================================================
+-[2026-03-17 21:54:23,738][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+-[2026-03-17 21:54:23,738][__main__][INFO] - ======================================================================
+-[2026-03-17 21:54:23,738][__main__][INFO] - 
+-[1/4] Loading and preprocessing data...
+-[2026-03-17 21:54:26,244][__main__][INFO] - Data shape: (10000, 2000)
+-[2026-03-17 21:54:26,257][__main__][INFO] - Zero fraction: 0.9775
+-[2026-03-17 21:54:26,258][__main__][INFO] - 
+-[2/4] Training or loading VAE...
+-[2026-03-17 21:54:26,260][__main__][INFO] - Found 37 celltypes, 3 batches, 10 stages
+-[2026-03-17 21:54:26,260][__main__][INFO] - Supervision weight: 5.0
+-[2026-03-17 21:54:26,260][__main__][INFO] - Loading checkpoint from /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/outputs/checkpoints/test_disentangle/disentangle_vae.ckpt
+-[2026-03-17 21:54:26,321][__main__][INFO] - 
+-[3/4] Encoding data and extracting latent subspaces...
+diff --git a/outputs/2026-03-17/21-57-00/.hydra/config.yaml b/outputs/2026-03-17/21-57-00/.hydra/config.yaml
+deleted file mode 100644
+index 3eca8bf..0000000
+--- a/outputs/2026-03-17/21-57-00/.hydra/config.yaml
++++ /dev/null
+@@ -1,33 +0,0 @@
+-seed: 42
+-paths:
+-  root_dir: ${oc.env:PROJECT_ROOT}
+-  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+-  checkpoint_dir: ${paths.root_dir}/experiments/outputs/checkpoints/test_disentangle
+-  log_dir: ${paths.root_dir}/experiments/outputs/lightning_logs/test_disentangle
+-data:
+-  n_cells: 10000
+-  n_genes: 2000
+-vae:
+-  latent_dim: 128
+-  enc_hidden:
+-  - 512
+-  - 256
+-  dec_hidden:
+-  - 256
+-  - 512
+-  input_dropout: 0.1
+-  beta: 1.0
+-  beta_warmup_epochs: 10
+-  zero_inflated: false
+-  sup_head_hidden: 64
+-  max_epochs: 50
+-  batch_size: 256
+-supervision:
+-  weight: 5.0
+-  celltype_latent_dims: 16
+-  batch_latent_dims: 16
+-  stage_latent_dims: 16
+-eval:
+-  rf_n_estimators: 100
+-  rf_max_depth: 10
+-  test_size: 0.2
+diff --git a/outputs/2026-03-17/21-57-00/.hydra/hydra.yaml b/outputs/2026-03-17/21-57-00/.hydra/hydra.yaml
+deleted file mode 100644
+index 8547b8c..0000000
+--- a/outputs/2026-03-17/21-57-00/.hydra/hydra.yaml
++++ /dev/null
+@@ -1,154 +0,0 @@
+-hydra:
+-  run:
+-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-  sweep:
+-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-    subdir: ${hydra.job.num}
+-  launcher:
+-    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+-  sweeper:
+-    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+-    max_batch_size: null
+-    params: null
+-  help:
+-    app_name: ${hydra.job.name}
+-    header: '${hydra.help.app_name} is powered by Hydra.
+-
+-      '
+-    footer: 'Powered by Hydra (https://hydra.cc)
+-
+-      Use --hydra-help to view Hydra specific help
+-
+-      '
+-    template: '${hydra.help.header}
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (group=option)
+-
+-
+-      $APP_CONFIG_GROUPS
+-
+-
+-      == Config ==
+-
+-      Override anything in the config (foo.bar=value)
+-
+-
+-      $CONFIG
+-
+-
+-      ${hydra.help.footer}
+-
+-      '
+-  hydra_help:
+-    template: 'Hydra (${hydra.runtime.version})
+-
+-      See https://hydra.cc for more info.
+-
+-
+-      == Flags ==
+-
+-      $FLAGS_HELP
+-
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+-      to command line)
+-
+-
+-      $HYDRA_CONFIG_GROUPS
+-
+-
+-      Use ''--cfg hydra'' to Show the Hydra config.
+-
+-      '
+-    hydra_help: ???
+-  hydra_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][HYDRA] %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-    loggers:
+-      logging_example:
+-        level: DEBUG
+-    disable_existing_loggers: false
+-  job_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-      file:
+-        class: logging.FileHandler
+-        formatter: simple
+-        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-      - file
+-    disable_existing_loggers: false
+-  env: {}
+-  mode: RUN
+-  searchpath: []
+-  callbacks: {}
+-  output_subdir: .hydra
+-  overrides:
+-    hydra:
+-    - hydra.mode=RUN
+-    task: []
+-  job:
+-    name: test_disentanglement
+-    chdir: null
+-    override_dirname: ''
+-    id: ???
+-    num: ???
+-    config_name: train_disentangle
+-    env_set: {}
+-    env_copy: []
+-    config:
+-      override_dirname:
+-        kv_sep: '='
+-        item_sep: ','
+-        exclude_keys: []
+-  runtime:
+-    version: 1.3.2
+-    version_base: '1.3'
+-    cwd: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-    config_sources:
+-    - path: hydra.conf
+-      schema: pkg
+-      provider: hydra
+-    - path: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/configs
+-      schema: file
+-      provider: main
+-    - path: ''
+-      schema: structured
+-      provider: schema
+-    output_dir: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/outputs/2026-03-17/21-57-00
+-    choices:
+-      hydra/env: default
+-      hydra/callbacks: null
+-      hydra/job_logging: default
+-      hydra/hydra_logging: default
+-      hydra/hydra_help: default
+-      hydra/help: default
+-      hydra/sweeper: basic
+-      hydra/launcher: basic
+-      hydra/output: default
+-  verbose: false
+diff --git a/outputs/2026-03-17/21-57-00/.hydra/overrides.yaml b/outputs/2026-03-17/21-57-00/.hydra/overrides.yaml
+deleted file mode 100644
+index fe51488..0000000
+--- a/outputs/2026-03-17/21-57-00/.hydra/overrides.yaml
++++ /dev/null
+@@ -1 +0,0 @@
+-[]
+diff --git a/outputs/2026-03-17/21-57-00/test_disentanglement.log b/outputs/2026-03-17/21-57-00/test_disentanglement.log
+deleted file mode 100644
+index 48c09ae..0000000
+--- a/outputs/2026-03-17/21-57-00/test_disentanglement.log
++++ /dev/null
+@@ -1,57 +0,0 @@
+-[2026-03-17 21:57:00,263][__main__][INFO] - ======================================================================
+-[2026-03-17 21:57:00,263][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+-[2026-03-17 21:57:00,263][__main__][INFO] - ======================================================================
+-[2026-03-17 21:57:00,263][__main__][INFO] - 
+-[1/4] Loading and preprocessing data...
+-[2026-03-17 21:57:02,940][__main__][INFO] - Data shape: (10000, 2000)
+-[2026-03-17 21:57:02,955][__main__][INFO] - Zero fraction: 0.9775
+-[2026-03-17 21:57:02,956][__main__][INFO] - 
+-[2/4] Training or loading VAE...
+-[2026-03-17 21:57:02,958][__main__][INFO] - Found 37 celltypes, 3 batches, 10 stages
+-[2026-03-17 21:57:02,958][__main__][INFO] - Supervision weight: 5.0
+-[2026-03-17 21:57:03,106][__main__][INFO] - Training VAE...
+-[2026-03-17 21:57:52,953][__main__][INFO] - Checkpoint saved to /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/outputs/checkpoints/test_disentangle/disentangle_vae.ckpt
+-[2026-03-17 21:57:52,956][__main__][INFO] - 
+-[3/4] Encoding data and extracting latent subspaces...
+-[2026-03-17 21:57:53,098][__main__][INFO] - Celltype latent dims: 0:16
+-[2026-03-17 21:57:53,098][__main__][INFO] - Batch latent dims: 16:32
+-[2026-03-17 21:57:53,098][__main__][INFO] - Stage latent dims: 32:48
+-[2026-03-17 21:57:53,099][__main__][INFO] - 
+-[4/4] Evaluating disentanglement...
+-[2026-03-17 21:57:53,108][__main__][INFO] - ======================================================================
+-[2026-03-17 21:57:53,108][__main__][INFO] - Random Chance - Celltype: 0.0270 | Batch: 0.3333 | Stage: 0.1000
+-[2026-03-17 21:57:53,108][__main__][INFO] - ======================================================================
+-[2026-03-17 21:57:53,108][__main__][INFO] - 
+-Celltype Classification Results:
+-[2026-03-17 21:57:53,485][__main__][INFO] -   on z_celltype      | Acc: 0.6460 | Bal.Acc: 0.4606
+-[2026-03-17 21:57:53,867][__main__][INFO] -   on z_batch         | Acc: 0.6160 | Bal.Acc: 0.4389
+-[2026-03-17 21:57:54,263][__main__][INFO] -   on z_stage         | Acc: 0.6060 | Bal.Acc: 0.4319
+-[2026-03-17 21:57:54,263][__main__][INFO] - 
+-Batch Classification Results:
+-[2026-03-17 21:57:54,563][__main__][INFO] -   on z_celltype      | Acc: 0.5865 | Bal.Acc: 0.3673
+-[2026-03-17 21:57:54,866][__main__][INFO] -   on z_batch         | Acc: 0.5850 | Bal.Acc: 0.3714
+-[2026-03-17 21:57:55,160][__main__][INFO] -   on z_stage         | Acc: 0.5935 | Bal.Acc: 0.3801
+-[2026-03-17 21:57:55,160][__main__][INFO] - 
+-Stage Classification Results:
+-[2026-03-17 21:57:55,482][__main__][INFO] -   on z_celltype      | Acc: 0.3640 | Bal.Acc: 0.2821
+-[2026-03-17 21:57:55,819][__main__][INFO] -   on z_batch         | Acc: 0.3555 | Bal.Acc: 0.2669
+-[2026-03-17 21:57:56,160][__main__][INFO] -   on z_stage         | Acc: 0.3680 | Bal.Acc: 0.2782
+-[2026-03-17 21:57:56,160][__main__][INFO] - 
+-======================================================================
+-[2026-03-17 21:57:56,160][__main__][INFO] - Disentanglement Assessment:
+-[2026-03-17 21:57:56,160][__main__][INFO] - ======================================================================
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✗ Celltype poorly encoded in its own dims (bal.acc: 0.4606)
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✗ Celltype leaks into batch dims (bal.acc: 0.4389 > random: 0.0270)
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✗ Celltype leaks into stage dims (bal.acc: 0.4319 > random: 0.0270)
+-[2026-03-17 21:57:56,160][__main__][INFO] - 
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✗ Batch poorly encoded in its own dims (bal.acc: 0.3714)
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✓ Batch NOT in celltype dims (bal.acc: 0.3673 ≈ random: 0.3333)
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✓ Batch NOT in stage dims (bal.acc: 0.3801 ≈ random: 0.3333)
+-[2026-03-17 21:57:56,160][__main__][INFO] - 
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✗ Stage poorly encoded in its own dims (bal.acc: 0.2782)
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✗ Stage leaks into celltype dims (bal.acc: 0.2821 > random: 0.1000)
+-[2026-03-17 21:57:56,160][__main__][INFO] - ✗ Stage leaks into batch dims (bal.acc: 0.2669 > random: 0.1000)
+-[2026-03-17 21:57:56,160][__main__][INFO] - 
+-======================================================================
+-[2026-03-17 21:57:56,160][__main__][INFO] - EXPERIMENT COMPLETE
+-[2026-03-17 21:57:56,160][__main__][INFO] - ======================================================================
+diff --git a/outputs/2026-03-17/21-57-02/.hydra/config.yaml b/outputs/2026-03-17/21-57-02/.hydra/config.yaml
+deleted file mode 100644
+index 3eca8bf..0000000
+--- a/outputs/2026-03-17/21-57-02/.hydra/config.yaml
++++ /dev/null
+@@ -1,33 +0,0 @@
+-seed: 42
+-paths:
+-  root_dir: ${oc.env:PROJECT_ROOT}
+-  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+-  checkpoint_dir: ${paths.root_dir}/experiments/outputs/checkpoints/test_disentangle
+-  log_dir: ${paths.root_dir}/experiments/outputs/lightning_logs/test_disentangle
+-data:
+-  n_cells: 10000
+-  n_genes: 2000
+-vae:
+-  latent_dim: 128
+-  enc_hidden:
+-  - 512
+-  - 256
+-  dec_hidden:
+-  - 256
+-  - 512
+-  input_dropout: 0.1
+-  beta: 1.0
+-  beta_warmup_epochs: 10
+-  zero_inflated: false
+-  sup_head_hidden: 64
+-  max_epochs: 50
+-  batch_size: 256
+-supervision:
+-  weight: 5.0
+-  celltype_latent_dims: 16
+-  batch_latent_dims: 16
+-  stage_latent_dims: 16
+-eval:
+-  rf_n_estimators: 100
+-  rf_max_depth: 10
+-  test_size: 0.2
+diff --git a/outputs/2026-03-17/21-57-02/.hydra/hydra.yaml b/outputs/2026-03-17/21-57-02/.hydra/hydra.yaml
+deleted file mode 100644
+index cfa6f75..0000000
+--- a/outputs/2026-03-17/21-57-02/.hydra/hydra.yaml
++++ /dev/null
+@@ -1,154 +0,0 @@
+-hydra:
+-  run:
+-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-  sweep:
+-    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+-    subdir: ${hydra.job.num}
+-  launcher:
+-    _target_: hydra._internal.core_plugins.basic_launcher.BasicLauncher
+-  sweeper:
+-    _target_: hydra._internal.core_plugins.basic_sweeper.BasicSweeper
+-    max_batch_size: null
+-    params: null
+-  help:
+-    app_name: ${hydra.job.name}
+-    header: '${hydra.help.app_name} is powered by Hydra.
+-
+-      '
+-    footer: 'Powered by Hydra (https://hydra.cc)
+-
+-      Use --hydra-help to view Hydra specific help
+-
+-      '
+-    template: '${hydra.help.header}
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (group=option)
+-
+-
+-      $APP_CONFIG_GROUPS
+-
+-
+-      == Config ==
+-
+-      Override anything in the config (foo.bar=value)
+-
+-
+-      $CONFIG
+-
+-
+-      ${hydra.help.footer}
+-
+-      '
+-  hydra_help:
+-    template: 'Hydra (${hydra.runtime.version})
+-
+-      See https://hydra.cc for more info.
+-
+-
+-      == Flags ==
+-
+-      $FLAGS_HELP
+-
+-
+-      == Configuration groups ==
+-
+-      Compose your configuration from those groups (For example, append hydra/job_logging=disabled
+-      to command line)
+-
+-
+-      $HYDRA_CONFIG_GROUPS
+-
+-
+-      Use ''--cfg hydra'' to Show the Hydra config.
+-
+-      '
+-    hydra_help: ???
+-  hydra_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][HYDRA] %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-    loggers:
+-      logging_example:
+-        level: DEBUG
+-    disable_existing_loggers: false
+-  job_logging:
+-    version: 1
+-    formatters:
+-      simple:
+-        format: '[%(asctime)s][%(name)s][%(levelname)s] - %(message)s'
+-    handlers:
+-      console:
+-        class: logging.StreamHandler
+-        formatter: simple
+-        stream: ext://sys.stdout
+-      file:
+-        class: logging.FileHandler
+-        formatter: simple
+-        filename: ${hydra.runtime.output_dir}/${hydra.job.name}.log
+-    root:
+-      level: INFO
+-      handlers:
+-      - console
+-      - file
+-    disable_existing_loggers: false
+-  env: {}
+-  mode: RUN
+-  searchpath: []
+-  callbacks: {}
+-  output_subdir: .hydra
+-  overrides:
+-    hydra:
+-    - hydra.mode=RUN
+-    task: []
+-  job:
+-    name: test_disentanglement
+-    chdir: null
+-    override_dirname: ''
+-    id: ???
+-    num: ???
+-    config_name: train_disentangle
+-    env_set: {}
+-    env_copy: []
+-    config:
+-      override_dirname:
+-        kv_sep: '='
+-        item_sep: ','
+-        exclude_keys: []
+-  runtime:
+-    version: 1.3.2
+-    version_base: '1.3'
+-    cwd: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-    config_sources:
+-    - path: hydra.conf
+-      schema: pkg
+-      provider: hydra
+-    - path: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/configs
+-      schema: file
+-      provider: main
+-    - path: ''
+-      schema: structured
+-      provider: schema
+-    output_dir: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/outputs/2026-03-17/21-57-02
+-    choices:
+-      hydra/env: default
+-      hydra/callbacks: null
+-      hydra/job_logging: default
+-      hydra/hydra_logging: default
+-      hydra/hydra_help: default
+-      hydra/help: default
+-      hydra/sweeper: basic
+-      hydra/launcher: basic
+-      hydra/output: default
+-  verbose: false
+diff --git a/outputs/2026-03-17/21-57-02/.hydra/overrides.yaml b/outputs/2026-03-17/21-57-02/.hydra/overrides.yaml
+deleted file mode 100644
+index fe51488..0000000
+--- a/outputs/2026-03-17/21-57-02/.hydra/overrides.yaml
++++ /dev/null
+@@ -1 +0,0 @@
+-[]
+diff --git a/outputs/2026-03-17/21-57-02/test_disentanglement.log b/outputs/2026-03-17/21-57-02/test_disentanglement.log
+deleted file mode 100644
+index 0af5ccf..0000000
+--- a/outputs/2026-03-17/21-57-02/test_disentanglement.log
++++ /dev/null
+@@ -1,57 +0,0 @@
+-[2026-03-17 21:57:02,143][__main__][INFO] - ======================================================================
+-[2026-03-17 21:57:02,144][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+-[2026-03-17 21:57:02,144][__main__][INFO] - ======================================================================
+-[2026-03-17 21:57:02,144][__main__][INFO] - 
+-[1/4] Loading and preprocessing data...
+-[2026-03-17 21:57:05,063][__main__][INFO] - Data shape: (10000, 2000)
+-[2026-03-17 21:57:05,077][__main__][INFO] - Zero fraction: 0.9775
+-[2026-03-17 21:57:05,079][__main__][INFO] - 
+-[2/4] Training or loading VAE...
+-[2026-03-17 21:57:05,082][__main__][INFO] - Found 37 celltypes, 3 batches, 10 stages
+-[2026-03-17 21:57:05,082][__main__][INFO] - Supervision weight: 5.0
+-[2026-03-17 21:57:05,110][__main__][INFO] - Training VAE...
+-[2026-03-17 21:58:32,188][__main__][INFO] - Checkpoint saved to /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/experiments/outputs/checkpoints/test_disentangle/disentangle_vae.ckpt
+-[2026-03-17 21:58:32,192][__main__][INFO] - 
+-[3/4] Encoding data and extracting latent subspaces...
+-[2026-03-17 21:58:32,324][__main__][INFO] - Celltype latent dims: 0:16
+-[2026-03-17 21:58:32,325][__main__][INFO] - Batch latent dims: 16:32
+-[2026-03-17 21:58:32,325][__main__][INFO] - Stage latent dims: 32:48
+-[2026-03-17 21:58:32,326][__main__][INFO] - 
+-[4/4] Evaluating disentanglement...
+-[2026-03-17 21:58:32,332][__main__][INFO] - ======================================================================
+-[2026-03-17 21:58:32,333][__main__][INFO] - Random Chance - Celltype: 0.0270 | Batch: 0.3333 | Stage: 0.1000
+-[2026-03-17 21:58:32,333][__main__][INFO] - ======================================================================
+-[2026-03-17 21:58:32,333][__main__][INFO] - 
+-Celltype Classification Results:
+-[2026-03-17 21:58:32,681][__main__][INFO] -   on z_celltype      | Acc: 0.6580 | Bal.Acc: 0.4975
+-[2026-03-17 21:58:33,034][__main__][INFO] -   on z_batch         | Acc: 0.5845 | Bal.Acc: 0.4021
+-[2026-03-17 21:58:33,391][__main__][INFO] -   on z_stage         | Acc: 0.6100 | Bal.Acc: 0.4136
+-[2026-03-17 21:58:33,391][__main__][INFO] - 
+-Batch Classification Results:
+-[2026-03-17 21:58:33,652][__main__][INFO] -   on z_celltype      | Acc: 0.5930 | Bal.Acc: 0.3800
+-[2026-03-17 21:58:33,909][__main__][INFO] -   on z_batch         | Acc: 0.5980 | Bal.Acc: 0.3838
+-[2026-03-17 21:58:34,168][__main__][INFO] -   on z_stage         | Acc: 0.6000 | Bal.Acc: 0.3855
+-[2026-03-17 21:58:34,169][__main__][INFO] - 
+-Stage Classification Results:
+-[2026-03-17 21:58:34,546][__main__][INFO] -   on z_celltype      | Acc: 0.3760 | Bal.Acc: 0.2886
+-[2026-03-17 21:58:34,820][__main__][INFO] -   on z_batch         | Acc: 0.3535 | Bal.Acc: 0.2670
+-[2026-03-17 21:58:35,115][__main__][INFO] -   on z_stage         | Acc: 0.3755 | Bal.Acc: 0.2849
+-[2026-03-17 21:58:35,115][__main__][INFO] - 
+-======================================================================
+-[2026-03-17 21:58:35,116][__main__][INFO] - Disentanglement Assessment:
+-[2026-03-17 21:58:35,116][__main__][INFO] - ======================================================================
+-[2026-03-17 21:58:35,116][__main__][INFO] - ✗ Celltype poorly encoded in its own dims (bal.acc: 0.4975)
+-[2026-03-17 21:58:35,116][__main__][INFO] - ✗ Celltype leaks into batch dims (bal.acc: 0.4021 > random: 0.0270)
+-[2026-03-17 21:58:35,117][__main__][INFO] - ✗ Celltype leaks into stage dims (bal.acc: 0.4136 > random: 0.0270)
+-[2026-03-17 21:58:35,117][__main__][INFO] - 
+-[2026-03-17 21:58:35,117][__main__][INFO] - ✗ Batch poorly encoded in its own dims (bal.acc: 0.3838)
+-[2026-03-17 21:58:35,117][__main__][INFO] - ✓ Batch NOT in celltype dims (bal.acc: 0.3800 ≈ random: 0.3333)
+-[2026-03-17 21:58:35,118][__main__][INFO] - ✓ Batch NOT in stage dims (bal.acc: 0.3855 ≈ random: 0.3333)
+-[2026-03-17 21:58:35,118][__main__][INFO] - 
+-[2026-03-17 21:58:35,118][__main__][INFO] - ✗ Stage poorly encoded in its own dims (bal.acc: 0.2849)
+-[2026-03-17 21:58:35,118][__main__][INFO] - ✗ Stage leaks into celltype dims (bal.acc: 0.2886 > random: 0.1000)
+-[2026-03-17 21:58:35,119][__main__][INFO] - ✗ Stage leaks into batch dims (bal.acc: 0.2670 > random: 0.1000)
+-[2026-03-17 21:58:35,119][__main__][INFO] - 
+-======================================================================
+-[2026-03-17 21:58:35,119][__main__][INFO] - EXPERIMENT COMPLETE
+-[2026-03-17 21:58:35,119][__main__][INFO] - ======================================================================
+diff --git a/scdeepsim/src/scdeepsim/control.py b/scdeepsim/src/scdeepsim/control.py
+index f20fe93..9217dff 100644
+--- a/scdeepsim/src/scdeepsim/control.py
++++ b/scdeepsim/src/scdeepsim/control.py
+@@ -1,109 +1,199 @@
+ import numpy as np
+ import pandas as pd
++from scipy.linalg import sqrtm
+ 
+ 
+-def batch_directions(X_encoded, batch_labels, ref_batch = None, cell_types = None):
+-    """Calculate the mean shift across different batches comparing to a reference batch. For each batch, it first finds the mean shift of each cell type to the reference batch, then averages the mean shifts across cell types.
++def batch_directions(X_encoded, batch_labels, ref_batch=None, cell_types=None,
++                     subspace_slice=None):
++    """Cell-type-stratified mean shift between batches.
++
++    For each non-reference batch the per-cell-type centroids are compared to
++    the reference batch, then averaged across cell types.
+ 
+     Parameters
+     ----------
+     X_encoded : np.ndarray
+-        The encoded data. (n_cells, latent_dim)
++        Encoded data, shape ``(n_cells, latent_dim)``.
+     batch_labels : array-like
+-        The batch label. (n_cells,)
++        Batch identity for each cell, shape ``(n_cells,)``.
+     ref_batch : str, optional
+-        The reference batch. The default is None, in which case the first batch is used as the reference.
++        Reference batch.  Defaults to the first batch in sorted order.
+     cell_types : array-like, optional
+-        The cell types array with shape (n_cells,). The default is None, in which case the function find the grand mean shift.
+-        
++        Cell-type labels, shape ``(n_cells,)``.  When *None* grand mean
++        shifts are computed instead of cell-type-stratified ones.
++    subspace_slice : slice, optional
++        If given, only ``X_encoded[:, subspace_slice]`` is used and the
++        returned directions have the dimensionality of that subspace.  When
++        *None* the full latent vector is used (legacy behaviour).
++
+     Returns
+     -------
+-    pd.DataFrame: A dataframe with the mean shift for each batch, column names are the batch labels.
+-    
+-    Notes
+-    -----
+-    If there's no matched cell type in both batches, the mean shift is defined as the grand mean shift.
++    pd.DataFrame
++        One column per batch, each column is the shift vector.
+     """
+-    # Convert inputs to numpy arrays
+     X_encoded = np.asarray(X_encoded)
+     batch_labels = np.asarray(batch_labels)
+-    
+-    # Get unique batches
++
++    if subspace_slice is not None:
++        X_encoded = X_encoded[:, subspace_slice]
++
+     unique_batches = np.unique(batch_labels)
+-    
+-    # Set reference batch
++
+     if ref_batch is None:
+         ref_batch = unique_batches[0]
+-    
+     if ref_batch not in unique_batches:
+         raise ValueError(f"Reference batch '{ref_batch}' not found in batch_labels")
+-    
+-    # Get reference batch mask
++
+     ref_mask = batch_labels == ref_batch
+     X_ref = X_encoded[ref_mask]
+-    
+-    # Initialize result dictionary
++
+     batch_shifts = {}
+-    
+-    # If cell types are provided, compute cell-type-specific shifts
++
+     if cell_types is not None:
+         cell_types = np.asarray(cell_types)
+-        
+-        # Get cell types in reference batch
+         ref_cell_types = cell_types[ref_mask]
+         unique_cell_types = np.unique(ref_cell_types)
+-        
+-        # For each batch (excluding reference)
++
+         for batch in unique_batches:
+             if batch == ref_batch:
+-                # Reference batch has zero shift
+                 batch_shifts[batch] = np.zeros(X_encoded.shape[1])
+                 continue
+-            
++
+             batch_mask = batch_labels == batch
+             X_batch = X_encoded[batch_mask]
+             batch_cell_types = cell_types[batch_mask]
+-            
+-            # Collect shifts for each cell type
++
+             cell_type_shifts = []
+-            
+             for ct in unique_cell_types:
+-                # Check if this cell type exists in both batches
+                 ref_ct_mask = ref_cell_types == ct
+                 batch_ct_mask = batch_cell_types == ct
+-                
+                 if ref_ct_mask.sum() > 0 and batch_ct_mask.sum() > 0:
+-                    # Compute mean shift for this cell type
+-                    ref_ct_mean = X_ref[ref_ct_mask].mean(axis=0)
+-                    batch_ct_mean = X_batch[batch_ct_mask].mean(axis=0)
+-                    shift = batch_ct_mean - ref_ct_mean
++                    shift = X_batch[batch_ct_mask].mean(axis=0) - X_ref[ref_ct_mask].mean(axis=0)
+                     cell_type_shifts.append(shift)
+-            
+-            # Average shifts across cell types
++
+             if len(cell_type_shifts) > 0:
+                 batch_shifts[batch] = np.mean(cell_type_shifts, axis=0)
+             else:
+-                # No matched cell types, use grand mean shift
+-                ref_mean = X_ref.mean(axis=0)
+-                batch_mean = X_batch.mean(axis=0)
+-                batch_shifts[batch] = batch_mean - ref_mean
++                batch_shifts[batch] = X_batch.mean(axis=0) - X_ref.mean(axis=0)
+     else:
+-        # No cell types provided, compute grand mean shifts
+         ref_mean = X_ref.mean(axis=0)
+-        
+         for batch in unique_batches:
+             if batch == ref_batch:
+                 batch_shifts[batch] = np.zeros(X_encoded.shape[1])
+             else:
+                 batch_mask = batch_labels == batch
+-                X_batch = X_encoded[batch_mask]
+-                batch_mean = X_batch.mean(axis=0)
+-                batch_shifts[batch] = batch_mean - ref_mean
+-    
+-    # Convert to DataFrame
++                batch_shifts[batch] = X_encoded[batch_mask].mean(axis=0) - ref_mean
++
+     return pd.DataFrame(batch_shifts)
+-    
+-    
+-    
+ 
+-    
+\ No newline at end of file
++
++def apply_batch_shift(z, direction, alpha, batch_slice):
++    """Shift the batch subspace of *z* by ``alpha * direction``.
++
++    Parameters
++    ----------
++    z : np.ndarray
++        Latent vectors, shape ``(n_samples, latent_dim)``.  **Modified in
++        place** and also returned for convenience.
++    direction : np.ndarray
++        Shift vector whose length matches the width of *batch_slice*.
++    alpha : float
++        Strength coefficient (0 = no shift, 1 = observed shift).
++    batch_slice : slice
++        Slice selecting the batch subspace within *z*.
++
++    Returns
++    -------
++    np.ndarray
++        The (modified) *z*.
++    """
++    z = np.array(z, copy=True)
++    direction = np.asarray(direction).ravel()
++    z[:, batch_slice] = z[:, batch_slice] + alpha * direction
++    return z
++
++
++# ---------------------------------------------------------------------------
++# Gaussian Optimal Transport
++# ---------------------------------------------------------------------------
++
++def gaussian_ot_map(X_ref, X_target):
++    """Closed-form Gaussian OT affine map from *X_ref* to *X_target*.
++
++    Assuming both populations are approximately Gaussian, the Monge map is
++
++        T(z) = mu_target + A @ (z - mu_ref)
++
++    where ``A = Sigma_ref^{-1/2} (Sigma_ref^{1/2} Sigma_target Sigma_ref^{1/2})^{1/2} Sigma_ref^{-1/2}``.
++
++    Parameters
++    ----------
++    X_ref, X_target : np.ndarray
++        Data matrices, shapes ``(n_ref, d)`` and ``(n_target, d)``.
++
++    Returns
++    -------
++    dict
++        Keys: ``mu_ref``, ``mu_target``, ``A`` (the affine transport matrix).
++    """
++    X_ref = np.asarray(X_ref, dtype=np.float64)
++    X_target = np.asarray(X_target, dtype=np.float64)
++
++    mu_ref = X_ref.mean(axis=0)
++    mu_target = X_target.mean(axis=0)
++
++    Sigma_ref = np.cov(X_ref, rowvar=False, ddof=1)
++    Sigma_target = np.cov(X_target, rowvar=False, ddof=1)
++
++    S_ref_half = np.real(sqrtm(Sigma_ref))
++    S_ref_inv_half = np.linalg.inv(S_ref_half)
++
++    inner = S_ref_half @ Sigma_target @ S_ref_half
++    inner_half = np.real(sqrtm(inner))
++
++    A = S_ref_inv_half @ inner_half @ S_ref_inv_half
++
++    return {"mu_ref": mu_ref, "mu_target": mu_target, "A": A}
++
++
++def apply_ot_displacement(z, mu_ref, mu_target, A, alpha, batch_slice):
++    """McCann displacement interpolation in the batch subspace.
++
++    .. math::
++
++        T_\\alpha(z) = [(1-\\alpha) I + \\alpha A] (z_{\\text{batch}} - \\mu_{\\text{ref}})
++                       + (1-\\alpha) \\mu_{\\text{ref}} + \\alpha \\mu_{\\text{target}}
++
++    Parameters
++    ----------
++    z : np.ndarray
++        Full latent vectors, shape ``(n, latent_dim)``.
++    mu_ref, mu_target : np.ndarray
++        Means of the reference and target batch in the subspace.
++    A : np.ndarray
++        Affine transport matrix from :func:`gaussian_ot_map`.
++    alpha : float
++        Interpolation strength (0 = identity, 1 = full map, >1 = extrapolation).
++    batch_slice : slice
++        Slice into the batch subspace of *z*.
++
++    Returns
++    -------
++    np.ndarray
++        Copy of *z* with the batch subspace transformed.
++    """
++    z = np.array(z, copy=True, dtype=np.float64)
++    mu_ref = np.asarray(mu_ref, dtype=np.float64).ravel()
++    mu_target = np.asarray(mu_target, dtype=np.float64).ravel()
++    A = np.asarray(A, dtype=np.float64)
++
++    d = A.shape[0]
++    I = np.eye(d)
++
++    T_alpha = (1 - alpha) * I + alpha * A
++
++    z_sub = z[:, batch_slice]
++    centered = z_sub - mu_ref
++    z[:, batch_slice] = centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
++
++    return z
+diff --git a/test_disentanglement.log b/test_disentanglement.log
+deleted file mode 100644
+index 6c4fce7..0000000
+--- a/test_disentanglement.log
++++ /dev/null
+@@ -1,132 +0,0 @@
+-======================================================================
+-Feature Disentanglement Test for Semi-Supervised VAE
+-======================================================================
+-Output directory: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-Log file: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/test_disentanglement.log
+-
+-[1/4] Loading and preprocessing data...
+-Data shape: (2000, 500)
+-Zero fraction: 0.9673
+-
+-[2/4] Training VAE...
+-Found 37 celltypes, 3 batches, 10 stages
+-Supervision weight: 5.0
+-Training VAE (no checkpoint loading)...
+-Training complete
+-
+-[3/4] Encoding data and extracting latent subspaces...
+-Celltype latent dims: 0:16
+-Batch latent dims: 16:32
+-Stage latent dims: 32:48
+-
+-[4/4] Evaluating disentanglement...
+-======================================================================
+-Feature Disentanglement Test for Semi-Supervised VAE
+-======================================================================
+-Output directory: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-Log file: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/test_disentanglement.log
+-
+-[1/4] Loading and preprocessing data...
+-Data shape: (2000, 500)
+-Zero fraction: 0.9673
+-
+-[2/4] Training VAE...
+-Found 37 celltypes, 3 batches, 10 stages
+-Supervision weight: 5.0
+-Training VAE (no checkpoint loading)...
+-Training complete
+-
+-[3/4] Encoding data and extracting latent subspaces...
+-Celltype latent dims: 0:16
+-Batch latent dims: 16:32
+-Stage latent dims: 32:48
+-
+-[4/4] Evaluating disentanglement...
+-======================================================================
+-Feature Disentanglement Test for Semi-Supervised VAE
+-======================================================================
+-Output directory: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-Log file: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/test_disentanglement.log
+-
+-[1/4] Loading and preprocessing data...
+-Data shape: (2000, 500)
+-Zero fraction: 0.9673
+-
+-[2/4] Training VAE...
+-Found 37 celltypes, 3 batches, 10 stages
+-Supervision weight: 5.0
+-Training VAE (no checkpoint loading)...
+-Training complete
+-
+-[3/4] Encoding data and extracting latent subspaces...
+-Celltype latent dims: 0:16
+-Batch latent dims: 16:32
+-Stage latent dims: 32:48
+-
+-[4/4] Evaluating disentanglement...
+-======================================================================
+-Random Chance - Celltype: 0.0270 | Batch: 0.3333 | Stage: 0.1000
+-======================================================================
+-
+-Celltype Classification Results:
+-  on z_celltype      | Acc: 0.2475 | Bal.Acc: 0.0843
+-  on z_batch         | Acc: 0.2975 | Bal.Acc: 0.0936
+-  on z_stage         | Acc: 0.2750 | Bal.Acc: 0.0891
+-
+-Batch Classification Results:
+-  on z_celltype      | Acc: 0.5825 | Bal.Acc: 0.3340
+-  on z_batch         | Acc: 0.5925 | Bal.Acc: 0.3460
+-  on z_stage         | Acc: 0.5750 | Bal.Acc: 0.3282
+-
+-Stage Classification Results:
+-  on z_celltype      | Acc: 0.1625 | Bal.Acc: 0.1303
+-  on z_batch         | Acc: 0.1900 | Bal.Acc: 0.1492
+-  on z_stage         | Acc: 0.1625 | Bal.Acc: 0.1305
+-
+-======================================================================
+-EXPERIMENT COMPLETE
+-======================================================================
+-======================================================================
+-Feature Disentanglement Test for Semi-Supervised VAE
+-======================================================================
+-Output directory: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+-Log file: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/test_disentanglement.log
+-
+-[1/4] Loading and preprocessing data...
+-Data shape: (10000, 2000)
+-Zero fraction: 0.9775
+-
+-[2/4] Training VAE...
+-Found 37 celltypes, 3 batches, 10 stages
+-Supervision weight: 5.0
+-Training VAE (no checkpoint loading)...
+-Training complete
+-
+-[3/4] Encoding data and extracting latent subspaces...
+-Celltype latent dims: 0:16
+-Batch latent dims: 16:32
+-Stage latent dims: 32:48
+-
+-[4/4] Evaluating disentanglement...
+-======================================================================
+-Random Chance - Celltype: 0.0270 | Batch: 0.3333 | Stage: 0.1000
+-======================================================================
+-
+-Celltype Classification Results:
+-  on z_celltype      | Acc: 0.6520 | Bal.Acc: 0.4844
+-  on z_batch         | Acc: 0.6335 | Bal.Acc: 0.4613
+-  on z_stage         | Acc: 0.5975 | Bal.Acc: 0.4307
+-
+-Batch Classification Results:
+-  on z_celltype      | Acc: 0.5765 | Bal.Acc: 0.3592
+-  on z_batch         | Acc: 0.5940 | Bal.Acc: 0.3830
+-  on z_stage         | Acc: 0.5915 | Bal.Acc: 0.3678
+-
+-Stage Classification Results:
+-  on z_celltype      | Acc: 0.3800 | Bal.Acc: 0.2952
+-  on z_batch         | Acc: 0.3665 | Bal.Acc: 0.2764
+-  on z_stage         | Acc: 0.3440 | Bal.Acc: 0.2597
+-
+-======================================================================
+-EXPERIMENT COMPLETE
+-======================================================================

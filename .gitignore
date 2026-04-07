@@ -7,7 +7,10 @@ checkpoints/
 checkpoints/*
 tests/__pycache__/test_diffusion_components.cpython-312-pytest-9.0.1.pyc
 *.pyc
-experiments/outputs/*
+experiments/outputs/checkpoints/
+experiments/outputs/lightning_logs/
+experiments/outputs/sim_benchmarking_results/
+experiments/outputs/simulation_quality_comparison_results.json
 *_plan.md
 .agents/
 .vscode/

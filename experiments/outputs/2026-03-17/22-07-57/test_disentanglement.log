@@ -1,0 +1,22 @@
+[2026-03-17 22:07:57,929][__main__][INFO] - ======================================================================
+[2026-03-17 22:07:57,929][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+[2026-03-17 22:07:57,929][__main__][INFO] - ======================================================================
+[2026-03-17 22:07:57,929][__main__][INFO] - Output directory: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+[2026-03-17 22:07:57,929][__main__][INFO] - Log file: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/test_disentanglement.log
+[2026-03-17 22:07:57,929][__main__][INFO] - 
+[1/4] Loading and preprocessing data...
+[2026-03-17 22:08:00,127][__main__][INFO] - Data shape: (2000, 500)
+[2026-03-17 22:08:00,128][__main__][INFO] - Zero fraction: 0.9673
+[2026-03-17 22:08:00,129][__main__][INFO] - 
+[2/4] Training VAE...
+[2026-03-17 22:08:00,129][__main__][INFO] - Found 37 celltypes, 3 batches, 10 stages
+[2026-03-17 22:08:00,129][__main__][INFO] - Supervision weight: 5.0
+[2026-03-17 22:08:00,161][__main__][INFO] - Training VAE (no checkpoint loading)...
+[2026-03-17 22:08:01,263][__main__][INFO] - Training complete
+[2026-03-17 22:08:01,263][__main__][INFO] - 
+[3/4] Encoding data and extracting latent subspaces...
+[2026-03-17 22:08:01,274][__main__][INFO] - Celltype latent dims: 0:16
+[2026-03-17 22:08:01,274][__main__][INFO] - Batch latent dims: 16:32
+[2026-03-17 22:08:01,274][__main__][INFO] - Stage latent dims: 32:48
+[2026-03-17 22:08:01,274][__main__][INFO] - 
+[4/4] Evaluating disentanglement...

@@ -1,0 +1,44 @@
+[2026-03-17 22:30:33,669][__main__][INFO] - ======================================================================
+[2026-03-17 22:30:33,669][__main__][INFO] - Feature Disentanglement Test for Semi-Supervised VAE
+[2026-03-17 22:30:33,669][__main__][INFO] - ======================================================================
+[2026-03-17 22:30:33,669][__main__][INFO] - Output directory: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim
+[2026-03-17 22:30:33,670][__main__][INFO] - Log file: /Users/malangtian/Documents/Research_Projects/scDiffusion_project/scDeepSim/test_disentanglement.log
+[2026-03-17 22:30:33,670][__main__][INFO] - 
+[1/4] Loading and preprocessing data...
+[2026-03-17 22:30:36,229][__main__][INFO] - Data shape: (10000, 2000)
+[2026-03-17 22:30:36,242][__main__][INFO] - Zero fraction: 0.9775
+[2026-03-17 22:30:36,243][__main__][INFO] - 
+[2/4] Training VAE...
+[2026-03-17 22:30:36,245][__main__][INFO] - Found 37 celltypes, 3 batches, 10 stages
+[2026-03-17 22:30:36,245][__main__][INFO] - Supervision weight: 5.0
+[2026-03-17 22:30:36,349][__main__][INFO] - Training VAE (no checkpoint loading)...
+[2026-03-17 22:31:14,517][__main__][INFO] - Training complete
+[2026-03-17 22:31:14,517][__main__][INFO] - 
+[3/4] Encoding data and extracting latent subspaces...
+[2026-03-17 22:31:14,624][__main__][INFO] - Celltype latent dims: 0:32
+[2026-03-17 22:31:14,624][__main__][INFO] - Batch latent dims: 32:64
+[2026-03-17 22:31:14,624][__main__][INFO] - Stage latent dims: 64:96
+[2026-03-17 22:31:14,625][__main__][INFO] - 
+[4/4] Evaluating disentanglement...
+[2026-03-17 22:31:14,631][__main__][INFO] - ======================================================================
+[2026-03-17 22:31:14,631][__main__][INFO] - Random Chance - Celltype: 0.0270 | Batch: 0.3333 | Stage: 0.1000
+[2026-03-17 22:31:14,631][__main__][INFO] - ======================================================================
+[2026-03-17 22:31:14,631][__main__][INFO] - 
+Celltype Classification Results:
+[2026-03-17 22:31:14,997][__main__][INFO] -   on z_celltype      | Acc: 0.6855 | Bal.Acc: 0.5056
+[2026-03-17 22:31:15,363][__main__][INFO] -   on z_batch         | Acc: 0.6495 | Bal.Acc: 0.4722
+[2026-03-17 22:31:15,738][__main__][INFO] -   on z_stage         | Acc: 0.6635 | Bal.Acc: 0.4912
+[2026-03-17 22:31:15,738][__main__][INFO] - 
+Batch Classification Results:
+[2026-03-17 22:31:16,027][__main__][INFO] -   on z_celltype      | Acc: 0.5970 | Bal.Acc: 0.3818
+[2026-03-17 22:31:16,308][__main__][INFO] -   on z_batch         | Acc: 0.5900 | Bal.Acc: 0.3729
+[2026-03-17 22:31:16,596][__main__][INFO] -   on z_stage         | Acc: 0.5840 | Bal.Acc: 0.3648
+[2026-03-17 22:31:16,596][__main__][INFO] - 
+Stage Classification Results:
+[2026-03-17 22:31:16,920][__main__][INFO] -   on z_celltype      | Acc: 0.3715 | Bal.Acc: 0.2803
+[2026-03-17 22:31:17,239][__main__][INFO] -   on z_batch         | Acc: 0.3705 | Bal.Acc: 0.2803
+[2026-03-17 22:31:17,564][__main__][INFO] -   on z_stage         | Acc: 0.3830 | Bal.Acc: 0.2883
+[2026-03-17 22:31:17,564][__main__][INFO] - 
+======================================================================
+[2026-03-17 22:31:17,564][__main__][INFO] - EXPERIMENT COMPLETE
+[2026-03-17 22:31:17,564][__main__][INFO] - ======================================================================
