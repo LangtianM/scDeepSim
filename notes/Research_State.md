@@ -106,15 +106,19 @@ Find the direction that maximally separates batch centroids while minimizing wit
 
 OT provides the richest characterisation of batch differences by finding the map that transforms one batch's distribution into another while minimizing transport cost. Unlike the mean-shift approach, OT captures differences in mean, variance, covariance, and higher moments.
 
-**Gaussian OT (closed form).** When the batch distributions in the subspace are approximately Gaussian ($P_{\text{ref}} = \mathcal{N}(\mu_1, \Sigma_1)$, $P_{\text{target}} = \mathcal{N}(\mu_2, \Sigma_2)$), the OT map has a closed-form solution:
+**Gaussian OT** When the batch distributions in the subspace are approximately Gaussian ($P_{\text{ref}} = \mathcal{N}(\mu_1, \Sigma_1)$, $P_{\text{target}} = \mathcal{N}(\mu_2, \Sigma_2)$), the OT map has a closed-form solution:
 
-$$T(z) = \mu_2 + A\,(z - \mu_1), \quad A = \Sigma_1^{-1/2}\bigl(\Sigma_1^{1/2}\,\Sigma_2\,\Sigma_1^{1/2}\bigr)^{1/2}\Sigma_1^{-1/2}$$
+$$
+T(z) = \mu_2 + A\,(z - \mu_1), \quad A = \Sigma_1^{-1/2}\bigl(\Sigma_1^{1/2}\,\Sigma_2\,\Sigma_1^{1/2}\bigr)^{1/2}\Sigma_1^{-1/2}
+$$
 
 Note that when $\Sigma_1 = \Sigma_2$, $A = I$ and the OT map reduces to a pure translation $T(z) = z + (\mu_2 - \mu_1)$, recovering the mean-shift approach as a special case.
 
 **McCann displacement interpolation for arbitrary signal strength.** The Wasserstein geodesic between the two distributions is parameterised by $\alpha$:
 
-$$T_\alpha(z) = \bigl[(1-\alpha)\,I + \alpha\,A\bigr](z - \mu_1) + (1-\alpha)\,\mu_1 + \alpha\,\mu_2$$
+$$
+T_\alpha(z) = \bigl[(1-\alpha)\,I + \alpha\,A\bigr](z - \mu_1) + (1-\alpha)\,\mu_1 + \alpha\,\mu_2
+$$
 
 - $\alpha \in (0,1)$: interpolation along the Wasserstein geodesic — the theoretically optimal path in distribution space.
 - $\alpha = 1$: the full OT map, transforming the reference distribution to the target.
@@ -124,12 +128,12 @@ $$T_\alpha(z) = \bigl[(1-\alpha)\,I + \alpha\,A\bigr](z - \mu_1) + (1-\alpha)\,\
 
 **Hierarchy of approaches (from simple to expressive):**
 
-| Method | What it captures | Cost | When to use |
-|---|---|---|---|
-| Mean shift | First moment only | Negligible | Quick baseline; sufficient if batches differ only in location |
-| LDA direction | Discriminative direction | Low | When batch differences are not axis-aligned |
-| Gaussian OT | Mean + covariance | Low (closed form) | When batches differ in spread or correlation structure |
-| Empirical OT | Full distribution | Moderate (OT solver) | When Gaussian assumption is poor |
+| Method        | What it captures         | Cost                 | When to use                                                   |
+| ------------- | ------------------------ | -------------------- | ------------------------------------------------------------- |
+| Mean shift    | First moment only        | Negligible           | Quick baseline; sufficient if batches differ only in location |
+| LDA direction | Discriminative direction | Low                  | When batch differences are not axis-aligned                   |
+| Gaussian OT   | Mean + covariance        | Low (closed form)    | When batches differ in spread or correlation structure        |
+| Empirical OT  | Full distribution        | Moderate (OT solver) | When Gaussian assumption is poor                              |
 
 **Recommended next steps:**
 
@@ -149,7 +153,7 @@ Pseudo-time represents a cell's position along a continuous developmental or dif
 
 The approach mirrors the geometric manipulation strategy used for batch effects, but operates along a continuous trajectory rather than discrete category shifts.
 
-1. Run trajectory inference (e.g., Diffusion Pseudotime, Monocle 3, or PAGA) on the VAE latent space to extract a smooth principal curve $\gamma(t)$, parameterised by arc-length pseudo-time $t \in [0, 1]$.
+1. Run trajectory inference (e.g., Monocle 3) on the VAE latent space to extract a smooth principal curve $\gamma(t)$, parameterised by arc-length pseudo-time $t \in [0, 1]$.
 2. To generate cells at a desired pseudo-time $\tau$:
    - Find the point $\gamma(\tau)$ on the curve.
    - Estimate the local covariance $\Sigma(\tau)$ from real cells in a neighbourhood of $\gamma(\tau)$.
@@ -288,11 +292,15 @@ We also visualized the trajectory of generated samples at different $\alpha$ val
 
 ![Compare UMAP Mean-Shift](../experiments/multirun/2026-04-07/22-35-18/0/results/compare_umap_batch_interpolation.png)
 
+![Compare UMAP Mean-Shift Fine-grained](../experiments/multirun/2026-04-07/22-28-13/0/results/compare_umap_batch_interpolation.png)
+
 ![Interpolation UMAP Mean-Shift](../experiments/multirun/2026-04-07/22-35-18/0/results/umap_batch_interpolation.png)
 
 **Gaussian OT:**
 
 ![Compare UMAP Gaussian OT](../experiments/multirun/2026-04-07/22-35-18/1/results/compare_umap_batch_interpolation.png)
+
+![Compare UMAP Gaussian OT Fine-grained](../experiments/multirun/2026-04-07/22-28-13/1/results/compare_umap_batch_interpolation.png)
 
 ![Interpolation UMAP Gaussian OT](../experiments/multirun/2026-04-07/22-35-18/1/results/umap_batch_interpolation.png)
 
@@ -319,14 +327,14 @@ We also visualized the trajectory of generated samples at different $\alpha$ val
 
 ## Summary of Open Tasks
 
-| Task | Priority | Status |
-|---|---|---|
-| Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only) | High | implemented |
-| Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels) | High | Implemented.Conducted on embryo atlas dataset. |
-| Implement Gaussian OT direction finding (compare against mean-shift) | High | Implemented. |
-| Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics) | High | implemented|
-| Held-out batch validation experiment | Medium | Not started |
-| Implement pseudo-time trajectory manipulation | Medium | Not started |
-| Add scDesign3 to genuine simulation benchmark | Medium | Not started |
-| Reframe scVI comparison (reconstruction quality only) | Medium | Not started |
-| Library size ablation: TN-VAE (log-normalised) vs. ZINB-VAE (raw counts) | Low | Not started |
+| Task                                                                                                     | Priority | Status                                         |
+| -------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------- |
+| Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only)      | High     | implemented                                    |
+| Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels)  | High     | Implemented.Conducted on embryo atlas dataset. |
+| Implement Gaussian OT direction finding (compare against mean-shift)                                     | High     | Implemented.                                   |
+| Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics) | High     | implemented                                    |
+| Held-out batch validation experiment                                                                     | Medium   | Not started                                    |
+| Implement pseudo-time trajectory manipulation                                                            | Medium   | Not started                                    |
+| Add scDesign3 to genuine simulation benchmark                                                            | Medium   | Not started                                    |
+| Reframe scVI comparison (reconstruction quality only)                                                    | Medium   | Not started                                    |
+| Library size ablation: TN-VAE (log-normalised) vs. ZINB-VAE (raw counts)                                 | Low      | Not started                                    |
