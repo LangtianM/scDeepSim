@@ -101,7 +101,7 @@ def celltype_rf_accuracy(X, celltype_labels, test_size=0.2, seed=42):
     """
     labels = LabelEncoder().fit_transform(np.asarray(celltype_labels))
     X_train, X_test, y_train, y_test = train_test_split(
-        X, labels, test_size=test_size, random_state=seed, stratify=labels
+        X, labels, test_size=test_size, random_state=seed,
     )
     clf = RandomForestClassifier(n_estimators=100, max_depth=10, n_jobs=-1, random_state=seed)
     clf.fit(X_train, y_train)
