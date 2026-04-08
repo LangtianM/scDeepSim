@@ -1,12 +1,11 @@
-"""Dose-response evaluation of controllable batch effects.
+"""Dose-response evaluation of controllable batch effects (VAE only).
 
-Sweeps alpha values and, for each, generates synthetic data with the
-alpha-scaled batch shift, then measures:
+Sweeps alpha values and, for each, shifts real reference-batch latents by
+the alpha-scaled batch direction, decodes, then measures:
   - Batch separation: Batch ASW, iLISI
   - Biological preservation: cell-type ASW, cLISI, cell-type RF accuracy
 
 Produces a two-panel dose-response figure and a metrics JSON.
-Each run retrains from scratch for full reproducibility.
 
 Usage:
     python scripts/eval_batch_dose_response.py
@@ -25,7 +24,6 @@ import os
 import logging
 import subprocess
 import numpy as np
-import anndata as ad
 import torch
 import pytorch_lightning as pl
 import matplotlib.pyplot as plt
@@ -35,7 +33,6 @@ from omegaconf import DictConfig
 from sklearn.preprocessing import LabelEncoder
 
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
-from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.control import (
     batch_directions, apply_batch_shift,
@@ -74,10 +71,11 @@ def save_git_info(output_dir):
 # ---------------------------------------------------------------------------
 
 def prepare_data(cfg):
+    """Load, preprocess, and identify the two largest batches."""
     adata = load_and_preprocess(
         cfg.paths.data_path, cfg.data.n_cells, cfg.data.n_genes, seed=cfg.seed,
     )
-    adata.obs["batch"] = adata.obs["sequencing.batch"].astype("category")
+    adata.obs["batch"] = adata.obs[cfg.data.batch_key].astype("category")
 
     ct_le = LabelEncoder()
     ct_le.fit(adata.obs["celltype"])
@@ -87,8 +85,15 @@ def prepare_data(cfg):
     batch_le.fit(adata.obs["batch"])
     n_batches = len(batch_le.classes_)
 
+    batch_counts = adata.obs["batch"].value_counts()
+    ref_batch = batch_counts.index[0]
+    target_batch = batch_counts.index[1]
+
     log.info(f"Data: {adata.X.shape}  |  {n_celltypes} celltypes, {n_batches} batches")
-    return adata, ct_le, n_celltypes, batch_le, n_batches
+    log.info(f"Auto-selected ref_batch={ref_batch} ({batch_counts.iloc[0]} cells), "
+             f"target_batch={target_batch} ({batch_counts.iloc[1]} cells)")
+
+    return adata, ct_le, n_celltypes, batch_le, n_batches, ref_batch, target_batch
 
 
 # ---------------------------------------------------------------------------
@@ -147,48 +152,11 @@ def train_vae(adata, n_celltypes, n_batches, cfg):
 
 
 # ---------------------------------------------------------------------------
-# Diffusion
-# ---------------------------------------------------------------------------
-
-def train_diffusion(latent_adata, n_celltypes, cfg):
-    output_dir = HydraConfig.get().runtime.output_dir
-
-    diffusion = LightningDiffusion(
-        input_dim=latent_adata.X.shape[1],
-        num_classes=n_celltypes,
-        hidden_dims=list(cfg.diffusion.hidden_dims),
-        num_timesteps=cfg.diffusion.timesteps,
-        sampling_timesteps=cfg.diffusion.sampling_steps,
-        beta_schedule=cfg.diffusion.beta_schedule,
-        dropout=cfg.diffusion.dropout,
-        lr=cfg.diffusion.lr,
-        use_ema=cfg.diffusion.use_ema,
-        ema_decay=cfg.diffusion.ema_decay,
-        use_classifier_free_guidance=True,
-        guidance_dropout=cfg.diffusion.guidance_dropout,
-        guidance_scale=cfg.diffusion.guidance_scale,
-        objective=cfg.diffusion.objective,
-    )
-
-    dm = ScDataModule(
-        latent_adata, label_key="celltype", encoder="LabelEncoder",
-        batch_size=cfg.vae.batch_size,
-    )
-
-    trainer = pl.Trainer(
-        max_epochs=cfg.diffusion.epochs, accelerator="auto", devices="auto",
-        log_every_n_steps=50, enable_checkpointing=False, logger=True,
-        default_root_dir=output_dir,
-    )
-    trainer.fit(diffusion, dm)
-    return diffusion
-
-
-# ---------------------------------------------------------------------------
 # Encoding + direction
 # ---------------------------------------------------------------------------
 
 def encode_all(vae, adata):
+    """Encode every cell and return z as numpy."""
     device = next(vae.parameters()).device
     X = torch.tensor(adata.X, dtype=torch.float32, device=device)
     vae.eval()
@@ -198,19 +166,13 @@ def encode_all(vae, adata):
     return z.cpu().numpy()
 
 
-def compute_direction(z, batch_labels, cell_types, batch_slice, cfg):
-    """Return direction info dict (same contract as generate_with_batch_effect)."""
-    method = cfg.generation.direction_method
+def compute_direction(z, batch_labels, cell_types, batch_slice,
+                      ref_batch, target_batch, method):
+    """Compute batch manipulation parameters in the batch subspace."""
     batch_labels = np.asarray(batch_labels)
-    unique = np.unique(batch_labels)
 
-    ref_batch = cfg.generation.ref_batch
-    target_batch = cfg.generation.target_batch
-    if ref_batch is None:
-        ref_batch = unique[0]
-    if target_batch is None:
-        non_ref = [b for b in unique if b != ref_batch]
-        target_batch = non_ref[0]
+    log.info(f"Direction method: {method}")
+    log.info(f"  ref_batch={ref_batch}  target_batch={target_batch}")
 
     z_sub = z[:, batch_slice]
     ref_mask = batch_labels == ref_batch
@@ -220,12 +182,13 @@ def compute_direction(z, batch_labels, cell_types, batch_slice, cfg):
         df = batch_directions(z, batch_labels, ref_batch=ref_batch,
                               cell_types=cell_types, subspace_slice=batch_slice)
         direction = df[target_batch].values
-        log.info(f"mean_shift  ||d|| = {np.linalg.norm(direction):.4f}")
+        log.info(f"  ||direction|| = {np.linalg.norm(direction):.4f}")
         return {"method": "mean_shift", "direction": direction}
 
     elif method == "gaussian_ot":
         ot = gaussian_ot_map(z_sub[ref_mask], z_sub[target_mask])
-        log.info(f"gaussian_ot  ||mu_shift|| = {np.linalg.norm(ot['mu_target'] - ot['mu_ref']):.4f}")
+        log.info(f"  ||mu_shift|| = {np.linalg.norm(ot['mu_target'] - ot['mu_ref']):.4f}")
+        log.info(f"  ||A - I||_F  = {np.linalg.norm(ot['A'] - np.eye(ot['A'].shape[0])):.4f}")
         return {"method": "gaussian_ot", "ot_params": ot}
 
     else:
@@ -233,69 +196,23 @@ def compute_direction(z, batch_labels, cell_types, batch_slice, cfg):
 
 
 # ---------------------------------------------------------------------------
-# Generation + shift
-# ---------------------------------------------------------------------------
-
-def generate_two_batches(diffusion, vae, ct_labels, batch_slice, dir_info,
-                         alpha, sampling_steps, device):
-    """Generate two groups: unshifted ("ref") and shifted by alpha ("shifted").
-
-    Each group gets half of the requested cells.  The two groups are
-    concatenated along axis 0 and a batch-label array is returned alongside.
-    """
-    n = len(ct_labels)
-    half = n // 2
-
-    diffusion = diffusion.to(device)
-    vae = vae.to(device)
-    diffusion.eval()
-    vae.eval()
-
-    labels_t = torch.tensor(ct_labels, dtype=torch.long, device=device)
-
-    with torch.no_grad():
-        z_all = diffusion.sample(
-            num_samples=n, labels=labels_t, use_ema=True,
-            sampling_timesteps=sampling_steps, ddim_sampling_eta=0.1,
-        ).cpu().numpy()
-
-    z_ref = z_all[:half].copy()
-    z_shifted = z_all[half:]
-
-    if dir_info["method"] == "mean_shift":
-        z_shifted = apply_batch_shift(z_shifted, dir_info["direction"], alpha, batch_slice)
-    else:
-        ot = dir_info["ot_params"]
-        z_shifted = apply_ot_displacement(
-            z_shifted, ot["mu_ref"], ot["mu_target"], ot["A"], alpha, batch_slice
-        )
-
-    z_combined = np.vstack([z_ref, z_shifted])
-    with torch.no_grad():
-        z_t = torch.tensor(z_combined, dtype=torch.float32, device=device)
-        x = vae.sample_from_latent(z_t).cpu().numpy()
-
-    batch_labels = np.array(["ref"] * half + ["shifted"] * (n - half))
-    ct_combined = np.concatenate([ct_labels[:half], ct_labels[half:]])
-
-    return x, batch_labels, ct_combined
-
-
-# ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
 
-def compute_metrics(x, ct_labels, batch_labels, k):
-    """Compute batch separation and biological preservation metrics."""
-    b_asw = batch_asw(x, batch_labels)
-    i_lisi = ilisi(x, batch_labels, k=k)
-    ct_asw_val = celltype_asw(x, ct_labels)
-    c_lisi = clisi(x, ct_labels, k=k)
-    ct_acc, ct_bal = celltype_rf_accuracy(x, ct_labels)
-
+def compute_batch_separation(x_combined, batch_labels, k):
+    """Batch separation metrics on the combined (ref + shifted) data."""
     return {
-        "batch_asw": b_asw,
-        "ilisi": i_lisi,
+        "batch_asw": batch_asw(x_combined, batch_labels),
+        "ilisi": ilisi(x_combined, batch_labels, k=k),
+    }
+
+
+def compute_bio_preservation(x_shifted, ct_labels, k):
+    """Biological preservation metrics on the shifted data only."""
+    ct_asw_val = celltype_asw(x_shifted, ct_labels)
+    c_lisi = clisi(x_shifted, ct_labels, k=k)
+    ct_acc, ct_bal = celltype_rf_accuracy(x_shifted, ct_labels)
+    return {
         "celltype_asw": ct_asw_val,
         "clisi": c_lisi,
         "celltype_rf_acc": ct_acc,
@@ -363,52 +280,51 @@ def plot_dose_response(all_metrics, save_path):
 def main(cfg: DictConfig) -> None:
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     output_dir = HydraConfig.get().runtime.output_dir
     save_git_info(output_dir)
 
     log.info("=" * 70)
-    log.info("Dose-Response Batch Effect Evaluation")
+    log.info("Dose-Response Batch Effect Evaluation (VAE only)")
     log.info("=" * 70)
 
-    # -- data --
-    log.info("[1/6] Loading data...")
-    adata, ct_le, n_celltypes, batch_le, n_batches = prepare_data(cfg)
+    # -- 1. data --
+    log.info("[1/5] Loading data...")
+    (adata, ct_le, n_celltypes, batch_le, n_batches,
+     ref_batch, target_batch) = prepare_data(cfg)
 
-    # -- VAE --
-    log.info("[2/6] Training VAE...")
+    # -- 2. train VAE --
+    log.info("[2/5] Training VAE...")
     vae = train_vae(adata, n_celltypes, n_batches, cfg)
 
-    # -- encode + direction --
-    log.info("[3/6] Encoding + computing batch direction...")
+    # -- 3. encode + direction --
+    log.info("[3/5] Encoding + computing batch direction...")
     z_all = encode_all(vae, adata)
     batch_slice = vae._sup_slices["batch"]
     log.info(f"  Batch subspace: dims {batch_slice.start}:{batch_slice.stop}")
 
+    batch_labels = np.asarray(adata.obs["batch"])
     dir_info = compute_direction(
         z_all,
-        batch_labels=np.asarray(adata.obs["batch"]),
+        batch_labels=batch_labels,
         cell_types=np.asarray(adata.obs["celltype"]),
         batch_slice=batch_slice,
-        cfg=cfg,
+        ref_batch=ref_batch,
+        target_batch=target_batch,
+        method=cfg.generation.direction_method,
     )
 
-    # -- diffusion --
-    log.info("[4/6] Training diffusion model...")
-    latent_adata = ad.AnnData(X=z_all)
-    latent_adata.obs = adata.obs.copy()
-    diffusion = train_diffusion(latent_adata, n_celltypes, cfg)
+    # -- 4. alpha sweep on real reference-batch latents --
+    log.info("[4/5] Running alpha sweep...")
+    ref_mask = batch_labels == ref_batch
+    z_ref = z_all[ref_mask]
+    ref_ct_labels = np.asarray(adata.obs["celltype"])[ref_mask]
+    ref_X = adata.X[ref_mask] if not hasattr(adata.X, "toarray") else adata.X[ref_mask].toarray()
 
-    # -- sample celltype labels --
-    ct_encoded = ct_le.transform(adata.obs["celltype"])
-    ct_counts = np.bincount(ct_encoded)
-    ct_probs = ct_counts / ct_counts.sum()
-    sampled_ct = np.random.choice(len(ct_probs), size=cfg.generation.n_samples, p=ct_probs)
+    vae_device = next(vae.parameters()).device
+    vae.eval()
 
-    # -- alpha sweep --
-    log.info("[5/6] Running alpha sweep...")
-    results_dir = os.path.join(HydraConfig.get().runtime.output_dir, "results")
+    results_dir = os.path.join(output_dir, "results")
     os.makedirs(results_dir, exist_ok=True)
 
     all_metrics = []
@@ -417,13 +333,28 @@ def main(cfg: DictConfig) -> None:
     for alpha in list(cfg.evaluation.alpha_values):
         log.info(f"  alpha={alpha}")
 
-        x_gen, gen_batch_labels, gen_ct_labels = generate_two_batches(
-            diffusion, vae, sampled_ct, batch_slice, dir_info, alpha,
-            cfg.diffusion.sampling_steps, device,
-        )
-        gen_ct_str = ct_le.inverse_transform(gen_ct_labels)
+        if dir_info["method"] == "mean_shift":
+            z_shifted = apply_batch_shift(
+                z_ref, dir_info["direction"], alpha, batch_slice,
+            )
+        else:
+            ot = dir_info["ot_params"]
+            z_shifted = apply_ot_displacement(
+                z_ref, ot["mu_ref"], ot["mu_target"], ot["A"],
+                alpha, batch_slice,
+            )
 
-        metrics = compute_metrics(x_gen, gen_ct_str, gen_batch_labels, k=k)
+        with torch.no_grad():
+            z_t = torch.tensor(z_shifted, dtype=torch.float32, device=vae_device)
+            x_shifted = vae.sample_from_latent(z_t).cpu().numpy()
+
+        x_combined = np.vstack([ref_X, x_shifted])
+        combined_batch = np.array(
+            ["ref"] * ref_X.shape[0] + ["shifted"] * x_shifted.shape[0]
+        )
+
+        metrics = compute_batch_separation(x_combined, combined_batch, k=k)
+        metrics.update(compute_bio_preservation(x_shifted, ref_ct_labels, k=k))
         metrics["alpha"] = alpha
         all_metrics.append(metrics)
 
@@ -441,8 +372,8 @@ def main(cfg: DictConfig) -> None:
         json.dump(all_metrics, f, indent=2)
     log.info(f"Metrics saved to {metrics_path}")
 
-    # -- plot --
-    log.info("[6/6] Plotting dose-response curves...")
+    # -- 5. plot --
+    log.info("[5/5] Plotting dose-response curves...")
     plot_path = os.path.join(results_dir, "dose_response_curves.png")
     plot_dose_response(all_metrics, plot_path)
 
