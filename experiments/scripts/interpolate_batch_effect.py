@@ -40,6 +40,7 @@ from scdeepsim.control import (
     gaussian_ot_map, apply_ot_displacement,
 )
 from experiments.src.utils import load_and_preprocess
+from scdeepsim.plot import compare_umap
 
 log = logging.getLogger(__name__)
 
@@ -462,6 +463,28 @@ def main(cfg: DictConfig) -> None:
         ref_X, target_X, shifted_expr,
         ref_batch, target_batch, pca_path,
     )
+
+    # -- compare_umap: multi-panel per-stage visualization --
+    log.info("Plotting compare_umap panels...")
+    ref_ct_labels = np.asarray(adata.obs["celltype"])[ref_mask]
+    target_ct_labels = np.asarray(adata.obs["celltype"])[target_mask]
+
+    cu_data = [ref_X]
+    cu_labels = [ref_ct_labels]
+    cu_titles = [f"Ref: {ref_batch}"]
+
+    for alpha in sorted(shifted_expr):
+        cu_data.append(shifted_expr[alpha])
+        cu_labels.append(ref_ct_labels)
+        cu_titles.append(f"alpha={alpha}")
+
+    cu_data.append(target_X)
+    cu_labels.append(target_ct_labels)
+    cu_titles.append(f"Target: {target_batch}")
+
+    compare_umap_path = os.path.join(results_dir, "compare_umap_batch_interpolation.png")
+    compare_umap(cu_data, cu_labels, cu_titles, save_path=compare_umap_path)
+    log.info(f"compare_umap saved to {compare_umap_path}")
 
     log.info("")
     log.info("=" * 70)
