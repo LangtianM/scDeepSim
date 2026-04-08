@@ -224,7 +224,7 @@ def compute_bio_preservation(x_shifted, ct_labels, k):
 # Plotting
 # ---------------------------------------------------------------------------
 
-def plot_dose_response(all_metrics, save_path):
+def plot_dose_response(all_metrics, save_path, ref_bio=None, target_bio=None):
     alphas = [m["alpha"] for m in all_metrics]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
@@ -252,14 +252,41 @@ def plot_dose_response(all_metrics, save_path):
     ax2b = ax2.twinx()
     ax2b.plot(alphas, [m["clisi"] for m in all_metrics],
               "v--", lw=2.5, ms=8, color="#e67e22", label="cLISI")
+
+    # -- draw ref/target baselines on biological preservation panel --
+    baseline_styles = {
+        "ref": {"ls": ":", "lw": 1.5, "alpha": 0.8},
+        "target": {"ls": "-.", "lw": 1.5, "alpha": 0.8},
+    }
+    for bio, tag in [(ref_bio, "ref"), (target_bio, "target")]:
+        if bio is None:
+            continue
+        sty = baseline_styles[tag]
+        label_prefix = tag.capitalize()
+        ax2.axhline(bio["celltype_asw"], color="#9b59b6", label=f"{label_prefix} CT ASW", **sty)
+        ax2.axhline(bio["celltype_rf_bal_acc"], color="#3498db", label=f"{label_prefix} CT RF Bal.Acc", **sty)
+        ax2b.axhline(bio["clisi"], color="#e67e22", label=f"{label_prefix} cLISI", **sty)
+
     ax2.set_xlabel("alpha", fontsize=13, fontweight="bold")
     ax2.set_ylabel("Score", fontsize=13, fontweight="bold")
     ax2b.set_ylabel("cLISI", fontsize=13, fontweight="bold", color="#e67e22")
     ax2.set_title("Biological Preservation vs alpha", fontsize=14, fontweight="bold")
     lines1, labels1 = ax2.get_legend_handles_labels()
     lines2, labels2 = ax2b.get_legend_handles_labels()
-    ax2.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=10)
+    ax2.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=9)
     ax2.grid(True, alpha=0.3, ls="--")
+
+    # -- unify iLISI / cLISI y-axes: both start at 1 with the same upper bound --
+    all_ilisi = [m["ilisi"] for m in all_metrics]
+    all_clisi = [m["clisi"] for m in all_metrics]
+    lisi_vals = all_ilisi + all_clisi
+    if ref_bio is not None:
+        lisi_vals.append(ref_bio["clisi"])
+    if target_bio is not None:
+        lisi_vals.append(target_bio["clisi"])
+    lisi_upper = max(lisi_vals) * 1.1
+    ax1b.set_ylim(1, lisi_upper)
+    ax2b.set_ylim(1, lisi_upper)
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
@@ -366,16 +393,36 @@ def main(cfg: DictConfig) -> None:
             f"CT Bal.Acc={metrics['celltype_rf_bal_acc']:.4f}"
         )
 
+    # -- compute bio-preservation baselines on original ref / target data --
+    log.info("Computing bio-preservation baselines on original data...")
+    ref_bio = compute_bio_preservation(ref_X, ref_ct_labels, k=k)
+    log.info(f"  Ref baseline:    CT ASW={ref_bio['celltype_asw']:.4f}  "
+             f"cLISI={ref_bio['clisi']:.4f}  "
+             f"CT Bal.Acc={ref_bio['celltype_rf_bal_acc']:.4f}")
+
+    target_mask = batch_labels == target_batch
+    target_X = adata.X[target_mask] if not hasattr(adata.X, "toarray") else adata.X[target_mask].toarray()
+    target_ct_labels = np.asarray(adata.obs["celltype"])[target_mask]
+    target_bio = compute_bio_preservation(target_X, target_ct_labels, k=k)
+    log.info(f"  Target baseline: CT ASW={target_bio['celltype_asw']:.4f}  "
+             f"cLISI={target_bio['clisi']:.4f}  "
+             f"CT Bal.Acc={target_bio['celltype_rf_bal_acc']:.4f}")
+
     # -- save metrics --
+    metrics_output = {
+        "alpha_sweep": all_metrics,
+        "ref_baseline": ref_bio,
+        "target_baseline": target_bio,
+    }
     metrics_path = os.path.join(results_dir, "dose_response_metrics.json")
     with open(metrics_path, "w") as f:
-        json.dump(all_metrics, f, indent=2)
+        json.dump(metrics_output, f, indent=2)
     log.info(f"Metrics saved to {metrics_path}")
 
     # -- 5. plot --
     log.info("[5/5] Plotting dose-response curves...")
     plot_path = os.path.join(results_dir, "dose_response_curves.png")
-    plot_dose_response(all_metrics, plot_path)
+    plot_dose_response(all_metrics, plot_path, ref_bio=ref_bio, target_bio=target_bio)
 
     # -- summary table --
     log.info("")
