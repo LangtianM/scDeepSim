@@ -65,7 +65,7 @@ The latent diffusion model is a denoising diffusion probabilistic model (DDPM) o
 
 ### Batch Effect Control
 
-**Status:** A legacy direction-finding function over the full latent space exists in `scdeepsim/src/scdeepsim/control.py`. The direction-finding function restricted to the disentangled batch subspace and the $\alpha$-parameterised generation step are not yet implemented.
+**Status:** We decided to use the mean-shift and the Gaussian OT direction in the batch subspace, and they are implemented in `scdeepsim/src/scdeepsim/control.py`.
 
 #### Core Method: Geometric Manipulation in the Batch Subspace
 
@@ -225,13 +225,17 @@ We evaluate the disentanglement of latent variables produced by the semi-supervi
 
 As the supervision weight increases, the AUC on cell-type latents consistently rises while the AUC on the remaining dimensions approaches chance level. Critically, the overall simulation quality (real vs. simulated AUC) is not substantially affected, confirming that enforcing disentanglement does not degrade the generative quality.
 
+We also conducted a batch disentanglement evaluation on the scIBPancreas dataset:
+
+![Batch Disentanglement Evaluation](../experiments/outputs/2026-04-06/20-22-21_batch_disentanglement/batch_supervised_weight_comparison.png)
+
 **Next step:** Replicate this evaluation with batch labels to verify that the batch subspace is similarly disentangled before attempting batch effect control experiments.
 
 ---
 
 ### Batch Effect Signal Measurement
 
-**Status:** Metric selection not yet finalised.
+**Status:** We decided to use batch ASW, batch LISI, cell type ASW, cell type LISI and cell type RF accuracy as the evaluation metrics and they are implemented in `experiments/src/batch_metrics.py`.
 
 After introducing batch effect signals via latent manipulation, we need to verify two things: (a) the batch signal is present and its strength is controllable via $\alpha$, and (b) biological signals (cell type structure) are preserved. Note that introducing batch effects is *expected* to change marginal gene-expression statistics and make the data look different from the unmanipulated simulation -- that is the whole point. Therefore, standard real-vs.-simulated discriminability tests are not directly applicable to the manipulated data (there is no "manipulated real data" to compare against).
 
@@ -268,6 +272,30 @@ These metrics should remain **stable across all $\alpha$ values**, confirming th
 
 Plot the biological metrics alongside the batch metrics as a function of $\alpha$. The key finding would be that batch metrics change continuously with $\alpha$ while biological metrics remain flat.
 
+We run the experiment `experiments/scripts/eval_batch_dose_response.py` for the evaluation for both the mean-shift and the Gaussian OT direction.
+
+**Mean-Shift:**
+
+![Dose-Response Evaluation Mean-Shift](../experiments/multirun/2026-04-07/22-21-54/0/results/dose_response_curves.png)
+
+**Gaussian OT:**
+
+![Dose-Response Evaluation Gaussian OT](../experiments/multirun/2026-04-07/22-21-54/1/results/dose_response_curves.png)
+
+We also visualized the trajectory of generated samples at different $\alpha$ values:
+
+**Mean-Shift:**
+
+![Compare UMAP Mean-Shift](../experiments/multirun/2026-04-07/22-35-18/0/results/compare_umap_batch_interpolation.png)
+
+![Interpolation UMAP Mean-Shift](../experiments/multirun/2026-04-07/22-35-18/0/results/umap_batch_interpolation.png)
+
+**Gaussian OT:**
+
+![Compare UMAP Gaussian OT](../experiments/multirun/2026-04-07/22-35-18/1/results/compare_umap_batch_interpolation.png)
+
+![Interpolation UMAP Gaussian OT](../experiments/multirun/2026-04-07/22-35-18/1/results/umap_batch_interpolation.png)
+
 #### Validating Realism of the Introduced Batch Effects
 
 **Challenge:** We cannot directly use real-vs.-simulated discriminability to assess the manipulated data, because we are generating data with batch effects that do not exist in reality. We need alternative strategies to argue the introduced effects are realistic.
@@ -293,10 +321,10 @@ Plot the biological metrics alongside the batch metrics as a function of $\alpha
 
 | Task | Priority | Status |
 |---|---|---|
-| Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only) | High | Not started (legacy `control.py` exists for full space) |
-| Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels) | High | Not started |
-| Implement Gaussian OT direction finding (compare against mean-shift) | High | Not started |
-| Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics) | High | Not started |
+| Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only) | High | implemented |
+| Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels) | High | Implemented.Conducted on embryo atlas dataset. |
+| Implement Gaussian OT direction finding (compare against mean-shift) | High | Implemented. |
+| Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics) | High | implemented|
 | Held-out batch validation experiment | Medium | Not started |
 | Implement pseudo-time trajectory manipulation | Medium | Not started |
 | Add scDesign3 to genuine simulation benchmark | Medium | Not started |
