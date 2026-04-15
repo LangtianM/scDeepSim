@@ -10,9 +10,7 @@ This study addresses this trade-off by adapting semi-supervised variational auto
 
 **Expected Outcomes:**
 
-We evaluate this approach on benchmark datasets with complex experimental designs, including those with varying signal strengths.
-
-We evaluate the quality of simulated data before and after control factors have been applied. We demonstrate that our approach retains high simulation quality even after manipulation, whereas classical methods either lack controllability or sacrifice realism when it is applied.
+We evaluate this approach on benchmark datasets with complex experimental designs, including those with varying signal strengths. We evaluate the quality of simulated data before and after control factors have been applied. We demonstrate that our approach retains high simulation quality even after manipulation, whereas classical methods either lack controllability or sacrifice realism when it is applied.
 
 ---
 
@@ -34,7 +32,7 @@ The supervised heads serve a disentanglement objective: they encourage known cov
 
 ### Why Log-Normalised Space? The Library Size Problem
 
-A critical design decision in this work is to model gene expression in the **log-normalised space** rather than the raw count space. This choice is motivated by the challenge posed by **library size** (total UMI count per cell), which varies dramatically across cells due primarily to technical factors (sequencing depth, capture efficiency).
+A critical design decision in this work is to model gene expression in the **log-normalised space** rather than the raw count space. This choice is motivated by the challenge posed by **library size**, which varies dramatically across cells due primarily to technical factors (sequencing depth, capture efficiency).
 
 **The problem with raw count space (ZINB-VAE):** A VAE with a zero-inflated negative binomial (ZINB) decoder operating on raw counts must implicitly learn the library size distribution in addition to the biological expression patterns. In our previous experiments, this approach performed poorly because library size is too noisy and variable to be reliably captured by a generative model. The model conflates library-size-driven variation with biological variation, leading to unrealistic simulated counts.
 
@@ -54,7 +52,7 @@ scdeepsim/src/scdeepsim/lightning_diffusion.py
 
 The latent diffusion model is a denoising diffusion probabilistic model (DDPM) operating in the VAE's latent space. It uses a U-Net-style MLP to denoise latent vectors, trained on encoded single-cell data with class labels. Two design choices are worth noting:
 
-- **Classifier-free guidance (CFG):** During training, labels are randomly dropped to train an unconditional model in tandem. At inference, the conditional and unconditional score estimates are interpolated to control the strength of label conditioning. This is how cell type (or other covariate) conditioning is enforced at generation time.
+- **Classifier-free guidance (CFG):** During training, labels are randomly dropped to train an unconditional model. At inference, the conditional and unconditional score estimates are interpolated to control the strength of label conditioning. This is how cell type (or other covariate) conditioning is enforced at generation time.
 - **$v$-parameterization:** Instead of predicting noise directly, the model predicts the velocity $v = \sqrt{\bar\alpha}\,\epsilon - \sqrt{1-\bar\alpha}\,x_0$. This improves training stability and sample quality, especially in low-step regimes.
 
 ---
@@ -98,11 +96,7 @@ where $\bar{z}_{b,c}$ is the centroid of cell type $c$ in batch $b$'s batch subs
 
 **Limitation:** This captures only the first-moment difference. If two batches differ in variance or covariance structure (e.g., one batch has more spread in certain genes), the mean-shift direction will not represent this.
 
-**2. Linear Discriminant Analysis direction:**
-
-Find the direction that maximally separates batch centroids while minimizing within-batch variance. This is more robust than mean-shift when batch differences are not well-aligned with the coordinate axes of the batch subspace.
-
-**3. Optimal transport (OT) direction:**
+**2. Optimal transport (OT) direction:**
 
 OT provides the richest characterisation of batch differences by finding the map that transforms one batch's distribution into another while minimizing transport cost. Unlike the mean-shift approach, OT captures differences in mean, variance, covariance, and higher moments.
 
@@ -131,7 +125,6 @@ $$
 | Method        | What it captures         | Cost                 | When to use                                                   |
 | ------------- | ------------------------ | -------------------- | ------------------------------------------------------------- |
 | Mean shift    | First moment only        | Negligible           | Quick baseline; sufficient if batches differ only in location |
-| LDA direction | Discriminative direction | Low                  | When batch differences are not axis-aligned                   |
 | Gaussian OT   | Mean + covariance        | Low (closed form)    | When batches differ in spread or correlation structure        |
 | Empirical OT  | Full distribution        | Moderate (OT solver) | When Gaussian assumption is poor                              |
 
@@ -139,17 +132,17 @@ $$
 
 ### Pseudo-time Control
 
-**Status:** Not yet implemented.
+**Status:** Gaussian OT interpolation is implemented in `scdeepsim/src/scdeepsim/control.py`.
 
 Pseudo-time represents a cell's position along a continuous developmental or differentiation trajectory. Controlling pseudo-time in simulation means being able to generate cells at any desired developmental stage. A key use case is **benchmarking trajectory inference (TI) methods**: generating synthetic datasets with known ground-truth pseudo-time ordering, so that TI methods can be quantitatively evaluated on their ability to recover this ordering.
 
 #### Core Constraint: No TI in the Loop
 
-A simulator designed to benchmark TI methods **must not use TI methods in its own data generation pipeline**. If a TI method (e.g., Monocle, Slingshot, or even fitting a principal curve in latent space) is used to define the ground-truth trajectory, then the benchmark becomes circular — it evaluates TI methods against a ground truth that was itself produced by a TI method. This rules out our earlier proposal of fitting a principal curve $\gamma(t)$ in the VAE latent space using standard TI tools.
+A simulator designed to benchmark TI methods **must not use TI methods in its own data generation pipeline**. If a TI method (e.g., Monocle, or even fitting a principal curve in latent space) is used to define the ground-truth trajectory, then the benchmark becomes circular — it evaluates TI methods against a ground truth that was itself produced by a TI method. This rules out our earlier proposal of fitting a principal curve $\gamma(t)$ in the VAE latent space using standard TI tools.
 
-#### Proposed Approach: Optimal Transport Interpolation Between Known States
+#### Approach 1: Optimal Transport Interpolation Between Known States
 
-Instead of inferring a trajectory from data, we **construct** one by interpolating between two or more known cell states using optimal transport in the latent space. The key insight is that OT interpolation defines a ground-truth pseudo-time by construction, without any trajectory inference.
+We construct a ground-truth pseudo-time by interpolating between two or more known cell states in the latent space. This can be done by either linear interpolation in the mean and the covariance matrix, or by optimal transport in the latent space.
 
 **Setup.** Suppose we have a dataset containing cells from two known biological states (e.g., undifferentiated stem cells and terminally differentiated neurons). After training the semi-supervised VAE, we encode these cells into the latent space and obtain two distributions in the non-batch subspace:
 
@@ -167,19 +160,19 @@ $$T_\alpha(\mathbf{z}) = \left[(1 - \alpha)I + \alpha A\right](\mathbf{z} - \mu_
 
 For any $\alpha$, sampling $\mathbf{z} \sim P_{\text{start}}$ and computing $T_\alpha(\mathbf{z})$ yields a latent vector corresponding to developmental progress $\alpha$. Decoding via the VAE produces a synthetic cell with **ground-truth pseudo-time $\alpha$**.
 
-**Why OT interpolation, not linear interpolation?** Linear interpolation (i.e., $(1-\alpha)\mu_1 + \alpha \mu_2$) captures only the shift in mean. The OT map additionally transforms the covariance structure, so the *spread* and *correlation structure* of the generated cells evolve smoothly from $P_{\text{start}}$ to $P_{\text{end}}$. This produces more realistic intermediate populations.
 
-**Remark:** Is OT really necessary? Could we use a linear interpolation in both of the mean and the covariance matrix? -- The linear interpolation produces a path that is inflated in the middle.
+**Remark:** Could we use a linear interpolation in both of the mean and the covariance matrix? -- The linear interpolation produces a path that is inflated in the middle. But it could still be an option to compare with.
 
-**Why is the decoded path non-trivial?** Although the latent-space path is geometrically simple (a Wasserstein geodesic), the VAE decoder $D: \mathbb{R}^d \to \mathbb{R}^p$ is a highly non-linear mapping trained on real data. The decoded trajectory in gene expression space can therefore exhibit complex, biologically plausible dynamics: genes may activate and deactivate at different rates, some may show transient up-regulation followed by down-regulation, and gene–gene correlations can change along the trajectory. The complexity of the trajectory in expression space is inherited from the decoder's non-linearity, not from the latent path itself.
+**Could the decoded path benon-trivial?** Although the latent-space path is geometrically simple (a Wasserstein geodesic), the VAE decoder $D: \mathbb{R}^d \to \mathbb{R}^p$ is a highly non-linear mapping trained on real data. The decoded trajectory in gene expression space can therefore exhibit complex, biologically plausible dynamics. But it depends highly on whether the decoder has learned the real data manifold well.
 
 #### Extension to Branching Trajectories
 
 To simulate non-linear topologies (e.g., bifurcations), we define **multiple OT paths** sharing common segments. For example, given three states A (progenitor), B (intermediate), C and D (two terminal fates):
 
-- Path A → B with $\alpha \in [0, 1]$: shared trunk of the trajectory.
-- Path B → C with $\alpha \in [0, 1]$: first branch.
-- Path B → D with $\alpha \in [0, 1]$: second branch.
+```gantt
+    A ────────B───── C
+              └───── D
+```
 
 This produces a bifurcating trajectory. The ground-truth topology and per-branch pseudo-time are known by construction. More complex topologies (converging, cyclic, multi-furcating) can be built by composing additional OT paths.
 
@@ -193,24 +186,20 @@ The goal of this simulator is not to produce maximally realistic developmental d
 
 2. **Does the simulator discriminate between methods?** Verify that different TI methods produce meaningfully different Spearman correlations on the simulated data. A simulator where all methods score equally (all high or all low) is uninformative for benchmarking.
 
-#### Comparison with Mechanistic Simulators (dyngen)
+#### Applications on stress testing TI methods
 
-dyngen generates ground-truth pseudo-time by simulating gene regulatory networks via Gillespie's stochastic simulation algorithm. Its pseudo-time arises from the causal dynamics of transcription, splicing, and translation. Our approach instead defines pseudo-time via optimal transport geometry in a learned latent space. The two approaches are complementary:
-
-| | dyngen | Ours (OT interpolation) |
-|---|---|---|
-| Ground-truth source | Causal simulation (GRN + SSA) | Geometric construction (OT geodesic) |
-| Controllability | Via GRN topology and kinetic parameters | Via $\alpha$, choice of states, and latent geometry |
-| Biological realism | High (mechanistic) | Moderate (learned decoder, but no explicit mechanism) |
-| Data characteristics | Synthetic (may differ from real scRNA-seq) | Closer to real data (learned from real data) |
-| Trajectory complexity | Arbitrary (linear, branching, cyclic) | Composable (multiple OT paths) |
-| TI method in the loop? | No | No |
+- **Testing TI methods under different devloping speeds** -- We can generate a trajectory with different data densities at different $\alpha$ values by passing a non-uniform $\alpha$ sequence to the OT interpolation.
+- **Testing TI methods under different scales of noise** -- We can add noise with different scales along the trajectory.
+- **Power analysis for distinguishing branching trajectories** -- We can control the "true discrepancy" between two branches and run TI methods to see if they can distinguish the two branches. Different methods will behave differently as the "discrepancy" metric varies.
 
 #### Open Questions
 
 - **Behaviour at branch points:** When composing multiple OT paths (e.g., B→C and B→D), the cells at $\alpha = 0$ on both branches are sampled from the same distribution (state B). TI methods must distinguish the two branches based on downstream differences. Whether the current formulation provides sufficient signal at the branch point needs empirical investigation.
-- **Extrapolation beyond observed states:** Setting $\alpha > 1$ extends the trajectory beyond the terminal state. Whether this produces biologically plausible cells depends on the decoder's behaviour in extrapolated regions of latent space.
-- **Empirical (non-Gaussian) OT:** If state distributions in latent space are poorly approximated by Gaussians, discrete OT can be used instead, at higher computational cost but with fewer distributional assumptions.
+- **Control Evaluation:** How could we argue the method introduce a trajectory while preserving meaningful biological signals like we do in batch effect control experiments?
+- 
+#### Preliminary Results  
+In pancreas dataset, we generate a trajectory from Ductal cells to beta cells and compare the UMAP with the real data. 
+![Trajectory Interpolation Preliminary Results](../experiments/outputs/2026-04-14/22-14-26_trajectory_interpolation/results/trajectory_umap.png)
 
 ---
 
@@ -356,11 +345,14 @@ We also visualized the trajectory of generated samples at different $\alpha$ val
 
 1. **Held-out batch validation:** Take a dataset with known real batch effects. Train the model on only the reference batch. Generate data for the target batches using the learned batch directions (with $\alpha = 1$). Compare the generated target-batch data against the held-out real target-batch data using per-gene correlations, UMAP overlap, and batch-separation metrics. This directly tests whether the model can recover a known batch effect.
 
-2. **Round-trip validation:** Train the model on a multi-batch dataset. Use the learned batch direction to "remove" the batch effect from one batch (shift by $-\alpha \cdot \delta_b$, with $\alpha = 1$). Check whether the result aligns with the reference batch in latent space. Then re-introduce the effect (shift by $+\alpha \cdot \delta_b$) and verify recovery. Alignment quality indicates that the direction captures the true batch structure.
-
-3. **Qualitative plausibility (UMAP visualisation):** Show UMAP visualisations of simulated data at different $\alpha$ values ($0, 0.5, 1.0, 1.5, 2.0$). The cluster topology should deform smoothly as $\alpha$ increases, without producing artifacts or unrealistic cluster fragmentation.
+2. **Qualitative plausibility (UMAP visualisation):** Show UMAP visualisations of simulated data at different $\alpha$ values ($0, 0.5, 1.0, 1.5, 2.0$). The cluster topology should deform smoothly as $\alpha$ increases, without producing artifacts or unrealistic cluster fragmentation.
 
 ### Pseudo-time Control Evaluation
+
+Not very clear yet. Possible approaches are:
+
+- A a simple sanity check that we do introduce a trajectory with LISI or ASW metrics.
+- To show we can generate trajectories with different developing speed, we can draw an expression v.s. time plot 
 
 
 ---
@@ -374,14 +366,20 @@ We also visualized the trajectory of generated samples at different $\alpha$ val
 
 ## Summary of Open Tasks
 
-| Task                                                                                                     | Priority | Status                                         |
-| -------------------------------------------------------------------------------------------------------- | -------- | ---------------------------------------------- |
-| Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only)      | High     | implemented                                    |
-| Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels)  | High     | Implemented.Conducted on embryo atlas dataset. |
-| Implement Gaussian OT direction finding (compare against mean-shift)                                     | High     | Implemented.                                   |
-| Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics) | High     | implemented                                    |
-| Held-out batch validation experiment                                                                     | Medium   | Not started                                    |
-| Implement pseudo-time trajectory manipulation                                                            | Medium   | Not started                                    |
-| Add scDesign3 to genuine simulation benchmark                                                            | Medium   | Not started                                    |
-| Reframe scVI comparison (reconstruction quality only)                                                    | Medium   | Not started                                    |
-| Library size ablation: TN-VAE (log-normalised) vs. ZINB-VAE (raw counts)                                 | Low      | Not started                                    |
+**High Priority**
+- [x] Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only)
+- [x] Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels) — Conducted on embryo atlas dataset
+- [x] Implement Gaussian OT direction finding (compare against mean-shift)
+- [x] Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics)
+- [x] Implement pseudo-time trajectory manipulation
+- [ ] Evaluate pseudo-time trajectory manipulation
+- [ ] Consolidate the way to benchmarking TI methods with our simulator
+
+**Medium Priority**
+- [ ] Held-out batch validation experiment
+
+- [ ] Add scDesign3 to genuine simulation benchmark
+- [ ] Reframe scVI comparison (reconstruction quality only)
+
+**Low Priority**
+- [ ] Library size ablation: TN-VAE (log-normalised) vs. ZINB-VAE (raw counts)
