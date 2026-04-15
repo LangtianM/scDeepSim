@@ -197,3 +197,61 @@ def apply_ot_displacement(z, mu_ref, mu_target, A, alpha, batch_slice):
     z[:, batch_slice] = centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
 
     return z
+
+
+# ---------------------------------------------------------------------------
+# Trajectory Optimal Transport
+# ---------------------------------------------------------------------------
+
+def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
+                              seed=42):
+    """Generate interpolated samples along the OT geodesic between two states.
+
+    Uses the Gaussian OT map and McCann displacement interpolation to produce
+    latent vectors at each requested alpha.  Samples are drawn from the start
+    distribution and transported to the intermediate position alpha along the
+    Wasserstein geodesic.
+
+    Parameters
+    ----------
+    X_start, X_end : np.ndarray
+        Latent representations of the start and end states,
+        shapes ``(n_start, d)`` and ``(n_end, d)``.
+    alphas : array-like of float
+        Interpolation parameters in [0, 1] (or beyond for extrapolation).
+    n_samples_per_alpha : int, optional
+        Number of samples to generate at each alpha.  Defaults to
+        ``X_start.shape[0]`` (resample with replacement when needed).
+    seed : int
+        Random seed for reproducible sampling.
+
+    Returns
+    -------
+    dict
+        ``"ot_params"`` — output of :func:`gaussian_ot_map`.
+        ``"samples"``   — dict mapping each alpha to an ``(n_samples, d)`` array.
+    """
+    rng = np.random.RandomState(seed)
+
+    ot_params = gaussian_ot_map(X_start, X_end)
+    mu_ref = ot_params["mu_ref"]
+    mu_target = ot_params["mu_target"]
+    A = ot_params["A"]
+
+    if n_samples_per_alpha is None:
+        n_samples_per_alpha = X_start.shape[0]
+
+    samples = {}
+    for alpha in alphas:
+        idx = rng.choice(X_start.shape[0], size=n_samples_per_alpha, replace=True)
+        z_start = X_start[idx].astype(np.float64)
+
+        d = A.shape[0]
+        I = np.eye(d)
+        T_alpha = (1 - alpha) * I + alpha * A
+
+        centered = z_start - mu_ref
+        z_interp = centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
+        samples[alpha] = z_interp
+
+    return {"ot_params": ot_params, "samples": samples}
