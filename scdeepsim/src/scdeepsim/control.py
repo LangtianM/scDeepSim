@@ -204,13 +204,14 @@ def apply_ot_displacement(z, mu_ref, mu_target, A, alpha, batch_slice):
 # ---------------------------------------------------------------------------
 
 def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
-                              seed=42):
+                              noise_scales=None, seed=42):
     """Generate interpolated samples along the OT geodesic between two states.
 
     Uses the Gaussian OT map and McCann displacement interpolation to produce
     latent vectors at each requested alpha.  Samples are drawn from the start
     distribution and transported to the intermediate position alpha along the
-    Wasserstein geodesic.
+    Wasserstein geodesic.  Optionally, isotropic Gaussian noise is added at
+    each step with a per-alpha scale.
 
     Parameters
     ----------
@@ -222,8 +223,17 @@ def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
     n_samples_per_alpha : int, optional
         Number of samples to generate at each alpha.  Defaults to
         ``X_start.shape[0]`` (resample with replacement when needed).
+    noise_scales : array-like of float or float, optional
+        Standard deviation of isotropic Gaussian noise added to the
+        interpolated samples at each alpha.  Can be:
+
+        * ``None`` — no noise is added (default).
+        * A single ``float`` — the same scale is used at every alpha.
+        * A sequence of the same length as *alphas* — each element gives
+          the noise scale for the corresponding alpha.
+
     seed : int
-        Random seed for reproducible sampling.
+        Random seed for reproducible sampling and noise.
 
     Returns
     -------
@@ -231,6 +241,7 @@ def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
         ``"ot_params"`` — output of :func:`gaussian_ot_map`.
         ``"samples"``   — dict mapping each alpha to an ``(n_samples, d)`` array.
     """
+    alphas = list(alphas)
     rng = np.random.RandomState(seed)
 
     ot_params = gaussian_ot_map(X_start, X_end)
@@ -241,17 +252,34 @@ def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
     if n_samples_per_alpha is None:
         n_samples_per_alpha = X_start.shape[0]
 
+    if noise_scales is None:
+        scales = [0.0] * len(alphas)
+    elif np.isscalar(noise_scales):
+        scales = [float(noise_scales)] * len(alphas)
+    else:
+        scales = list(noise_scales)
+        if len(scales) != len(alphas):
+            raise ValueError(
+                f"noise_scales length ({len(scales)}) must match "
+                f"alphas length ({len(alphas)})"
+            )
+
+    d = A.shape[0]
+    I = np.eye(d)
+
     samples = {}
-    for alpha in alphas:
+    for alpha, sigma in zip(alphas, scales):
         idx = rng.choice(X_start.shape[0], size=n_samples_per_alpha, replace=True)
         z_start = X_start[idx].astype(np.float64)
 
-        d = A.shape[0]
-        I = np.eye(d)
         T_alpha = (1 - alpha) * I + alpha * A
 
         centered = z_start - mu_ref
         z_interp = centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
+
+        if sigma > 0.0:
+            z_interp = z_interp + rng.normal(0.0, sigma, size=z_interp.shape)
+
         samples[alpha] = z_interp
 
     return {"ot_params": ot_params, "samples": samples}
