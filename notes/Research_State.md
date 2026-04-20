@@ -163,7 +163,7 @@ For any $\alpha$, sampling $\mathbf{z} \sim P_{\text{start}}$ and computing $T_\
 
 **Remark:** Could we use a linear interpolation in both of the mean and the covariance matrix? -- The linear interpolation produces a path that is inflated in the middle. But it could still be an option to compare with.
 
-**Could the decoded path benon-trivial?** Although the latent-space path is geometrically simple (a Wasserstein geodesic), the VAE decoder $D: \mathbb{R}^d \to \mathbb{R}^p$ is a highly non-linear mapping trained on real data. The decoded trajectory in gene expression space can therefore exhibit complex, biologically plausible dynamics. But it depends highly on whether the decoder has learned the real data manifold well.
+**Could the decoded path be non-trivial?** Although the latent-space path is geometrically simple (a Wasserstein geodesic), the VAE decoder $D: \mathbb{R}^d \to \mathbb{R}^p$ is a highly non-linear mapping trained on real data. The decoded trajectory in gene expression space can therefore exhibit complex, biologically plausible dynamics. But it depends highly on whether the decoder has learned the real data manifold well.
 
 #### Extension to Branching Trajectories
 
@@ -178,7 +178,44 @@ This produces a bifurcating trajectory. The ground-truth topology and per-branch
 
 **Data availability.** Datasets containing cells from two or more known discrete states are common in practice: time-course differentiation experiments, reprogramming studies, and embryonic development atlases routinely provide cells labelled by developmental stage or cell type. This makes the "known states" assumption realistic.
 
+#### Controlling Discrepancy between Two Branches
+
+Beyond producing a bifurcation with known topology, we want a continuous knob for **how different the two daughter branches look**, from nearly indistinguishable (low discrepancy) to strongly diverging (high discrepancy). This is what lets us stress-test TI methods on their ability to *resolve* branches, not just order cells within one branch.
+
+There could be 3 independent knobs that control the discrepancy. All three are affine / OT operations confined to the non-batch biological subspace. Each of the method gives a different angle to characterize discrepancy.
+
+**1. Angle in subspace (primary, geometric knob).** Let $\mu_B$ be the (shared) branch point and let $\mu_C, \mu_D$ be the two real terminal-state centroids. Build an orthonormal basis $\{e_1, e_2\}$ of the divergence plane — the 2-D subspace spanned by $\mu_C - \mu_B$ and $\mu_D - \mu_B$ inside the biological subspace. Parameterize the two branch endpoints symmetrically about $e_1$:
+
+$$
+\mu_{C(\theta)} = \mu_B + r\,(\cos\theta\, e_1 + \sin\theta\, e_2), \qquad
+\mu_{D(\theta)} = \mu_B + r\,(\cos\theta\, e_1 - \sin\theta\, e_2)
+$$
+
+with $\theta \in [0, \pi/2]$ and $r \geq 0$. This gives two independent geometric controls: **angular separation** $\theta$ and **branch length** $r$. At $\theta \to 0$ the two branches coincide (zero geometric discrepancy); at $\theta = \pi/2$ they point in opposite directions; intermediate values give partial separation. The covariance for each endpoint defaults to a shared $\Sigma$ (the average of $\Sigma_C, \Sigma_D$), with the option to set them separately when we want one branch tighter than the other.
+
+*Real-data anchoring.* The "real" configuration $(\theta_{\text{real}}, r_{\text{real}})$ corresponds to the observed angle and length of the two real endpoints relative to $\mu_B$; at this point the simulator reproduces the observed discrepancy. Sweeping $\theta$ below $\theta_{\text{real}}$ is equivalent to moving the two real endpoints symmetrically toward each other; sweeping above is equivalent to pushing them apart. This is analogous to the $\alpha = 1$ real-data anchor used for batch control, with $\alpha > 1$ and $\alpha < 1$ as extrapolation and interpolation.
+
+**2. Branch-point position $\tau$ (secondary, topological knob).** Rather than splitting at the root, insert a shared waypoint at pseudo-time $\tau \in [0, 1]$: run a single OT interpolation from $A$ to a shared waypoint $W$ over pseudo-times $[0, \tau]$, then run two separate OT interpolations $W \to C$ and $W \to D$ over pseudo-times $[\tau, 1]$. $\tau \to 1$ gives a long shared prefix and a very late split (low discrepancy, as in the left sketch of a near-linear trajectory); $\tau \to 0$ recovers the current "split at the root" behaviour. This knob is attractive because it maps directly onto a ground-truth quantity that TI methods are themselves supposed to estimate (the branch-point location), and it controls discrepancy *without touching the endpoints*.
+
+**3. Noise scale $\sigma$ (tertiary, statistical knob).** Orthogonal to geometry and topology, per-branch isotropic Gaussian noise controls the signal-to-noise ratio at which the branches are seen. `trajectory_ot_interpolate` already supports per-$\alpha$ noise scales in `scdeepsim/src/scdeepsim/control.py`, so this knob is available at no extra implementation cost. Fixing $(\theta, r, \tau)$ and sweeping $\sigma$ gives an SNR-based discrepancy axis that is expected to stress different TI methods differently (graph-based vs. principal-curve vs. diffusion-map).
+
+
+
 #### Evaluation Strategy
+
+We need to evaluate this controlled simulation strategy to show:
+
+1. We do introduce a trajectory signal while preserving meaningful biological signals like we do in batch effect control experiments.
+2. We can control the "true discrepancy" between two branches and run TI methods to see if they can distinguish the two branches. Different methods will behave differently as the "discrepancy" metric varies.
+
+
+#### Applications on stress testing TI methods
+
+- **Testing TI methods under different devloping speeds** -- We can generate a trajectory with different data densities at different $\alpha$ values by passing a non-uniform $\alpha$ sequence to the OT interpolation.
+- **Testing TI methods under different scales of noise** -- We can add noise with different scales along the trajectory.
+- **Power analysis for distinguishing branching trajectories** -- Using the knobs defined in *Controlling Discrepancy between Two Branches* above (angle $\theta$ and length $r$, split position $\tau$, noise scale $\sigma$), we sweep the measured branch-end $W_2$ and report each TI method's Spearman correlation between its inferred pseudo-time and the ground-truth $\alpha$ as a function of $W_2$. Different methods are expected to break down at different discrepancies, which is what makes the resulting curves a useful benchmark.
+
+**Stress Testing Strategy**
 
 The goal of this simulator is not to produce maximally realistic developmental data, but to **generate datasets that can effectively discriminate between TI methods** of varying quality. The evaluation therefore has two components:
 
@@ -186,17 +223,11 @@ The goal of this simulator is not to produce maximally realistic developmental d
 
 2. **Does the simulator discriminate between methods?** Verify that different TI methods produce meaningfully different Spearman correlations on the simulated data. A simulator where all methods score equally (all high or all low) is uninformative for benchmarking.
 
-#### Applications on stress testing TI methods
-
-- **Testing TI methods under different devloping speeds** -- We can generate a trajectory with different data densities at different $\alpha$ values by passing a non-uniform $\alpha$ sequence to the OT interpolation.
-- **Testing TI methods under different scales of noise** -- We can add noise with different scales along the trajectory.
-- **Power analysis for distinguishing branching trajectories** -- We can control the "true discrepancy" between two branches and run TI methods to see if they can distinguish the two branches. Different methods will behave differently as the "discrepancy" metric varies.
-
 #### Open Questions
 
 - **Behaviour at branch points:** When composing multiple OT paths (e.g., B→C and B→D), the cells at $\alpha = 0$ on both branches are sampled from the same distribution (state B). TI methods must distinguish the two branches based on downstream differences. Whether the current formulation provides sufficient signal at the branch point needs empirical investigation.
 - **Control Evaluation:** How could we argue the method introduce a trajectory while preserving meaningful biological signals like we do in batch effect control experiments?
-- 
+
 #### Preliminary Results  
 In pancreas dataset, we generate a trajectory from Ductal cells to beta cells and compare the UMAP with the real data. 
 ![Trajectory Interpolation Preliminary Results](../experiments/outputs/2026-04-14/22-14-26_trajectory_interpolation/results/trajectory_umap.png)
@@ -319,7 +350,17 @@ We run the experiment `experiments/scripts/eval_batch_dose_response.py` for the 
 
 ![Dose-Response Evaluation Gaussian OT](../experiments/multirun/2026-04-07/22-21-54/1/results/dose_response_curves.png)
 
-We also visualized the trajectory of generated samples at different $\alpha$ values:
+#### Validating Realism of the Introduced Batch Effects
+
+**Challenge:** We cannot directly use real-vs.-simulated discriminability to assess the manipulated data, because we are generating data with batch effects that do not exist in reality. We need alternative strategies to argue the introduced effects are realistic.
+
+**Proposed validation strategies:**
+
+1. **Held-out batch validation:** Take a dataset with known real batch effects. Train the model on only the reference batch. Generate data for the target batches using the learned batch directions (with $\alpha = 1$). Compare the generated target-batch data against the held-out real target-batch data using per-gene correlations, UMAP overlap, and batch-separation metrics. This directly tests whether the model can recover a known batch effect.
+
+2. **Qualitative plausibility (UMAP visualisation):** Show UMAP visualisations of simulated data at different $\alpha$ values ($0, 0.5, 1.0, 1.5, 2.0$). The cluster topology should deform smoothly as $\alpha$ increases, without producing artifacts or unrealistic cluster fragmentation.
+
+We visualized the trajectory of generated samples at different $\alpha$ values:
 
 **Mean-Shift:**
 
@@ -337,15 +378,7 @@ We also visualized the trajectory of generated samples at different $\alpha$ val
 
 ![Interpolation UMAP Gaussian OT](../experiments/multirun/2026-04-07/22-35-18/1/results/umap_batch_interpolation.png)
 
-#### Validating Realism of the Introduced Batch Effects
-
-**Challenge:** We cannot directly use real-vs.-simulated discriminability to assess the manipulated data, because we are generating data with batch effects that do not exist in reality. We need alternative strategies to argue the introduced effects are realistic.
-
-**Proposed validation strategies:**
-
-1. **Held-out batch validation:** Take a dataset with known real batch effects. Train the model on only the reference batch. Generate data for the target batches using the learned batch directions (with $\alpha = 1$). Compare the generated target-batch data against the held-out real target-batch data using per-gene correlations, UMAP overlap, and batch-separation metrics. This directly tests whether the model can recover a known batch effect.
-
-2. **Qualitative plausibility (UMAP visualisation):** Show UMAP visualisations of simulated data at different $\alpha$ values ($0, 0.5, 1.0, 1.5, 2.0$). The cluster topology should deform smoothly as $\alpha$ increases, without producing artifacts or unrealistic cluster fragmentation.
+--- 
 
 ### Pseudo-time Control Evaluation
 
