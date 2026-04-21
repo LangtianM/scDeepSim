@@ -360,7 +360,7 @@ We run the experiment `experiments/scripts/eval_batch_dose_response.py` for the 
 
 2. **Qualitative plausibility (UMAP visualisation):** Show UMAP visualisations of simulated data at different $\alpha$ values ($0, 0.5, 1.0, 1.5, 2.0$). The cluster topology should deform smoothly as $\alpha$ increases, without producing artifacts or unrealistic cluster fragmentation.
 
-We visualized the trajectory of generated samples at different $\alpha$ values:
+We visualized the trajectory of generated samples at different w$\alpha$ values:
 
 **Mean-Shift:**
 
@@ -382,10 +382,27 @@ We visualized the trajectory of generated samples at different $\alpha$ values:
 
 ### Pseudo-time Control Evaluation
 
-Not very clear yet. Possible approaches are:
+#### Preliminary Results
 
-- A a simple sanity check that we do introduce a trajectory with LISI or ASW metrics.
-- To show we can generate trajectories with different developing speed, we can draw an expression v.s. time plot 
+Trajectory interpolation between Ductal cells and Beta cells Visualization.
+
+![Trajectory Interpolation Preliminary Results](../experiments/outputs/2026-04-14/22-14-26_trajectory_interpolation/results/trajectory_umap.png)
+
+Manipulating discrepancy between two branches.
+
+Before:
+
+![Manipulating Discrepancy between Two Branches w = 1.0](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png)
+
+![Manipulating Discrepancy between Two Branches w = 1.0 PCA](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_pca.png)
+
+After:
+
+![Manipulating Discrepancy between Two Branches w = 2.0](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png)
+
+![Manipulating Discrepancy between Two Branches w = 2.0 PCA](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_pca.png)
+
+
 
 ---
 
