@@ -199,7 +199,7 @@ $$
 
 Because the Wasserstein geodesic is invariant under monotone reparametrisations of $\alpha$, this rescaling is purely a relabelling of pseudo-time and leaves the per-$t$ distributions unchanged. Cell counts should be allocated proportionally (trunk $\propto \tau$, each branch $\propto 1 - \tau$) to keep density uniform in pseudo-time, and per-cell continuity at $\tau$ can be enforced by using the trunk's $\alpha = 1$ samples as the start of each branch. $\tau \to 0$ recovers a "split at the root" bifurcation; $\tau \to 1$ gives a near-linear trajectory with a very late split. This knob controls discrepancy *without touching the endpoints*, and maps directly onto a ground-truth quantity that TI methods are themselves supposed to estimate.
 
-**3. Noise scale $\sigma$** Orthogonal to geometry and topology, per-branch isotropic Gaussian noise controls the SNR at which the branches are seen. Fixing $(u, r, \tau)$ and sweeping $\sigma$ gives an SNR-based discrepancy axis that is expected to stress different TI methods differently (graph-based vs. principal-curve vs. diffusion-map).
+**3. Noise scale $\sigma$** Orthogonal to geometry and topology, per-branch isotropic Gaussian noise controls the SNR at which the branches are seen. Fixing other parameters and sweeping $\sigma$ gives an SNR-based discrepancy axis that is expected to stress different TI methods differently (graph-based vs. principal-curve vs. diffusion-map).
 
 #### Evaluation Strategy
 
