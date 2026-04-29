@@ -433,6 +433,10 @@ After:
 
 ![Manipulating Discrepancy between Two Branches w = 2.0 PCA](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_pca.png)
 
+Branching point control:
+
+![Branching Point Control](../experiments/outputs/2026-04-28/20-46-33_branch_point_tau/results/tau_comparison_umap.png)
+
 #### A dose-response check of introducing fake pseudo-time signal
 
 ![Dose-Response Evaluation Pseudo-time](../experiments/outputs/2026-04-21/17-19-02_pseudotime_dose_response/results/pt_dose_response_curve.png)
