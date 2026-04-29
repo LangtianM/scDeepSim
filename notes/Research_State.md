@@ -388,18 +388,28 @@ The Gaussian OT approach assumes that the data is Gaussian distributed and have 
 
 We check the normality assumption by a Mahalanobis QQ plot.
 
-![Mahalanobis QQ Plot](../experiments/outputs/2026-04-28/15-19-05_batch_latent_gaussianity/results/mahalanobis_qq_by_batch.png)
+![Mahalanobis QQ Plot](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/mahalanobis_qq_by_batch.png)
 
 It seems that the Gaussian assumption does not hold for the batch latents. 
 
 
 We then check the covariance structure by a covariance spectra and relative Frobenius heatmap.
 
-![Covariance Spectra](../experiments/outputs/2026-04-28/15-19-05_batch_latent_gaussianity/results/covariance_spectra.png)
+![Covariance Spectra](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/covariance_spectra.png)
 
-![Relative Frobenius Heatmap](../experiments/outputs/2026-04-28/15-19-05_batch_latent_gaussianity/results/relative_frobenius_heatmap.png)
+![Relative Frobenius Heatmap](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/relative_frobenius_heatmap.png)
 
-The spectrum of the matrices looks similar, but the relative Frobenius distances are still high.
+The spectrum of the matrices looks similar, but the relative Frobenius distances are still high. This suggests that the direction of the eigenvectors might be different. Let's verify this by looking at the principle angles of the subspaces. Let $U_A, U_B \in \mathbb{R}^{d \times k}$ be the subspaces spanned by the top $k$ principal components of the batch latents for batch A and B, respectively. The SVD decomposition gives: 
+
+$$
+U_i^{\top} U_j=P \Sigma Q^{\top}, \quad \Sigma=\operatorname{diag}\left(\cos \theta_1, \ldots, \cos \theta_k\right).
+$$
+
+Then $\theta_1 \leq \theta_2 \leq \dots \leq \theta_k$ are the principle angles. 
+
+![Principle Angles](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/principal_angles.png)
+
+
 
 --- 
 

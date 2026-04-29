@@ -31,7 +31,7 @@ analysis:
   subspace: batch
   latent_representation: mean
   top_k_batches: 4
-  principal_angle_k: 16
+  principal_angle_k: 8
   min_cells_per_batch: 30
   cov_ridge: 1e-6
 
