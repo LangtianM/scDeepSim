@@ -136,9 +136,7 @@ $$
 
 Pseudo-time represents a cell's position along a continuous developmental or differentiation trajectory. Controlling pseudo-time in simulation means being able to generate cells at any desired developmental stage. A key use case is **benchmarking trajectory inference (TI) methods**: generating synthetic datasets with known ground-truth pseudo-time ordering, so that TI methods can be quantitatively evaluated on their ability to recover this ordering.
 
-#### Core Constraint: No TI in the Loop
-
-A simulator designed to benchmark TI methods **must not use TI methods in its own data generation pipeline**. If a TI method (e.g., Monocle, or even fitting a principal curve in latent space) is used to define the ground-truth trajectory, then the benchmark becomes circular — it evaluates TI methods against a ground truth that was itself produced by a TI method. This rules out our earlier proposal of fitting a principal curve $\gamma(t)$ in the VAE latent space using standard TI tools.
+**Remark:** A simulator designed to benchmark TI methods **must not use TI methods in its own data generation pipeline**. If a TI method (e.g., Monocle, or even fitting a principal curve in latent space) is used to define the ground-truth trajectory, then the benchmark becomes circular — it evaluates TI methods against a ground truth that was itself produced by a TI method. This rules out our earlier proposal of fitting a principal curve $\gamma(t)$ in the VAE latent space using standard TI tools.
 
 #### Approach 1: Optimal Transport Interpolation Between Known States
 
