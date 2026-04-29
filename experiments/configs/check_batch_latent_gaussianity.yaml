@@ -1,0 +1,40 @@
+seed: 42
+
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+  data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
+
+data:
+  n_cells: 10000
+  n_genes: 2000
+  batch_key: tech
+
+vae:
+  latent_dim: 128
+  enc_hidden: [512, 256]
+  dec_hidden: [256, 512]
+  input_dropout: 0.1
+  beta: 1.0
+  beta_warmup_epochs: 10
+  zero_inflated: true
+  sup_head_hidden: 64
+  max_epochs: 200
+  batch_size: 256
+
+supervision:
+  celltype_weight: 5.0
+  celltype_latent_dims: 16
+  batch_weight: 5.0
+  batch_latent_dims: 16
+
+analysis:
+  subspace: batch
+  latent_representation: mean
+  top_k_batches: 4
+  principal_angle_k: 16
+  min_cells_per_batch: 30
+  cov_ridge: 1e-6
+
+hydra:
+  run:
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_batch_latent_gaussianity

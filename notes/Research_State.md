@@ -382,6 +382,25 @@ We visualized the trajectory of generated samples at different $\alpha$ values:
 
 UMAP visualization of batch interpolation and extrapolation along the Gaussian OT transport direction. Reference batch (inDrop3, triangles) and target batch (Smart-seq2, squares) cells are shown alongside generated cells at $\alpha \in \{0.0, 0.5, 1.0, 1.5\}$ (color-coded from dark purple to yellow). Generated cells shift continuously from the reference position ($\alpha = 0$) toward and beyond the target ($\alpha = 1.5$), with smooth spatial transitions across UMAP clusters.
 
+#### Checking Assumptions of Gaussian OT
+
+The Gaussian OT approach assumes that the data is Gaussian distributed and have different covariance matrices for different batches. 
+
+We check the normality assumption by a Mahalanobis QQ plot.
+
+![Mahalanobis QQ Plot](../experiments/outputs/2026-04-28/15-19-05_batch_latent_gaussianity/results/mahalanobis_qq_by_batch.png)
+
+It seems that the Gaussian assumption does not hold for the batch latents. 
+
+
+We then check the covariance structure by a covariance spectra and relative Frobenius heatmap.
+
+![Covariance Spectra](../experiments/outputs/2026-04-28/15-19-05_batch_latent_gaussianity/results/covariance_spectra.png)
+
+![Relative Frobenius Heatmap](../experiments/outputs/2026-04-28/15-19-05_batch_latent_gaussianity/results/relative_frobenius_heatmap.png)
+
+The spectrum of the matrices looks similar, but the relative Frobenius distances are still high.
+
 --- 
 
 ### Pseudo-time Control Evaluation
@@ -429,6 +448,7 @@ After:
 - [x] Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics)
 - [x] Implement pseudo-time trajectory manipulation
 - [x] Evaluate pseudo-time trajectory manipulation ?
+- [ ] Evluate branching point manipulation.
 - [ ] Consolidate the way to benchmarking TI methods with our simulator
 
 **Medium Priority**
