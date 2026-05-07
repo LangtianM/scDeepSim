@@ -390,7 +390,6 @@ We check the normality assumption by a Mahalanobis QQ plot.
 
 It seems that the Gaussian assumption does not hold for the batch latents. 
 
-
 We then check the covariance structure by a covariance spectra and relative Frobenius heatmap.
 
 ![Covariance Spectra](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/covariance_spectra.png)
@@ -406,8 +405,6 @@ $$
 Then $\theta_1 \leq \theta_2 \leq \dots \leq \theta_k$ are the principle angles. 
 
 ![Principle Angles](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/principal_angles.png)
-
-
 
 --- 
 
@@ -459,9 +456,10 @@ Branching point control:
 - [x] Implement Gaussian OT direction finding (compare against mean-shift)
 - [x] Dose-response batch evaluation ($\alpha$ vs. Batch ASW / iLISI / kBET + biological preservation metrics)
 - [x] Implement pseudo-time trajectory manipulation
-- [x] Evaluate pseudo-time trajectory manipulation ?
-- [ ] Evluate branching point manipulation.
+- [x] Evaluate pseudo-time trajectory manipulation?
+- [x] Evluate branching point manipulation.
 - [ ] Consolidate the way to benchmarking TI methods with our simulator
+- [ ] Batch Effect Benchmark: Observe difference with the traditional simulator benchmarking(splatter)
 
 **Medium Priority**
 
@@ -471,6 +469,10 @@ Branching point control:
 
 - [ ] Reframe scVI comparison (reconstruction quality only)
 
+- [ ] Synthetic Null?
+
 **Low Priority**
 
 - [ ] Library size ablation: TN-VAE (log-normalised) vs. ZINB-VAE (raw counts)
+- [ ] Investigate why non-gaussian lantent distribution
+- [ ] Control data characteristics instead of just signal strengths
