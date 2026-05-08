@@ -4,7 +4,7 @@
 
 Among existing simulators, there is a fundamental trade-off between simulation quality and controllability. The most accurate simulators are often based on deep learning models, which do not expose interpretable parameters that map onto data characteristics such as means, variances, or zero-inflation rates. Classical statistical simulators offer explicit parametric control over these characteristics but fail to capture the complex, high-dimensional structure of real single-cell data.
 
-This study addresses this trade-off by adapting semi-supervised variational autoencoders and classifier-free guided latent diffusion models for controlled deep-learning-based generation of single-cell data.
+This study addresses this trade-off by adapting disentangled variational autoencoders and classifier-free guided latent diffusion models for controlled deep-learning-based generation of single-cell data.
 
 **Core Claim:** The trade-off between simulation quality and controllability is not fundamental. Modern generative models can be trained to produce high-fidelity synthetic data while still supporting explicit control over biologically meaningful signals such as batch effects and developmental trajectories.
 
@@ -16,11 +16,11 @@ We evaluate this approach on benchmark datasets with complex experimental design
 
 ## The Generative Model
 
-### Semi-Supervised VAE
+### Disentangled VAE
 
 `scdeepsim/src/scdeepsim/truncated_normal_vae.py`
 
-The semi-supervised VAE is a variational autoencoder that uses:
+The disentangled VAE is a variational autoencoder that uses:
 
 - a normal distribution as the encoder $q_\phi(z|x)$,
 - a zero-inflated truncated normal distribution as the decoder $p_\theta(x|z)$,
@@ -65,7 +65,7 @@ The latent diffusion model is a denoising diffusion probabilistic model (DDPM) o
 
 #### Core Method: Geometric Manipulation in the Batch Subspace
 
-The key idea is to operate entirely in the disentangled batch subspace of the latent space. After training the semi-supervised VAE with batch labels, the batch subspace occupies dimensions $[d_c,\; d_c + d_b)$ of the latent vector. We compute a batch direction $\delta_b$ from the training data, then apply it to generated latents with a controllable strength coefficient $\alpha$:
+The key idea is to operate entirely in the disentangled batch subspace of the latent space. After training the disentangled VAE with batch labels, the batch subspace occupies dimensions $[d_c,\; d_c + d_b)$ of the latent vector. We compute a batch direction $\delta_b$ from the training data, then apply it to generated latents with a controllable strength coefficient $\alpha$:
 
 $$z' = z + \alpha \cdot \delta_b$$
 
@@ -142,7 +142,7 @@ Pseudo-time represents a cell's position along a continuous developmental or dif
 
 We construct a ground-truth pseudo-time by interpolating between two or more known cell states in the latent space. This can be done by either linear interpolation in the mean and the covariance matrix, or by optimal transport in the latent space.
 
-**Setup.** Suppose we have a dataset containing cells from two known biological states (e.g., undifferentiated stem cells and terminally differentiated neurons). After training the semi-supervised VAE, we encode these cells into the latent space and obtain two distributions in the non-batch subspace:
+**Setup.** Suppose we have a dataset containing cells from two known biological states (e.g., undifferentiated stem cells and terminally differentiated neurons). After training the disentangled VAE, we encode these cells into the latent space and obtain two distributions in the non-batch subspace:
 
 $$
 P_{\text{start}} = \mathcal{N}(\mu_1, \Sigma_1), \quad P_{\text{end}} = \mathcal{N}(\mu_2, \Sigma_2)
@@ -285,7 +285,7 @@ In a fair comparison in gene space, VAE+Diffusion (AUC ~0.96) substantially outp
 
 ### Disentanglement Evaluation
 
-We evaluate the disentanglement of latent variables produced by the semi-supervised VAE by varying the supervision weight from 1.0 to 7.0. A secondary RF classifier is trained to predict cell type from (a) the cell-type latent subspace and (b) the remaining latent dimensions.
+We evaluate the disentanglement of latent variables produced by the disentangled VAE by varying the supervision weight from 1.0 to 7.0. A secondary RF classifier is trained to predict cell type from (a) the cell-type latent subspace and (b) the remaining latent dimensions.
 
 ![Disentanglement Evaluation](../experiments/outputs/checkpoints/test_supervised/tn_vae/supervised_weight_comparison.png)
 
