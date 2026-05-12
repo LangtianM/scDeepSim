@@ -1,0 +1,52 @@
+seed: 42
+
+data:
+  n_genes: 2000
+  celltype_key: clusters
+  start_state: Ductal
+  waypoint_state: Ngn3 high EP
+  terminal_state_1: Beta
+  terminal_state_2: Alpha
+
+vae:
+  latent_dim: 64
+  enc_hidden: [512, 256]
+  dec_hidden: [256, 512]
+  input_dropout: 0.1
+  beta: 1.0
+  beta_warmup_epochs: 10
+  zero_inflated: true
+  sup_head_hidden: 64
+  max_epochs: 150
+  batch_size: 128
+
+supervision:
+  celltype_weight: 3.0
+  celltype_latent_dims: 16
+
+generation:
+  t_values_count: 21
+  n_samples_per_t: 100
+  decode_batch_size: 512
+
+benchmark:
+  methods: [scanpy_dpt_paga, slingshot, monocle3]
+  sweep_axis: tau
+  tau_values: [0.0, 0.25, 0.5, 0.75]
+  noise_scales: [0.0]
+  discrepancy_values: [1.0]
+  n_replicates: 3
+
+ti:
+  n_pcs: 30
+  n_neighbors: 15
+  cluster_key: ti_leiden
+  resolution: 0.5
+
+plots:
+  enabled: true
+  diagnostic_panels: true
+
+hydra:
+  run:
+    dir: experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_ti_benchmark
