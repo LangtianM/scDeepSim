@@ -182,45 +182,188 @@ def adjust_endpoint_discrepancy(X_W, X_endpoint, factor):
     return X_endpoint + (target_mu - mu_endpoint)
 
 
+def _summarize_metric_curve(metrics_df, metric):
+    """Summarize one metric by method and sweep value."""
+    rows = []
+    for (method, sweep_value), sub in metrics_df.groupby(["method", "sweep_value"]):
+        values = pd.to_numeric(sub[metric], errors="coerce").dropna()
+        if values.empty:
+            continue
+        rows.append(
+            {
+                "method": method,
+                "sweep_value": sweep_value,
+                "median": float(values.median()),
+                "q25": float(values.quantile(0.25)),
+                "q75": float(values.quantile(0.75)),
+                "min": float(values.min()),
+                "max": float(values.max()),
+                "n_valid": int(values.shape[0]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def plot_metric_curves(metrics_df, save_path, sweep_axis):
     if metrics_df.empty:
         return
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.5))
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
     metric_specs = [
         ("spearman_global", "Global Spearman"),
         ("lineage_ari", "Lineage ARI"),
-        ("branch_point_error", "Branch-point Error"),
     ]
+    methods = sorted(metrics_df["method"].dropna().astype(str).unique())
+    sweep_values = np.sort(
+        pd.to_numeric(metrics_df["sweep_value"], errors="coerce").dropna().unique()
+    )
+    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+    markers = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
+    expected_n = (
+        metrics_df.groupby(["method", "sweep_value"])["replicate"].nunique().max()
+        if "replicate" in metrics_df
+        else metrics_df.groupby(["method", "sweep_value"]).size().max()
+    )
+    expected_n = int(expected_n) if pd.notna(expected_n) else 1
+    interval_cols = ("min", "max") if expected_n <= 3 else ("q25", "q75")
+    if len(sweep_values) > 1:
+        min_step = np.diff(sweep_values).min()
+    else:
+        min_step = (
+            max(abs(float(sweep_values[0])) * 0.1, 1.0)
+            if len(sweep_values)
+            else 1.0
+        )
+    dodge_width = min_step * 0.18
+    x_margin = min_step * 0.35
+    offsets = (
+        np.linspace(-dodge_width / 2, dodge_width / 2, len(methods))
+        if len(methods) > 1
+        else [0.0]
+    )
+
     for ax, (metric, title) in zip(axes, metric_specs):
-        for method, sub in metrics_df.groupby("method"):
-            sub = sub.sort_values("sweep_value")
-            ax.plot(sub["sweep_value"], sub[metric], marker="o", label=method)
+        summary = _summarize_metric_curve(metrics_df, metric)
+        for method_idx, method in enumerate(methods):
+            color = colors[method_idx % len(colors)]
+            marker = markers[method_idx % len(markers)]
+            offset = offsets[method_idx]
+            sub = metrics_df[metrics_df["method"].astype(str) == method].copy()
+            sub[metric] = pd.to_numeric(sub[metric], errors="coerce")
+            sub = sub.dropna(subset=["sweep_value", metric]).sort_values("sweep_value")
+            if not sub.empty:
+                x = (
+                    pd.to_numeric(sub["sweep_value"], errors="coerce")
+                    .to_numpy(dtype=float)
+                    + offset
+                )
+                ax.scatter(
+                    x,
+                    sub[metric],
+                    s=22,
+                    marker=marker,
+                    color=color,
+                    alpha=0.28,
+                    linewidths=0,
+                    zorder=2,
+                )
+
+            method_summary = summary[
+                summary["method"].astype(str) == method
+            ].sort_values("sweep_value")
+            if method_summary.empty:
+                continue
+            x = method_summary["sweep_value"].to_numpy(dtype=float) + offset
+            y = method_summary["median"].to_numpy(dtype=float)
+            y_low = method_summary[interval_cols[0]].to_numpy(dtype=float)
+            y_high = method_summary[interval_cols[1]].to_numpy(dtype=float)
+            yerr = np.vstack([y - y_low, y_high - y])
+
+            ax.plot(
+                x,
+                y,
+                color=color,
+                linewidth=2.0,
+                alpha=0.95,
+                label=method,
+                zorder=4,
+            )
+            ax.errorbar(
+                x,
+                y,
+                yerr=yerr,
+                fmt="none",
+                ecolor=color,
+                elinewidth=1.8,
+                capsize=4,
+                alpha=0.85,
+                zorder=3,
+            )
+            complete = method_summary["n_valid"].to_numpy(dtype=int) >= expected_n
+            if complete.any():
+                ax.scatter(
+                    x[complete],
+                    y[complete],
+                    s=48,
+                    marker=marker,
+                    facecolors=color,
+                    edgecolors=color,
+                    linewidths=1.0,
+                    zorder=5,
+                )
+            if (~complete).any():
+                ax.scatter(
+                    x[~complete],
+                    y[~complete],
+                    s=54,
+                    marker=marker,
+                    facecolors="white",
+                    edgecolors=color,
+                    linewidths=1.4,
+                    zorder=5,
+                )
+                for xi, yi, n_valid in zip(
+                    x[~complete],
+                    y[~complete],
+                    method_summary.loc[~complete, "n_valid"],
+                ):
+                    ax.annotate(
+                        f"n={n_valid}",
+                        (xi, yi),
+                        xytext=(0, 7),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=7,
+                        color=color,
+                    )
         ax.set_title(title)
         ax.set_xlabel(sweep_axis)
         ax.grid(alpha=0.3, linestyle="--")
+        if len(sweep_values):
+            ax.set_xlim(
+                float(sweep_values.min()) - x_margin,
+                float(sweep_values.max()) + x_margin,
+            )
+        if metric == "lineage_ari":
+            values = pd.to_numeric(metrics_df[metric], errors="coerce").dropna()
+            lower = (
+                min(-0.1, float(values.min()) - 0.05)
+                if not values.empty
+                else -0.1
+            )
+            upper = max(1.0, float(values.max()) + 0.05) if not values.empty else 1.0
+            ax.set_ylim(lower, upper)
+        elif metric == "spearman_global":
+            values = pd.to_numeric(metrics_df[metric], errors="coerce").dropna()
+            if not values.empty and values.max() <= 1.0:
+                lower = min(float(values.min()) - 0.05, -0.05)
+                ax.set_ylim(lower, 1.0)
     axes[0].set_ylabel("score")
-    axes[-1].legend(loc="best")
+    handles, labels = axes[0].get_legend_handles_labels()
+    axes[-1].legend(handles, labels, loc="best")
     fig.tight_layout()
     fig.savefig(save_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
-
-
-def plot_topology_outcomes(metrics_df, save_path):
-    if metrics_df.empty or "topology_class" not in metrics_df:
-        return
-    counts = (
-        metrics_df.groupby(["method", "topology_class"])
-        .size()
-        .unstack(fill_value=0)
-        .sort_index()
-    )
-    ax = counts.plot(kind="bar", stacked=True, figsize=(8, 4.5))
-    ax.set_ylabel("replicate count")
-    ax.set_title("Topology Outcomes")
-    ax.legend(loc="best", fontsize=9)
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close()
 
 
 def plot_diagnostic_panel(adata: ad.AnnData, save_path: Path, random_state: int):
@@ -387,7 +530,6 @@ def main(cfg: DictConfig) -> None:
             results_dir / "ti_metric_curves.png",
             str(cfg.benchmark.sweep_axis),
         )
-        plot_topology_outcomes(metrics_df, results_dir / "topology_outcomes.png")
 
     log.info("TI benchmark complete: %s", results_dir)
 

@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from experiments.src.ti_benchmark import flatten_branch_trajectory
-from experiments.src.ti_metrics import classify_topology, evaluate_ti_output
+from experiments.src.ti_metrics import evaluate_ti_output
 from scdeepsim.control import branch_trajectory_ot
 
 
@@ -80,28 +80,6 @@ def test_ti_metrics_perfect_ordering_and_label_permutation():
     )
 
     metrics = evaluate_ti_output(truth, pred, method="toy")
+    assert set(metrics) == {"method", "status", "spearman_global", "lineage_ari"}
     assert metrics["spearman_global"] == pytest.approx(1.0)
     assert metrics["lineage_ari"] == pytest.approx(1.0)
-    assert metrics["lineage_balanced_accuracy"] == pytest.approx(1.0)
-    assert metrics["branch_point_error"] == pytest.approx(0.1)
-
-
-def test_topology_classification_cases():
-    truth = pd.DataFrame(
-        {
-            "cell_id": [f"c{i}" for i in range(6)],
-            "true_pseudotime": np.linspace(0, 1, 6),
-            "true_lineage": ["trunk", "trunk", "branch_B", "branch_B", "branch_C", "branch_C"],
-            "true_segment": ["trunk", "trunk", "branch", "branch", "branch", "branch"],
-            "true_branch_point": [0.4] * 6,
-        }
-    )
-    correct = pd.DataFrame({"cell_id": truth["cell_id"], "inferred_lineage": ["a", "a", "b", "b", "c", "c"]})
-    linear = pd.DataFrame({"cell_id": truth["cell_id"], "inferred_lineage": ["a"] * 6})
-    wrong = pd.DataFrame({"cell_id": truth["cell_id"], "inferred_lineage": ["a", "a", "b", "c", "b", "c"]})
-    unavailable = pd.DataFrame({"cell_id": truth["cell_id"], "inferred_lineage": [pd.NA] * 6})
-
-    assert classify_topology(correct, truth) == "correct_bifurcation"
-    assert classify_topology(linear, truth) == "unresolved_linear"
-    assert classify_topology(wrong, truth) == "wrong_branching"
-    assert classify_topology(unavailable, truth) == "unavailable"
