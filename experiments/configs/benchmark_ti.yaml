@@ -47,6 +47,17 @@ plots:
   enabled: true
   diagnostic_panels: true
 
+r:
+  conda_env: lightning
+  use_conda_run: true
+
+outputs:
+  save_generated: false
+  save_ground_truth: true
+  save_method_outputs: true
+  keep_adapter_inputs: false
+  save_plots: true
+
 hydra:
   run:
     dir: experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_ti_benchmark

@@ -12,10 +12,18 @@ population using two group-separation metrics:
 Biological preservation is intentionally NOT measured here: cell types are
 expected to change along pseudo-time.
 
+Main inputs:
+    Hydra config experiments/configs/eval_pt_dose_response.yaml, the scvelo
+    pancreas dataset, and configured start/end cell states.
+
+Outputs:
+    Pseudo-time dose-response metrics JSON/CSV, summary plots, generated
+    AnnData artifacts where enabled, and run metadata.
+
 Usage:
-    python scripts/eval_pt_dose_response.py
-    python scripts/eval_pt_dose_response.py data.start_state=Ductal data.end_state=Alpha
-    python scripts/eval_pt_dose_response.py evaluation.alpha_values=[0.0,0.5,1.0]
+    python experiments/scripts/eval_pt_dose_response.py
+    python experiments/scripts/eval_pt_dose_response.py data.start_state=Ductal data.end_state=Alpha
+    python experiments/scripts/eval_pt_dose_response.py evaluation.alpha_values=[0.0,0.5,1.0]
 """
 
 import pyrootutils

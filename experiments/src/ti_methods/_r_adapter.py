@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -71,23 +73,38 @@ def run_r_adapter(
     script_name: str,
     output_dir,
     random_state: int = 0,
+    use_conda_run: bool = False,
+    conda_env: str = "lightning",
+    keep_inputs: bool = False,
 ) -> pd.DataFrame:
     """Run an R adapter script and normalize its output."""
-    rscript = shutil.which("Rscript")
-    if rscript is None:
-        return skipped_method_output(method, "Rscript not found")
+    if use_conda_run:
+        conda = shutil.which("conda")
+        if conda is None:
+            return skipped_method_output(method, "conda not found")
+        r_cmd = [conda, "run", "-n", conda_env, "Rscript"]
+        r_env = os.environ.copy()
+        conda_root = Path(conda).resolve().parents[1]
+        r_env["R_LIBS_USER"] = str(conda_root / "envs" / conda_env / "lib" / "R" / "library")
+    else:
+        rscript = shutil.which("Rscript")
+        if rscript is None:
+            return skipped_method_output(method, "Rscript not found")
+        r_cmd = [rscript]
+        r_env = None
 
-    out_dir = Path(output_dir)
+    out_dir = Path(output_dir) if output_dir is not None else Path(tempfile.mkdtemp())
     input_dir = out_dir / f"{method}_inputs"
-    output_path = out_dir / f"{method}_output.csv"
+    output_path = out_dir / f"{method}.csv"
     try:
         inputs = _write_common_inputs(adata, input_dir, random_state=random_state)
     except Exception as exc:
+        if not keep_inputs:
+            shutil.rmtree(input_dir, ignore_errors=True)
         return skipped_method_output(method, f"failed to write R adapter inputs: {exc}")
 
     script_path = _repo_root_from_here() / "experiments" / "scripts" / "ti_benchmarking" / "R" / script_name
-    cmd = [
-        rscript,
+    cmd = r_cmd + [
         str(script_path),
         str(inputs["pca"]),
         str(inputs["clusters"]),
@@ -97,15 +114,20 @@ def run_r_adapter(
         str(inputs["root_cell"]),
         str(inputs["root_cluster"]),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, env=r_env)
     if proc.returncode != 0:
         reason = (proc.stderr or proc.stdout or f"R adapter exited with code {proc.returncode}").strip()
+        if not keep_inputs:
+            shutil.rmtree(input_dir, ignore_errors=True)
         return skipped_method_output(method, reason)
 
     try:
         df = pd.read_csv(output_path)
     except Exception as exc:
         return skipped_method_output(method, f"failed to read R adapter output: {exc}")
+    finally:
+        if not keep_inputs:
+            shutil.rmtree(input_dir, ignore_errors=True)
 
     metadata = {
         "status": "ok",

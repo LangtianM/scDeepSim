@@ -8,10 +8,18 @@ Compares different single-cell simulation methods:
 
 All methods are evaluated in normalized log1p space using knn_discriminability.
 
+Main inputs:
+    Hydra config experiments/configs/benchmark_simulation.yaml and any
+    configured source datasets or simulator-specific dependencies.
+
+Outputs:
+    Hydra run directory with metrics tables/JSON, plots, simulated AnnData
+    artifacts where enabled, and run metadata.
+
 Usage:
-    python scripts/benchmark_simulation.py
-    python scripts/benchmark_simulation.py data.n_genes=[1000,2000]
-    python scripts/benchmark_simulation.py simulators=[ae_diffusion,scvi_posterior]
+    python experiments/scripts/benchmark_simulation.py
+    python experiments/scripts/benchmark_simulation.py data.n_genes=[1000,2000]
+    python experiments/scripts/benchmark_simulation.py simulators=[ae_diffusion,scvi_posterior]
 """
 
 import pyrootutils

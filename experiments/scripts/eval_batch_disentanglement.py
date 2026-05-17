@@ -9,9 +9,17 @@ then evaluates:
 
 Each run retrains from scratch for full reproducibility.
 
+Main inputs:
+    Hydra config experiments/configs/eval_batch_disentanglement.yaml and the
+    configured single-cell dataset with batch and celltype labels.
+
+Outputs:
+    Per-weight disentanglement/simulation metrics, summary plots, checkpoints
+    or generated artifacts where enabled, and run metadata.
+
 Usage:
-    python scripts/eval_batch_disentanglement.py
-    python scripts/eval_batch_disentanglement.py sweep.batch_weights=[1.0,3.0,7.0]
+    python experiments/scripts/eval_batch_disentanglement.py
+    python experiments/scripts/eval_batch_disentanglement.py sweep.batch_weights=[1.0,3.0,7.0]
 """
 
 import pyrootutils

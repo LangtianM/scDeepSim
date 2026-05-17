@@ -2,6 +2,14 @@
 
 Sweeps tau values for a bifurcating OT trajectory and visualizes the results.
 
+Main inputs:
+    Hydra config experiments/configs/eval_branch_point_tau.yaml, the scvelo
+    pancreas dataset, and configured start/waypoint/terminal states.
+
+Outputs:
+    Per-tau generated trajectory plots, summary metrics/figures, optional
+    AnnData artifacts, and run metadata in the Hydra output directory.
+
 Usage:
     python experiments/scripts/eval_branch_point_tau.py
 """

@@ -62,6 +62,7 @@ def run_scanpy_dpt_paga(
     cluster_key: str = "ti_leiden",
     resolution: float = 0.5,
     random_state: int = 0,
+    **kwargs,
 ) -> pd.DataFrame:
     """Run Scanpy DPT/PAGA and return the standard adapter table."""
     work = adata.copy()

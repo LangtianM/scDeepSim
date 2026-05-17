@@ -9,10 +9,18 @@ Implements the "Optimal Transport Interpolation Between Known States" approach:
      at a range of alpha values, yielding ground-truth pseudo-time
   5. Decode and visualise the trajectory
 
+Main inputs:
+    Hydra config experiments/configs/interpolate_trajectory.yaml, the scvelo
+    pancreas dataset, and configured start/end cell states.
+
+Outputs:
+    Generated trajectory AnnData artifacts where enabled, ground-truth
+    pseudo-time metadata, UMAP/summary plots, and run metadata.
+
 Usage:
-    python scripts/interpolate_trajectory.py
-    python scripts/interpolate_trajectory.py data.start_state=Ductal data.end_state=Alpha
-    python scripts/interpolate_trajectory.py generation.alpha_values=[0.0,0.25,0.5,0.75,1.0]
+    python experiments/scripts/interpolate_trajectory.py
+    python experiments/scripts/interpolate_trajectory.py data.start_state=Ductal data.end_state=Alpha
+    python experiments/scripts/interpolate_trajectory.py generation.alpha_values=[0.0,0.25,0.5,0.75,1.0]
 """
 
 import pyrootutils

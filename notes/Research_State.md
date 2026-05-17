@@ -379,7 +379,7 @@ Then $\theta_1 \leq \theta_2 \leq \dots \leq \theta_k$ are the principle angles.
 
 ### Pseudo-time TI Benchmarking
 
-The main use of pseudo-time control is a **direct benchmark of trajectory inference (TI) methods**. The benchmark should not first validate the simulator with separate dose-response curves. Instead, each generated dataset is evaluated by whether TI methods recover the known ordering and branching structure. The central claim is that scDeepSim can generate controlled branching datasets with known ground truth, so method performance can be measured as a function of branch difficulty.
+The main use of pseudo-time control is a **direct benchmark of trajectory inference (TI) methods**. Each generated dataset is evaluated by whether TI methods recover the known ordering and branching structure. The central claim is that scDeepSim can generate controlled branching datasets with known ground truth, so method performance can be measured as a function of branch difficulty.
 
 The primary task is **bifurcating trajectory recovery**. Some methods recover a shared trunk and two daughter lineages, some collapse the structure into a single path, and some detect branches but misplace the branch point.
 

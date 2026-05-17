@@ -11,15 +11,23 @@ This script:
    - Comparing end-to-end discriminability against NegBinCopula baseline
    - Visualizing results
 
+Main inputs:
+    Hydra config experiments/configs/train_vae_diffusion.yaml, the configured
+    single-cell dataset, and optional NegBinCopula/scVI dependencies.
+
+Outputs:
+    Trained VAE/diffusion artifacts where enabled, simulation metrics,
+    baseline comparisons, plots, and run metadata.
+
 Usage:
     # pred_v run (default, with RF discriminability)
-    python scripts/train_vae_diffusion.py
+    python experiments/scripts/train_vae_diffusion.py
 
     # override discriminability method to KNN
-    python scripts/train_vae_diffusion.py eval.discriminability_method=knn
+    python experiments/scripts/train_vae_diffusion.py eval.discriminability_method=knn
 
     # override other hyperparameters
-    python scripts/train_vae_diffusion.py vae.latent_dim=64 eval.discriminability_method=knn eval.n_neighbors=15
+    python experiments/scripts/train_vae_diffusion.py vae.latent_dim=64 eval.discriminability_method=knn eval.n_neighbors=15
 """
 
 import pyrootutils

@@ -18,6 +18,14 @@ from the target cell-type encodings (restricted to ``sub_slice`` when
 active): branch 1 uses ``Sigma_term1``, branch 2 uses ``Sigma_term2``,
 independent of ``w``.
 
+Main inputs:
+    Hydra config experiments/configs/branch_direction_knob.yaml, the scvelo
+    pancreas dataset, and configured start/terminal cell states.
+
+Outputs:
+    Per-configuration UMAP/PCA plots, branch endpoint summaries, W2 metrics,
+    and run metadata in the Hydra output directory.
+
 Usage:
     python experiments/scripts/branch_direction_knob.py
     python experiments/scripts/branch_direction_knob.py \\

@@ -10,9 +10,17 @@ This script:
      between real and simulated data
 3. Compares results across different supervision weights
 
+Main inputs:
+    Hydra config experiments/configs/train_supervised.yaml and the configured
+    single-cell dataset with celltype labels.
+
+Outputs:
+    Per-weight disentanglement and simulation-quality metrics, plots,
+    optional model artifacts, and run metadata.
+
 Usage:
-    python scripts/train_supervised.py
-    python scripts/train_supervised.py sweep.supervision_weights=[1.0,5.0,10.0]
+    python experiments/scripts/train_supervised.py
+    python experiments/scripts/train_supervised.py sweep.supervision_weights=[1.0,5.0,10.0]
 """
 
 from typing import Any

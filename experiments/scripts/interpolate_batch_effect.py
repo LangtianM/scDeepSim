@@ -7,9 +7,17 @@ Pipeline:
   4. For each alpha, shift reference-batch latents toward the target and decode
   5. Visualise everything in a single UMAP with a continuous colour gradient
 
+Main inputs:
+    Hydra config experiments/configs/interpolate_batch_effect.yaml and the
+    configured single-cell dataset with batch and celltype labels.
+
+Outputs:
+    Interpolated/generated AnnData artifacts where enabled, UMAP figures,
+    batch-direction metadata, and run metadata.
+
 Usage:
-    python scripts/interpolate_batch_effect.py
-    python scripts/interpolate_batch_effect.py generation.alpha_values=[0.0,0.5,1.0,2.0]
+    python experiments/scripts/interpolate_batch_effect.py
+    python experiments/scripts/interpolate_batch_effect.py generation.alpha_values=[0.0,0.5,1.0,2.0]
 """
 
 import pyrootutils

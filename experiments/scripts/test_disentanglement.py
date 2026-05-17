@@ -6,8 +6,16 @@ This script:
    designated latent dimensions
 3. Tests 9 classification tasks (3 variables × 3 latent spaces)
 
+Main inputs:
+    Hydra config experiments/configs/train_disentangle.yaml and the configured
+    dataset with celltype, batch, and stage labels.
+
+Outputs:
+    Disentanglement classification metrics, summary tables/plots, and run
+    metadata in the Hydra output directory.
+
 Usage:
-    python scripts/test_disentanglement.py
+    python experiments/scripts/test_disentanglement.py
 """
 
 from typing import Dict, Tuple, Any

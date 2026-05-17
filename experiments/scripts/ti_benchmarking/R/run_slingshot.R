@@ -1,3 +1,15 @@
+# Run Slingshot for the pseudo-time TI benchmark.
+#
+# This script is called by experiments/src/ti_methods/slingshot_adapter.py.
+# Positional inputs are PCA coordinates, cluster labels, benchmark metadata,
+# expression values, output CSV path, root cell id, and root cluster id.
+# It writes one CSV row per cell with inferred pseudotime, inferred lineage,
+# inferred branch point (NA for Slingshot), and adapter metadata.
+#
+# Example:
+#   Rscript run_slingshot.R pca.csv clusters.csv metadata.csv expression.csv \
+#     slingshot.csv root_cell root_cluster
+
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 7) {
   stop("usage: run_slingshot.R pca.csv clusters.csv metadata.csv expression.csv output.csv root_cell root_cluster")

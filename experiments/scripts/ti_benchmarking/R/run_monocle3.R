@@ -1,3 +1,16 @@
+# Run Monocle3 for the pseudo-time TI benchmark.
+#
+# This script is called by experiments/src/ti_methods/monocle3_adapter.py.
+# Positional inputs are PCA coordinates, cluster labels, benchmark metadata,
+# expression values, output CSV path, root cell id, and root cluster id. The
+# current Monocle3 path uses the expression matrix and metadata, then writes
+# one CSV row per cell with inferred pseudotime, inferred lineage/partition,
+# inferred branch point (NA), and adapter metadata.
+#
+# Example:
+#   Rscript run_monocle3.R pca.csv clusters.csv metadata.csv expression.csv \
+#     monocle3.csv root_cell root_cluster
+
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 7) {
   stop("usage: run_monocle3.R pca.csv clusters.csv metadata.csv expression.csv output.csv root_cell root_cluster")

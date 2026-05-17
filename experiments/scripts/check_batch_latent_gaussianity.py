@@ -7,6 +7,14 @@ Pipeline:
   4. Plot Mahalanobis QQ diagnostics, covariance spectra, relative Frobenius
      covariance distances, and principal angles between PC subspaces
 
+Main inputs:
+    Hydra config experiments/configs/check_batch_latent_gaussianity.yaml and
+    the configured single-cell dataset with batch/celltype annotations.
+
+Outputs:
+    Gaussianity diagnostics, covariance summaries, figures, metrics JSON/CSV,
+    and run metadata in the Hydra output directory.
+
 Usage:
     python experiments/scripts/check_batch_latent_gaussianity.py
 """

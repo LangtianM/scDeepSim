@@ -1,4 +1,29 @@
-"""Pseudo-time trajectory-inference benchmark runner."""
+"""Run pseudo-time trajectory-inference benchmarks.
+
+This Hydra entry point trains a celltype-supervised TruncatedNormalVAE,
+generates OT-based bifurcating trajectories with known ground truth, runs
+configured TI adapters (Scanpy DPT/PAGA, Slingshot, Monocle3), and writes
+aggregate ordering/topology metrics.
+
+Main inputs:
+    Hydra config experiments/configs/benchmark_ti.yaml, the scvelo pancreas
+    dataset, and optional R packages for Slingshot/Monocle3 adapters.
+
+Outputs:
+    Top-level metrics.csv/metrics.json, benchmark plots when enabled,
+    per-setting simulator_settings.json, optional ground-truth/method output
+    CSVs, and optional generated AnnData files.
+
+Example:
+    python experiments/scripts/ti_benchmarking/benchmark_ti.py \
+        --config-path ../../configs --config-name benchmark_ti
+
+Lightweight smoke run:
+    python experiments/scripts/ti_benchmarking/benchmark_ti.py \
+        --config-path ../../configs --config-name benchmark_ti \
+        'benchmark.methods=[scanpy_dpt_paga]' benchmark.n_replicates=1 \
+        generation.t_values_count=5 generation.n_samples_per_t=20 vae.max_epochs=1
+"""
 
 import pyrootutils
 
@@ -9,6 +34,7 @@ root = pyrootutils.setup_root(
 import json
 import logging
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -226,11 +252,17 @@ def run_adapters(adata, methods, output_dir, cfg, random_state):
                     cluster_key=str(cfg.ti.cluster_key),
                     resolution=float(cfg.ti.resolution),
                     random_state=random_state,
+                    r_use_conda_run=bool(cfg.r.use_conda_run),
+                    r_conda_env=str(cfg.r.conda_env),
+                    keep_adapter_inputs=bool(cfg.outputs.keep_adapter_inputs),
                 )
             except Exception as exc:
                 out = skipped_method_output(str(method), f"adapter failed: {exc}")
-        out.to_csv(method_dir / f"{method}.csv", index=False)
+        if bool(cfg.outputs.save_method_outputs):
+            out.to_csv(method_dir / f"{method}.csv", index=False)
         outputs[str(method)] = out
+    if not bool(cfg.outputs.save_method_outputs):
+        shutil.rmtree(method_dir, ignore_errors=True)
     return outputs
 
 
@@ -329,11 +361,13 @@ def main(cfg: DictConfig) -> None:
                 cell_id_prefix=f"{run_name}_cell",
                 decode_batch_size=int(cfg.generation.decode_batch_size),
             )
-            dataset.adata.write_h5ad(run_dir / "generated.h5ad")
-            dataset.ground_truth.to_csv(run_dir / "ground_truth.csv", index=False)
+            if bool(cfg.outputs.save_generated):
+                dataset.adata.write_h5ad(run_dir / "generated.h5ad")
+            if bool(cfg.outputs.save_ground_truth):
+                dataset.ground_truth.to_csv(run_dir / "ground_truth.csv", index=False)
             with open(run_dir / "simulator_settings.json", "w") as f:
                 json.dump(simulator_settings, f, indent=2)
-            if bool(cfg.plots.diagnostic_panels):
+            if bool(cfg.plots.diagnostic_panels) and bool(cfg.outputs.save_plots):
                 plot_diagnostic_panel(dataset.adata, run_dir / "diagnostic_umap.png", seed)
 
             method_outputs = run_adapters(dataset.adata, methods, run_dir, cfg, seed)
@@ -347,7 +381,7 @@ def main(cfg: DictConfig) -> None:
     with open(results_dir / "metrics.json", "w") as f:
         json.dump(metrics_df.to_dict(orient="records"), f, indent=2)
 
-    if bool(cfg.plots.enabled):
+    if bool(cfg.plots.enabled) and bool(cfg.outputs.save_plots):
         plot_metric_curves(
             metrics_df,
             results_dir / "ti_metric_curves.png",

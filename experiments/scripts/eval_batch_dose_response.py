@@ -7,10 +7,18 @@ the alpha-scaled batch direction, decodes, then measures:
 
 Produces a two-panel dose-response figure and a metrics JSON.
 
+Main inputs:
+    Hydra config experiments/configs/eval_batch_dose_response.yaml and the
+    configured dataset with batch/celltype annotations.
+
+Outputs:
+    Dose-response metrics JSON/CSV, summary plots, generated AnnData artifacts
+    where enabled, and run metadata in the Hydra output directory.
+
 Usage:
-    python scripts/eval_batch_dose_response.py
-    python scripts/eval_batch_dose_response.py evaluation.alpha_values=[0.0,0.5,1.0]
-    python scripts/eval_batch_dose_response.py generation.direction_method=gaussian_ot
+    python experiments/scripts/eval_batch_dose_response.py
+    python experiments/scripts/eval_batch_dose_response.py evaluation.alpha_values=[0.0,0.5,1.0]
+    python experiments/scripts/eval_batch_dose_response.py generation.direction_method=gaussian_ot
 """
 
 import pyrootutils
