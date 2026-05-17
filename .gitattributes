@@ -1,3 +1,2 @@
-*.ipynb linguist-vendored
 *.ipynb	diff=jupyternotebook
 *.ipynb	merge=jupyternotebook

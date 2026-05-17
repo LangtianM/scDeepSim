@@ -158,7 +158,9 @@ $$
 
 **McCann displacement interpolation.** The Wasserstein geodesic between the two distributions is parameterised by $\alpha \in [0, 1]$:
 
-$$T_\alpha(\mathbf{z}) = \left[(1 - \alpha)I + \alpha A\right](\mathbf{z} - \mu_1) + (1 - \alpha)\mu_1 + \alpha \mu_2$$
+$$
+T_\alpha(\mathbf{z}) = \left[(1 - \alpha)I + \alpha A\right](\mathbf{z} - \mu_1) + (1 - \alpha)\mu_1 + \alpha \mu_2
+$$
 
 For any $\alpha$, sampling $\mathbf{z} \sim P_{\text{start}}$ and computing $T_\alpha(\mathbf{z})$ yields a latent vector corresponding to developmental progress $\alpha$. Decoding via the VAE produces a synthetic cell with **ground-truth pseudo-time $\alpha$**.
 
@@ -349,7 +351,7 @@ We visualized the trajectory of generated samples at different $\alpha$ values:
 
 UMAP visualization of batch interpolation and extrapolation along the Gaussian OT transport direction. Reference batch (inDrop3, triangles) and target batch (Smart-seq2, squares) cells are shown alongside generated cells at $\alpha \in \{0.0, 0.5, 1.0, 1.5\}$ (color-coded from dark purple to yellow). Generated cells shift continuously from the reference position ($\alpha = 0$) toward and beyond the target ($\alpha = 1.5$), with smooth spatial transitions across UMAP clusters.
 
-#### Checking Assumptions of Gaussian OT
+### Checking Assumptions of Gaussian OT
 
 The Gaussian OT approach assumes that the data is Gaussian distributed and have different covariance matrices for different batches. 
 
@@ -377,56 +379,7 @@ Then $\theta_1 \leq \theta_2 \leq \dots \leq \theta_k$ are the principle angles.
 
 --- 
 
-### Pseudo-time TI Benchmarking
-
-The main use of pseudo-time control is a **direct benchmark of trajectory inference (TI) methods**. Each generated dataset is evaluated by whether TI methods recover the known ordering and branching structure. The central claim is that scDeepSim can generate controlled branching datasets with known ground truth, so method performance can be measured as a function of branch difficulty.
-
-The primary task is **bifurcating trajectory recovery**. Some methods recover a shared trunk and two daughter lineages, some collapse the structure into a single path, and some detect branches but misplace the branch point.
-
-Each benchmark replicate should export the generated expression matrix together with ground-truth metadata:
-
-- `true_pseudotime`: the common pseudo-time coordinate $t \in [0, 1]$.
-- `true_lineage`: trunk, branch B, or branch C.
-- `true_segment`: segment identity used to separate shared trunk cells from post-branch cells.
-- `simulator_settings`: branch endpoint discrepancy, branch-point $\tau$, noise scale, sample count, random seed, and any endpoint states used to define the OT paths.
-
-The main difficulty axes are:
-
-- **Branch endpoint discrepancy:** controlled by branch direction, branch length, and endpoint Wasserstein distance.
-- **Branch-point position $\tau$:** controls whether the split occurs early or late.
-- **Noise scale $\sigma$:** controls how visible the branch structure is after decoding.
-
-The benchmark should vary one difficulty axis at a time while keeping the other simulator settings fixed. The reported figure of merit is not whether a knob changes monotonically; it is whether different TI methods separate in performance as the generated trajectory becomes harder.
-
-#### TI Methods and Interfaces
-
-The initial canonical method set should include Slingshot, Monocle3, and Scanpy DPT/PAGA. Slingshot and Monocle3 are R-based methods and should be used through experiment-level adapters rather than added as dependencies of the `scdeepsim` Python package. Scanpy DPT/PAGA can run directly in the Python experiment environment.
-
-**Slingshot.** Slingshot constructs a minimum spanning tree over clusters in a reduced-dimensional space and then fits simultaneous principal curves through the resulting lineage structure. Its inputs are PCA/UMAP coordinates plus cluster labels and a specified root cluster. The adapter should provide the same embedding and clustering used for the other methods when possible, then collect per-cell pseudotime and lineage assignment.
-
-**Monocle3.** Monocle3 learns a principal graph over cells after dimensionality reduction and assigns pseudotime by ordering cells along the learned graph from a chosen root. Its inputs are an expression matrix or reduced representation, cell metadata, and a root cell or root group. The adapter should collect graph pseudotime, branch or partition assignments when available, and enough graph metadata to classify the inferred topology.
-
-**Scanpy DPT/PAGA.** PAGA estimates coarse graph connectivity between cell groups, while DPT computes diffusion pseudotime from a root cell on the neighbour graph. Its inputs are an `AnnData` object, a neighbour graph, a root cell or root group, and optional clusters for PAGA. The Python runner should collect DPT pseudotime and use the PAGA graph as the inferred coarse topology.
-
-All methods should write a standardized output table keyed by cell id:
-
-- `method`
-- `inferred_pseudotime`
-- `inferred_lineage`, nullable
-- `inferred_branch_point`, nullable
-- method metadata such as root setting, embedding, clustering, and parameter values.
-
-This adapter boundary keeps method-specific dependencies isolated while making evaluation method-agnostic.
-
-#### Evaluation Metrics
-
-**Ordering recovery.** Compute Spearman correlation between inferred pseudotime and `true_pseudotime`. Report it globally and per lineage. Rank correlation is preferred because TI methods are only expected to recover a monotone transformation of the true pseudo-time, not the exact scale.
-
-**Branch and topology recovery.** Compare inferred lineage labels with `true_lineage` using  or balanced accuracy after optimal label mARIatching. When a method exposes a branch point, report branch-point localization error relative to $\tau$. Also classify the inferred topology into a small set of interpretable outcomes: correct bifurcation, unresolved linear trajectory, or wrong branching structure.
-
-**Method discrimination.** Plot each metric as a function of branch difficulty. A useful benchmark is one where methods separate meaningfully across discrepancy, $\tau$, or noise settings. A dataset family where all methods score uniformly high or uniformly low is less informative, even if the simulated data look plausible.
-
-#### Preliminary Results
+### Pseudo-time Interpolation
 
 Trajectory interpolation between Ductal cells and Beta cells visualization. This linear example is a sanity check for the generated ordering, not the primary TI benchmark.
 
@@ -453,6 +406,67 @@ Branching point control:
 Pseudo-time dose-response check:
 
 ![Dose-Response Evaluation Pseudo-time](../experiments/outputs/2026-04-21/17-19-02_pseudotime_dose_response/results/pt_dose_response_curve.png)
+
+### TI Methods Benchmarking
+
+The main use of pseudo-time control is a **direct benchmark of trajectory inference (TI) methods**. Each generated dataset is evaluated by whether TI methods recover the known ordering and branching structure. The central claim is that scDeepSim can generate controlled branching datasets with known ground truth, so method performance can be measured as a function of branch difficulty.
+
+The primary task is **bifurcating trajectory recovery**. Some methods recover a shared trunk and two daughter lineages, some collapse the structure into a single path, and some detect branches but misplace the branch point.
+
+Each benchmark replicate should export the generated expression matrix together with ground-truth metadata:
+
+- `true_pseudotime`: the common pseudo-time coordinate $t \in [0, 1]$.
+- `true_lineage`: trunk, branch B, or branch C.
+- `simulator_settings`: branch endpoint discrepancy, branch-point $\tau$, noise scale, sample count, random seed, and any endpoint states used to define the OT paths.
+
+The main difficulty axes are:
+
+- **Branch endpoint discrepancy:** controlled by branch direction, branch length, and endpoint Wasserstein distance.
+- **Branch-point position $\tau$:** controls whether the split occurs early or late.
+- **Noise scale $\sigma$:** controls how visible the branch structure is after decoding.
+
+The benchmark should vary one difficulty axis at a time while keeping the other simulator settings fixed. The reported figure of merit is not whether a knob changes monotonically; it is whether different TI methods separate in performance as the generated trajectory becomes harder.
+
+#### TI Methods and Interfaces
+
+The initial canonical method set should include Slingshot, Monocle3, and Scanpy DPT/PAGA. Slingshot and Monocle3 are R-based methods and should be used through experiment-level adapters rather than added as dependencies of the `scdeepsim` Python package. Scanpy DPT/PAGA can run directly in the Python experiment environment.
+
+**Slingshot.** Slingshot constructs a minimum spanning tree over clusters in a reduced-dimensional space and then fits simultaneous principal curves through the resulting lineage structure. Its inputs are PCA/UMAP coordinates plus cluster labels and a specified root cluster. The adapter should provide the same embedding and clustering used for the other methods when possible, then collect per-cell pseudotime and lineage assignment.
+
+**Monocle3.** Monocle3 learns a principal graph over cells after dimensionality reduction and assigns pseudotime by ordering cells along the learned graph from a chosen root. Its inputs are an expression matrix or reduced representation, cell metadata, and a root cell or root group. The adapter should collect graph pseudotime, branch or partition assignments when available, and enough graph metadata to classify the inferred topology.
+
+**Scanpy DPT/PAGA.** PAGA estimates coarse graph connectivity between cell groups, while DPT computes diffusion pseudotime from a root cell on the neighbour graph. Its inputs are an `AnnData` object, a neighbour graph, a root cell or root group, and optional clusters for PAGA. The Python runner should collect DPT pseudotime and use the PAGA graph as the inferred coarse topology.
+
+All methods should write a standardized output table keyed by cell id:
+
+- `method`
+- `inferred_pseudotime`
+- `inferred_lineage`
+- method metadata such as root setting, embedding, clustering, and parameter values.
+
+This adapter boundary keeps method-specific dependencies isolated while making evaluation method-agnostic.
+
+#### Evaluation Metrics
+
+**Ordering recovery.** Compute Spearman correlation between inferred pseudotime and `true_pseudotime`. Report it globally and per lineage. Rank correlation is preferred because TI methods are only expected to recover a monotone transformation of the true pseudo-time, not the exact scale.
+
+**Branch and topology recovery.** Compare inferred lineage labels with `true_lineage` using  or balanced accuracy after optimal label mARIatching. When a method exposes a branch point, report branch-point localization error relative to $\tau$. Also classify the inferred topology into a small set of interpretable outcomes: correct bifurcation, unresolved linear trajectory, or wrong branching structure.
+
+**Method discrimination.** Plot each metric as a function of branch difficulty. A useful benchmark is one where methods separate meaningfully across discrepancy, $\tau$, or noise settings. A dataset family where all methods score uniformly high or uniformly low is less informative, even if the simulated data look plausible.
+
+#### Results
+
+TI Methods Benchmarking Across Branch Endpoint Discrepancy. 
+
+![TI Benchmarking Across Branch Endpoint Discrepancy](../experiments/outputs/2026-05-17/18-05-53_ti_benchmark/results/ti_metric_curves.png)
+
+TI Methods Benchmarking Across Branch Point Position $\tau$.
+
+![TI Benchmarking Across Branch Point Position](../experiments/outputs/2026-05-17/17-57-12_ti_benchmark/results/ti_metric_curves.png)
+
+TI Methods Benchmarking Across Noise Scale $\sigma$.
+
+![TI Benchmarking Across Noise Scale](../experiments/outputs/2026-05-17/22-19-57_ti_benchmark/results/ti_metric_curves.png)
 
 ---
 
