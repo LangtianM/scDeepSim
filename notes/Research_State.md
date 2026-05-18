@@ -67,7 +67,9 @@ The latent diffusion model is a denoising diffusion probabilistic model (DDPM) o
 
 The key idea is to operate entirely in the disentangled batch subspace of the latent space. After training the disentangled VAE with batch labels, the batch subspace occupies dimensions $[d_c,\; d_c + d_b)$ of the latent vector. We compute a batch direction $\delta_b$ from the training data, then apply it to generated latents with a controllable strength coefficient $\alpha$:
 
-$$z' = z + \alpha \cdot \delta_b$$
+$$
+z' = z + \alpha \cdot \delta_b
+$$
 
 where:
 
@@ -488,7 +490,7 @@ TI Methods Benchmarking Across Noise Scale $\sigma$.
 - [x] Implement pseudo-time trajectory manipulation
 - [x] Evaluate pseudo-time trajectory manipulation?
 - [x] Evluate branching point manipulation.
-- [ ] Consolidate the way to benchmarking TI methods with our simulator
+- [x] Consolidate the way to benchmarking TI methods with our simulator
 - [ ] Batch Effect Benchmark: Observe difference with the traditional simulator benchmarking(splatter)
 
 **Medium Priority**
