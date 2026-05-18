@@ -466,7 +466,7 @@ TI Methods Benchmarking Across Branch Point Position $\tau$.
 
 TI Methods Benchmarking Across Noise Scale $\sigma$.
 
-![TI Benchmarking Across Noise Scale](../experiments/outputs/2026-05-17/22-19-57_ti_benchmark/results/ti_metric_curves.png)
+![TI Benchmarking Across Noise Scale](../experiments/outputs/2026-05-17/23-51-15_ti_benchmark/results/ti_metric_curves.png)
 
 ---
 
