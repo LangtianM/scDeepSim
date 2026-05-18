@@ -8,14 +8,12 @@ data:
   n_cells: 10000
   n_genes: 2000
   batch_key: tech
-  celltype_key: celltype
 
 split:
+  heldout_batch: null
   reference_batch: null
-  target_batches: null
   calibration_fraction: 0.25
   min_cells_per_batch: 200
-  min_cells_per_celltype: 10
 
 vae:
   latent_dim: 128
@@ -30,8 +28,6 @@ vae:
   batch_size: 256
 
 supervision:
-  celltype_weight: 5.0
-  celltype_latent_dims: 16
   batch_weight: 5.0
   batch_latent_dims: 16
 
@@ -52,6 +48,7 @@ diffusion:
   batch_size: 256
 
 generation:
+  generator: diffusion
   direction_method: gaussian_ot
   alpha: 1.0
   encode_batch_size: 1024

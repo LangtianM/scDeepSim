@@ -353,6 +353,12 @@ We visualized the trajectory of generated samples at different $\alpha$ values:
 
 UMAP visualization of batch interpolation and extrapolation along the Gaussian OT transport direction. Reference batch (inDrop3, triangles) and target batch (Smart-seq2, squares) cells are shown alongside generated cells at $\alpha \in \{0.0, 0.5, 1.0, 1.5\}$ (color-coded from dark purple to yellow). Generated cells shift continuously from the reference position ($\alpha = 0$) toward and beyond the target ($\alpha = 1.5$), with smooth spatial transitions across UMAP clusters.
 
+Held-out batch validation:
+
+![Held-out Batch Validation](../experiments/outputs/2026-05-18/18-03-41_heldout_batch_validation/results/umap_smartseq2.png)
+
+The VAE+Diffusion model fails to generate synthetic data that they have never seen before.
+
 ### Checking Assumptions of Gaussian OT
 
 The Gaussian OT approach assumes that the data is Gaussian distributed and have different covariance matrices for different batches. 
