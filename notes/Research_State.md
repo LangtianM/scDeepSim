@@ -210,16 +210,16 @@ Because the Wasserstein geodesic is invariant under monotone reparametrisations 
 ### Simulation Quality Evaluation
 
 ```text
-experiments/scripts/train_vae_diffusion.py
-experiments/scripts/benchmark_simulation.py
+experiments/scripts/eval_simulation_quality_scdesign3.py
+experiments/configs/eval_simulation_quality_scdesign3.yaml
 ```
 
-We compare the following methods using UMAP visualisation and an RF-based discriminability test (real vs. simulated). An important distinction is between **reconstruction** (feeding real data through an encoder-decoder pipeline) and **genuine simulation** (generating entirely new samples without access to original observations). Only genuine simulation methods are appropriate baselines for our VAE+Diffusion pipeline.
+We compare simulation quality using UMAP visualisation, per-gene expression statistics, and an RF-based discriminability test (real vs. simulated). The current experiment uses the Tabula Muris input from the original VAE+Diffusion script, with a default subsample of 5000 cells and 1000 HVGs. The run is Hydra-managed and records git metadata under the output directory.
 
 **Genuine simulation methods:**
 
 - **VAE+Diffusion (ours):** Latents are sampled from the diffusion model and decoded by the VAE. No original observation is required at generation time. This is the proposed end-to-end generative pipeline.
-- **NegBinCopula:** A classical statistical baseline from the `scdesigner` package. Generates new samples from a fitted parametric model.
+- **scDesign3:** A classical statistical baseline from the R package `scDesign3`. It fits marginal negative-binomial models conditioned on cell type and a Gaussian copula over genes, then generates new count data that are normalised and log-transformed before comparison. The copula gene subset is configurable; this run used all 1000 genes.
 
 **Reconstruction methods (not genuine simulation):**
 
@@ -227,30 +227,30 @@ We compare the following methods using UMAP visualisation and an RF-based discri
 - **scVI posterior sampling** (`posterior_predictive_sample`): Produces $\text{Decoder}(\text{Encoder}(x))$ with the original cell's library size. This is reconstruction, not genuine simulation. We can compare this against our VAE reconstruction as a **reconstruction quality** benchmark.
 - **scVI prior sampling:** Although it samples $z$ from the prior $\mathcal{N}(0, I)$, it still requires externally supplied library sizes from real cells (see `sample_from_prior` in `benchmark_simulation.py`, which draws `latent_library` from real observations). This dependency on real-cell library sizes means it is not fully generative. See the discussion on library size above.
 
-![Umap Comparison](../experiments/outputs/checkpoints/vae_diffusion/results/umap_comparison.png)
+![Umap Comparison](../experiments/outputs/2026-05-19/16-38-05_simulation_quality_scdesign3/results/umap_comparison.png)
 
-The UMAP comparison shows that VAE+Diffusion captures the complex cluster structure and inter-cluster relationships of the real data much more faithfully than the classical NegBinCopula method.
+The UMAP comparison includes real data, VAE reconstruction, VAE+Diffusion, and scDesign3 in a shared embedding. VAE reconstruction remains closest to the real data by construction. VAE+Diffusion preserves much of the cell-type topology but accumulates end-to-end generation error. scDesign3 preserves broad cell-type composition but remains easier to distinguish from real data in gene space.
 
-![Gene Expression Scatter](../experiments/outputs/checkpoints/vae_diffusion/results/gene_expression_scatter.png)
+![Gene Expression Scatter](../experiments/outputs/2026-05-19/16-38-05_simulation_quality_scdesign3/results/gene_expression_scatter.png)
 
-The per-gene mean and variance of simulated data align closely with the real data. The simulated variance is slightly underestimated, which is a known tendency of VAE-based models (posterior collapse reduces the effective expressiveness of the decoder).
+The per-gene mean and variance correlations are high for both genuine simulators. VAE+Diffusion achieved mean correlation 0.995 and variance correlation 0.991. scDesign3 achieved mean correlation 0.996 and variance correlation 0.981. Thus marginal gene statistics alone are not sufficient to establish realism; discriminability remains necessary.
 
-![Quality Metrics Summary](../experiments/outputs/checkpoints/vae_diffusion/results/quality_metrics_summary.png)
+![Quality Metrics Summary](../experiments/outputs/2026-05-19/16-38-05_simulation_quality_scdesign3/results/quality_metrics_summary.png)
 
 We assess discriminability via an RF classifier trained to distinguish real from simulated data. **A lower AUC (closer to 0.5) indicates better simulation quality** — the simulated data is harder to distinguish from real data.
 
-The four measurements are not directly comparable because they operate in different spaces:
+The current run produced:
 
-- **Latent AUC (~0.7):** Discriminability of diffusion-sampled latents vs. real encoded latents (in latent space). An AUC of ~0.7 indicates the diffusion model generates reasonably realistic latents, though not perfect.
-- **VAE Recon AUC:** Discriminability of VAE reconstructions vs. real data (in gene space). This is an upper-bound reference for the pipeline quality.
-- **VAE+Diff AUC (~0.96):** Discriminability of the end-to-end pipeline vs. real data (in gene space). The increase from ~0.7 (latent) to ~0.96 (gene space) reflects accumulated error from the decoding step.
-- **NegBinCopula AUC (~0.999):** Nearly perfectly distinguishable from real data.
+- **Latent AUC 0.660 / accuracy 0.612:** Discriminability of diffusion-sampled latents vs. real encoded latents (latent space).
+- **VAE reconstruction AUC 0.744 / accuracy 0.679:** Reconstruction upper-bound reference in gene space.
+- **VAE+Diffusion AUC 0.944 / accuracy 0.870:** End-to-end genuine simulation in gene space.
+- **scDesign3 AUC 0.988 / accuracy 0.951:** Classical simulation baseline in gene space.
 
-In a fair comparison in gene space, VAE+Diffusion (AUC ~0.96) substantially outperforms NegBinCopula (AUC ~0.999). The remaining gap between the diffusion-latent quality (~0.7) and gene-space quality (~0.96) motivates investigating whether decoder quality or diffusion quality is the dominant bottleneck.
+In a fair gene-space comparison, VAE+Diffusion is less distinguishable from real data than scDesign3 on this subsample, despite both methods matching gene-level means and variances closely. The remaining gap between latent-space quality and gene-space quality still suggests that decoding/gene-space fidelity is a major bottleneck.
 
 **Todo:**
 
-- [ ] Add scDesign3 (R package) as a genuine simulation benchmark; it is currently the state-of-the-art classical method and an important reference point.
+- [x] Add scDesign3 (R package) as a genuine simulation benchmark.
 - [ ] Reframe scVI comparison: compare scVI posterior against our VAE reconstruction (reconstruction quality), and note that scVI prior sampling is not fully generative due to library size dependence.
 - [ ] Ablation: systematic comparison of TN-VAE (log-normalised space) vs. ZINB-VAE (raw count space) to formally validate the choice of working in log-normalised space. See the library size discussion above.
 
@@ -503,7 +503,7 @@ TI Methods Benchmarking Across Noise Scale $\sigma$.
 
 - [ ] Held-out batch validation experiment
 
-- [ ] Add scDesign3 to genuine simulation benchmark
+- [x] Add scDesign3 to genuine simulation benchmark
 
 - [ ] Reframe scVI comparison (reconstruction quality only)
 

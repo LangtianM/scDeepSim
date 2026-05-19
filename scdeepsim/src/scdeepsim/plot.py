@@ -22,6 +22,9 @@ def compare_umap(
     s: int = 10,
     save_path: Optional[str] = None,
     dpi: int = 300,
+    share_axes: bool = True,
+    equal_aspect: bool = False,
+    axis_padding: float = 0.05,
 ) -> Tuple[List[np.ndarray], plt.Figure]:
     """
     Compare multiple datasets using UMAP visualization with consistent dimensionality reduction.
@@ -58,6 +61,12 @@ def compare_umap(
         Path to save the figure. If None, figure is not saved.
     dpi : int, default=300
         DPI for saving the figure.
+    share_axes : bool, default=True
+        If True, all panels use the same UMAP x/y limits.
+    equal_aspect : bool, default=False
+        If True, draw each panel with equal x/y data-unit scaling.
+    axis_padding : float, default=0.05
+        Fractional padding added around the shared embedding extent.
 
     Returns
     -------
@@ -177,6 +186,19 @@ def compare_umap(
             s=s,
             color_dict=shared_color_dict if shared_color_dict else None,
         )
+
+    if share_axes:
+        x_min, y_min = embedding_combined.min(axis=0)
+        x_max, y_max = embedding_combined.max(axis=0)
+        x_pad = (x_max - x_min) * axis_padding
+        y_pad = (y_max - y_min) * axis_padding
+        for ax in axes:
+            ax.set_xlim(x_min - x_pad, x_max + x_pad)
+            ax.set_ylim(y_min - y_pad, y_max + y_pad)
+
+    if equal_aspect:
+        for ax in axes:
+            ax.set_aspect("equal", adjustable="box")
 
     plt.tight_layout()
 
