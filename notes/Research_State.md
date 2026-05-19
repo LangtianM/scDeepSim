@@ -227,15 +227,15 @@ We compare simulation quality using UMAP visualisation, per-gene expression stat
 - **scVI posterior sampling** (`posterior_predictive_sample`): Produces $\text{Decoder}(\text{Encoder}(x))$ with the original cell's library size. This is reconstruction, not genuine simulation. We can compare this against our VAE reconstruction as a **reconstruction quality** benchmark.
 - **scVI prior sampling:** Although it samples $z$ from the prior $\mathcal{N}(0, I)$, it still requires externally supplied library sizes from real cells (see `sample_from_prior` in `benchmark_simulation.py`, which draws `latent_library` from real observations). This dependency on real-cell library sizes means it is not fully generative. See the discussion on library size above.
 
-![Umap Comparison](../experiments/outputs/2026-05-19/16-38-05_simulation_quality_scdesign3/results/umap_comparison.png)
+![Umap Comparison](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/umap_comparison.png)
 
 The UMAP comparison includes real data, VAE reconstruction, VAE+Diffusion, and scDesign3 in a shared embedding. VAE reconstruction remains closest to the real data by construction. VAE+Diffusion preserves much of the cell-type topology but accumulates end-to-end generation error. scDesign3 preserves broad cell-type composition but remains easier to distinguish from real data in gene space.
 
-![Gene Expression Scatter](../experiments/outputs/2026-05-19/16-38-05_simulation_quality_scdesign3/results/gene_expression_scatter.png)
+![Gene Expression Scatter](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/gene_expression_scatter.png)
 
 The per-gene mean and variance correlations are high for both genuine simulators. VAE+Diffusion achieved mean correlation 0.995 and variance correlation 0.991. scDesign3 achieved mean correlation 0.996 and variance correlation 0.981. Thus marginal gene statistics alone are not sufficient to establish realism; discriminability remains necessary.
 
-![Quality Metrics Summary](../experiments/outputs/2026-05-19/16-38-05_simulation_quality_scdesign3/results/quality_metrics_summary.png)
+![Quality Metrics Summary](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/quality_metrics_summary.png)
 
 We assess discriminability via an RF classifier trained to distinguish real from simulated data. **A lower AUC (closer to 0.5) indicates better simulation quality** — the simulated data is harder to distinguish from real data.
 

@@ -426,19 +426,17 @@ def plot_quality_summary(metrics, real_stats, n_genes, save_path):
     plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
 
     ax = axes[2]
-    labels = ["Zero Frac.", "Genes/Cell", "Expr/Cell"]
+    labels = ["Zero Frac.", "Genes/Cell"]
     methods = ["Real"] + sim_df["method"].tolist()
     values = []
     values.append([
         real_stats["zero_fraction"],
         real_stats["genes_per_cell"] / n_genes,
-        1.0,
     ])
     for _, row in sim_df.iterrows():
         values.append([
             row["zero_fraction"],
             row["genes_per_cell"] / n_genes,
-            row["expr_per_cell"] / real_stats["expr_per_cell"],
         ])
     x = np.arange(len(labels))
     width = 0.8 / len(methods)
