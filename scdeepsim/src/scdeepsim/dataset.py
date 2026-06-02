@@ -1,10 +1,10 @@
 from torch.utils.data import Dataset, random_split, WeightedRandomSampler
-from sklearn.preprocessing import LabelEncoder, OneHotEncoder  # pyright: ignore[reportMissingImports]
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder 
 import scipy.sparse as sp
 import torch
 import numpy as np
 from torch.utils.data import DataLoader
-import pytorch_lightning as pl  # pyright: ignore[reportMissingImports]
+import pytorch_lightning as pl
 
 
 def to_tensor(X):
