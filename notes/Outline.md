@@ -50,6 +50,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Status: Mostly available; needs final panel assembly. 
   - Consider add more baseline simulators including zinbwave and scdiffusion
   - We should run a supervised version of our model for comparison with others. Consider the settings in [the batch interpolation experiment](../experiments/multirun/2026-04-07/22-35-18/0/.hydra/config.yaml)
+  - The final figure in the paper should not include the VAE Reconstruction method.
 
 ![UMAP comparison](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/umap_comparison.png)
 

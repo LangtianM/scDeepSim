@@ -114,7 +114,7 @@ def apply_batch_shift(z, direction, alpha, batch_slice):
 
 
 # ---------------------------------------------------------------------------
-# Gaussian Optimal Transport
+# Affine interpolation maps
 # ---------------------------------------------------------------------------
 
 def gaussian_ot_map_from_moments(mu_ref, Sigma_ref, mu_target, Sigma_target):
@@ -137,7 +137,7 @@ def gaussian_ot_map_from_moments(mu_ref, Sigma_ref, mu_target, Sigma_target):
     Returns
     -------
     dict
-        Keys: ``mu_ref``, ``mu_target``, ``A``.
+        Keys: ``mu_ref``, ``mu_target``, ``A``, ``method``.
     """
     mu_ref = np.asarray(mu_ref, dtype=np.float64).ravel()
     mu_target = np.asarray(mu_target, dtype=np.float64).ravel()
@@ -152,7 +152,12 @@ def gaussian_ot_map_from_moments(mu_ref, Sigma_ref, mu_target, Sigma_target):
 
     A = S_ref_inv_half @ inner_half @ S_ref_inv_half
 
-    return {"mu_ref": mu_ref, "mu_target": mu_target, "A": A}
+    return {
+        "mu_ref": mu_ref,
+        "mu_target": mu_target,
+        "A": A,
+        "method": "gaussian_ot",
+    }
 
 
 def gaussian_ot_map(X_ref, X_target):
@@ -184,13 +189,153 @@ def gaussian_ot_map(X_ref, X_target):
     return gaussian_ot_map_from_moments(mu_ref, Sigma_ref, mu_target, Sigma_target)
 
 
-def apply_ot_displacement(z, mu_ref, mu_target, A, alpha, batch_slice):
-    """McCann displacement interpolation in the batch subspace.
+def whitening_recoloring_map_from_moments(mu_ref, Sigma_ref, mu_target,
+                                          Sigma_target):
+    """Whitening-recoloring affine map from the moments of two Gaussians.
+
+    Given the means and covariances of the reference and target Gaussians,
+    returns the affine endpoint map
+
+        T(z) = mu_target + A @ (z - mu_ref),
+
+    where ``A = Sigma_target^{1/2} Sigma_ref^{-1/2}``.
+
+    Parameters
+    ----------
+    mu_ref, mu_target : np.ndarray
+        Mean vectors, shape ``(d,)``.
+    Sigma_ref, Sigma_target : np.ndarray
+        Covariance matrices, shape ``(d, d)``.
+
+    Returns
+    -------
+    dict
+        Keys: ``mu_ref``, ``mu_target``, ``A``, ``method``.
+    """
+    mu_ref = np.asarray(mu_ref, dtype=np.float64).ravel()
+    mu_target = np.asarray(mu_target, dtype=np.float64).ravel()
+    Sigma_ref = np.asarray(Sigma_ref, dtype=np.float64)
+    Sigma_target = np.asarray(Sigma_target, dtype=np.float64)
+
+    S_ref_half = np.real(sqrtm(Sigma_ref))
+    S_ref_inv_half = np.linalg.inv(S_ref_half)
+    S_target_half = np.real(sqrtm(Sigma_target))
+
+    A = S_target_half @ S_ref_inv_half
+
+    return {
+        "mu_ref": mu_ref,
+        "mu_target": mu_target,
+        "A": A,
+        "method": "whitening_recoloring",
+    }
+
+
+def whitening_recoloring_map(X_ref, X_target):
+    """Whitening-recoloring affine map from *X_ref* to *X_target*.
+
+    Thin sample-based wrapper around
+    :func:`whitening_recoloring_map_from_moments`: estimates means and
+    covariances from the two data matrices and delegates to the moments form.
+
+    Parameters
+    ----------
+    X_ref, X_target : np.ndarray
+        Data matrices, shapes ``(n_ref, d)`` and ``(n_target, d)``.
+
+    Returns
+    -------
+    dict
+        Keys: ``mu_ref``, ``mu_target``, ``A``, ``method``.
+    """
+    X_ref = np.asarray(X_ref, dtype=np.float64)
+    X_target = np.asarray(X_target, dtype=np.float64)
+
+    mu_ref = X_ref.mean(axis=0)
+    mu_target = X_target.mean(axis=0)
+
+    Sigma_ref = np.cov(X_ref, rowvar=False, ddof=1)
+    Sigma_target = np.cov(X_target, rowvar=False, ddof=1)
+
+    return whitening_recoloring_map_from_moments(
+        mu_ref, Sigma_ref, mu_target, Sigma_target
+    )
+
+
+def _affine_map_from_moments(mu_ref, Sigma_ref, mu_target, Sigma_target,
+                             method):
+    """Dispatch to a moment-based affine map constructor."""
+    if method == "gaussian_ot":
+        return gaussian_ot_map_from_moments(
+            mu_ref, Sigma_ref, mu_target, Sigma_target
+        )
+    if method == "whitening_recoloring":
+        return whitening_recoloring_map_from_moments(
+            mu_ref, Sigma_ref, mu_target, Sigma_target
+        )
+    raise ValueError(
+        "method must be 'gaussian_ot' or 'whitening_recoloring', "
+        f"got {method!r}"
+    )
+
+
+def apply_affine_interpolation(z, mu_ref, mu_target, A, alpha,
+                               subspace_slice=None):
+    """Sample-linear affine interpolation in a latent subspace.
 
     .. math::
 
         T_\\alpha(z) = [(1-\\alpha) I + \\alpha A] (z_{\\text{batch}} - \\mu_{\\text{ref}})
                        + (1-\\alpha) \\mu_{\\text{ref}} + \\alpha \\mu_{\\text{target}}
+
+    Parameters
+    ----------
+    z : np.ndarray
+        Full latent vectors, shape ``(n, latent_dim)``.
+    mu_ref, mu_target : np.ndarray
+        Means of the reference and target batch in the subspace.
+    A : np.ndarray
+        Affine endpoint matrix.
+    alpha : float
+        Interpolation strength (0 = identity, 1 = full map, >1 = extrapolation).
+    subspace_slice : slice, optional
+        Slice into the active subspace of *z*. When ``None``, the full
+        latent vector is transformed.
+
+    Returns
+    -------
+    np.ndarray
+        Copy of *z* with the selected subspace transformed.
+    """
+    z = np.array(z, copy=True, dtype=np.float64)
+    mu_ref = np.asarray(mu_ref, dtype=np.float64).ravel()
+    mu_target = np.asarray(mu_target, dtype=np.float64).ravel()
+    A = np.asarray(A, dtype=np.float64)
+
+    d = A.shape[0]
+    I = np.eye(d)
+
+    T_alpha = (1 - alpha) * I + alpha * A
+
+    if subspace_slice is None:
+        centered = z - mu_ref
+        z = centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
+    else:
+        z_sub = z[:, subspace_slice]
+        centered = z_sub - mu_ref
+        z[:, subspace_slice] = (
+            centered @ T_alpha.T
+            + (1 - alpha) * mu_ref
+            + alpha * mu_target
+        )
+
+    return z
+
+
+def apply_ot_displacement(z, mu_ref, mu_target, A, alpha, batch_slice):
+    """McCann displacement interpolation in the batch subspace.
+
+    Backward-compatible wrapper around :func:`apply_affine_interpolation`.
 
     Parameters
     ----------
@@ -210,21 +355,9 @@ def apply_ot_displacement(z, mu_ref, mu_target, A, alpha, batch_slice):
     np.ndarray
         Copy of *z* with the batch subspace transformed.
     """
-    z = np.array(z, copy=True, dtype=np.float64)
-    mu_ref = np.asarray(mu_ref, dtype=np.float64).ravel()
-    mu_target = np.asarray(mu_target, dtype=np.float64).ravel()
-    A = np.asarray(A, dtype=np.float64)
-
-    d = A.shape[0]
-    I = np.eye(d)
-
-    T_alpha = (1 - alpha) * I + alpha * A
-
-    z_sub = z[:, batch_slice]
-    centered = z_sub - mu_ref
-    z[:, batch_slice] = centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
-
-    return z
+    return apply_affine_interpolation(
+        z, mu_ref, mu_target, A, alpha, subspace_slice=batch_slice
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -246,36 +379,35 @@ def _resolve_noise_scales(noise_scales, n_steps):
     return [float(s) for s in scales]
 
 
-def _mccann_rows(z_source_rows, ot_params, alpha, sigma, subspace_slice, rng):
-    """Apply a McCann displacement to pre-selected source rows.
+def _affine_rows(z_source_rows, affine_params, alpha, sigma, subspace_slice,
+                 rng):
+    """Apply an affine interpolation to pre-selected source rows.
 
     Transforms the subspace block (full latent when ``subspace_slice is
     None``), carries complementary columns through unchanged, and adds
     isotropic noise of scale ``sigma`` to the full output.
     """
     z_source = np.asarray(z_source_rows, dtype=np.float64)
-    mu_ref = np.asarray(ot_params["mu_ref"], dtype=np.float64).ravel()
-    mu_target = np.asarray(ot_params["mu_target"], dtype=np.float64).ravel()
-    A = np.asarray(ot_params["A"], dtype=np.float64)
-
-    d_sub = A.shape[0]
-    T_alpha = (1 - alpha) * np.eye(d_sub) + alpha * A
-
-    if subspace_slice is None:
-        centered = z_source - mu_ref
-        z_out = centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
-    else:
-        z_out = z_source.copy()
-        z_sub = z_source[:, subspace_slice]
-        centered = z_sub - mu_ref
-        z_out[:, subspace_slice] = (
-            centered @ T_alpha.T + (1 - alpha) * mu_ref + alpha * mu_target
-        )
+    z_out = apply_affine_interpolation(
+        z_source,
+        affine_params["mu_ref"],
+        affine_params["mu_target"],
+        affine_params["A"],
+        alpha,
+        subspace_slice=subspace_slice,
+    )
 
     if sigma and sigma > 0.0:
         z_out = z_out + rng.normal(0.0, sigma, size=z_out.shape)
 
     return z_out
+
+
+def _mccann_rows(z_source_rows, ot_params, alpha, sigma, subspace_slice, rng):
+    """Backward-compatible alias for Gaussian OT row interpolation."""
+    return _affine_rows(
+        z_source_rows, ot_params, alpha, sigma, subspace_slice, rng
+    )
 
 
 def _estimate_moments(X, subspace_slice=None):
@@ -293,14 +425,15 @@ def _estimate_moments(X, subspace_slice=None):
 
 def branch_from_direction(X_A, u, r, alphas, *, Sigma_target=None,
                           subspace_slice=None, n_samples_per_alpha=None,
-                          noise_scales=None, seed=42):
-    """Direction-parameterised Gaussian OT branch from a start distribution.
+                          noise_scales=None, seed=42, method="gaussian_ot"):
+    """Direction-parameterised affine branch from a start distribution.
 
     A branch is specified by the displacement :math:`d = r \\cdot u` from the
     start mean :math:`\\mu_A`, where ``u`` is a unit direction and
-    ``r >= 0`` is a length. Samples are drawn from ``X_A`` and transported
-    along the Wasserstein geodesic from :math:`\\mathcal{N}(\\mu_A, \\Sigma_A)`
-    to :math:`\\mathcal{N}(\\mu_A + r u, \\Sigma_{\\text{target}})` at each
+    ``r >= 0`` is a length. Samples are drawn from ``X_A`` and moved along
+    the selected affine interpolation from
+    :math:`\\mathcal{N}(\\mu_A, \\Sigma_A)` to
+    :math:`\\mathcal{N}(\\mu_A + r u, \\Sigma_{\\text{target}})` at each
     requested ``alpha``. When ``Sigma_target is None`` it defaults to
     :math:`\\Sigma_A`, so at ``alpha = 1`` the branch is a pure translation
     of ``A`` by :math:`r u`.
@@ -329,11 +462,15 @@ def branch_from_direction(X_A, u, r, alphas, *, Sigma_target=None,
         the full latent vector, matching ``trajectory_ot_interpolate``).
     seed : int
         Random seed.
+    method : {"gaussian_ot", "whitening_recoloring"}
+        Affine endpoint map. Defaults to ``"gaussian_ot"`` for backward
+        compatibility.
 
     Returns
     -------
     dict
-        ``ot_params``      - output of :func:`gaussian_ot_map_from_moments`.
+        ``affine_params``  - output of the selected affine map constructor.
+        ``ot_params``      - backward-compatible alias of ``affine_params``.
         ``samples``        - dict mapping each alpha to an
                               ``(n_samples_per_alpha, latent_dim)`` array.
         ``mu_A``           - estimated start mean in the active subspace.
@@ -369,7 +506,9 @@ def branch_from_direction(X_A, u, r, alphas, *, Sigma_target=None,
             )
 
     mu_target = mu_A + r * u_vec
-    ot_params = gaussian_ot_map_from_moments(mu_A, Sigma_A, mu_target, Sigma_t)
+    affine_params = _affine_map_from_moments(
+        mu_A, Sigma_A, mu_target, Sigma_t, method
+    )
 
     if n_samples_per_alpha is None:
         n_samples_per_alpha = X_A.shape[0]
@@ -380,12 +519,13 @@ def branch_from_direction(X_A, u, r, alphas, *, Sigma_target=None,
     for alpha, sigma in zip(alphas, scales):
         idx = rng.choice(X_A.shape[0], size=n_samples_per_alpha, replace=True)
         z_source = X_A[idx]
-        samples[alpha] = _mccann_rows(
-            z_source, ot_params, alpha, sigma, subspace_slice, rng
+        samples[alpha] = _affine_rows(
+            z_source, affine_params, alpha, sigma, subspace_slice, rng
         )
 
     return {
-        "ot_params": ot_params,
+        "affine_params": affine_params,
+        "ot_params": affine_params,
         "samples": samples,
         "mu_A": mu_A,
         "Sigma_A": Sigma_A,
@@ -399,8 +539,9 @@ def branch_from_direction(X_A, u, r, alphas, *, Sigma_target=None,
 # ---------------------------------------------------------------------------
 
 def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
-                              noise_scales=None, seed=42, subspace_slice=None):
-    """Generate interpolated samples along the OT geodesic between two states.
+                              noise_scales=None, seed=42, subspace_slice=None,
+                              method="gaussian_ot"):
+    """Generate interpolated samples along an affine path between two states.
 
     Thin wrapper around :func:`branch_from_direction` with
     :math:`d = \\mu_{\\text{end}} - \\mu_A`,
@@ -430,12 +571,17 @@ def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
     subspace_slice : slice, optional
         Restrict the OT map to the given subspace; complementary columns
         are carried through from the sampled ``X_start`` rows.
+    method : {"gaussian_ot", "whitening_recoloring"}
+        Affine endpoint map. Defaults to ``"gaussian_ot"`` for backward
+        compatibility.
 
     Returns
     -------
     dict
-        ``"ot_params"`` - output of :func:`gaussian_ot_map_from_moments`.
-        ``"samples"``   - dict mapping each alpha to an ``(n_samples, d)`` array.
+        ``"affine_params"`` - output of the selected affine map constructor.
+        ``"ot_params"``     - backward-compatible alias of ``affine_params``.
+        ``"samples"``       - dict mapping each alpha to an
+                              ``(n_samples, d)`` array.
     """
     mu_end, Sigma_end = _estimate_moments(X_end, subspace_slice=subspace_slice)
 
@@ -456,9 +602,14 @@ def trajectory_ot_interpolate(X_start, X_end, alphas, n_samples_per_alpha=None,
         n_samples_per_alpha=n_samples_per_alpha,
         noise_scales=noise_scales,
         seed=seed,
+        method=method,
     )
 
-    return {"ot_params": result["ot_params"], "samples": result["samples"]}
+    return {
+        "affine_params": result["affine_params"],
+        "ot_params": result["ot_params"],
+        "samples": result["samples"],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -482,10 +633,10 @@ def _resolve_segment_noise(spec, segment, n_steps):
 
 def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
                          subspace_slice=None, n_samples_per_t=None,
-                         noise_scales=None, seed=42):
-    """Two-branch OT trajectory through an observed waypoint ``W``.
+                         noise_scales=None, seed=42, method="gaussian_ot"):
+    """Two-branch affine trajectory through an observed waypoint ``W``.
 
-    Builds a bifurcation by composing three independent Gaussian OT
+    Builds a bifurcation by composing three independent affine
     interpolations - ``A -> W``, ``W -> B``, ``W -> C`` - and splicing them
     at pseudo-time :math:`\\tau \\in [0, 1]`. Pseudo-times ``t`` in the
     common axis are partitioned into trunk (:math:`t \\le \\tau`) and
@@ -540,6 +691,9 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
         :func:`trajectory_ot_interpolate`).
     seed : int
         Random seed.
+    method : {"gaussian_ot", "whitening_recoloring"}
+        Affine endpoint map used by every segment. Defaults to
+        ``"gaussian_ot"`` for backward compatibility.
 
     Returns
     -------
@@ -549,8 +703,10 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
         ``branch_B`` -- dict ``{t: (n_samples_per_t, latent_dim)}``.
         ``branch_C`` -- dict ``{t: (n_samples_per_t, latent_dim)}``.
         ``waypoint`` -- ``{"mu": mu_W, "Sigma": Sigma_W}``.
-        ``ot_params`` -- dict keyed by ``A_to_W``, ``W_to_B``, ``W_to_C``;
-        additionally ``A_to_B``, ``A_to_C`` when :math:`\\tau = 0`.
+        ``affine_params`` -- dict keyed by ``A_to_W``, ``W_to_B``,
+        ``W_to_C``; additionally ``A_to_B``, ``A_to_C`` when
+        :math:`\\tau = 0`.
+        ``ot_params`` -- backward-compatible alias of ``affine_params``.
     """
     X_A = np.asarray(X_A, dtype=np.float64)
     X_W = np.asarray(X_W, dtype=np.float64)
@@ -582,10 +738,16 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
     mu_B, Sigma_B = _estimate_moments(X_B, subspace_slice=subspace_slice)
     mu_C, Sigma_C = _estimate_moments(X_C, subspace_slice=subspace_slice)
 
-    ot_params = {
-        "A_to_W": gaussian_ot_map_from_moments(mu_A, Sigma_A, mu_W, Sigma_W),
-        "W_to_B": gaussian_ot_map_from_moments(mu_W, Sigma_W, mu_B, Sigma_B),
-        "W_to_C": gaussian_ot_map_from_moments(mu_W, Sigma_W, mu_C, Sigma_C),
+    affine_params = {
+        "A_to_W": _affine_map_from_moments(
+            mu_A, Sigma_A, mu_W, Sigma_W, method
+        ),
+        "W_to_B": _affine_map_from_moments(
+            mu_W, Sigma_W, mu_B, Sigma_B, method
+        ),
+        "W_to_C": _affine_map_from_moments(
+            mu_W, Sigma_W, mu_C, Sigma_C, method
+        ),
     }
 
     if tau <= 0.0:
@@ -621,16 +783,16 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
 
         for t, sigma in zip(t_trunk, scales_trunk):
             alpha = t / tau if tau > 0.0 else 0.0
-            trunk_samples[t] = _mccann_rows(
-                trunk_source_rows, ot_params["A_to_W"], alpha, sigma,
+            trunk_samples[t] = _affine_rows(
+                trunk_source_rows, affine_params["A_to_W"], alpha, sigma,
                 subspace_slice, rng,
             )
 
         # Trunk alpha=1 pool is needed for branch seeding even when no
         # trunk t-point is exactly tau (i.e. t_trunk may be empty or may
         # not include tau itself).
-        pool_rows_at_alpha_1 = _mccann_rows(
-            trunk_source_rows, ot_params["A_to_W"], 1.0, 0.0,
+        pool_rows_at_alpha_1 = _affine_rows(
+            trunk_source_rows, affine_params["A_to_W"], 1.0, 0.0,
             subspace_slice, rng,
         )
 
@@ -642,11 +804,11 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
         pass
     elif tau == 0.0:
         # Root split: two independent draws from X_A, direct A -> B / A -> C.
-        ot_params["A_to_B"] = gaussian_ot_map_from_moments(
-            mu_A, Sigma_A, mu_B, Sigma_B
+        affine_params["A_to_B"] = _affine_map_from_moments(
+            mu_A, Sigma_A, mu_B, Sigma_B, method
         )
-        ot_params["A_to_C"] = gaussian_ot_map_from_moments(
-            mu_A, Sigma_A, mu_C, Sigma_C
+        affine_params["A_to_C"] = _affine_map_from_moments(
+            mu_A, Sigma_A, mu_C, Sigma_C, method
         )
 
         idx_B = rng.choice(
@@ -662,14 +824,14 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
 
         for t, sigma in zip(t_branch, scales_B):
             alpha = (t - tau) / (1.0 - tau)
-            branch_B_samples[t] = _mccann_rows(
-                rows_B, ot_params["A_to_B"], alpha, sigma,
+            branch_B_samples[t] = _affine_rows(
+                rows_B, affine_params["A_to_B"], alpha, sigma,
                 subspace_slice, rng,
             )
         for t, sigma in zip(t_branch, scales_C):
             alpha = (t - tau) / (1.0 - tau)
-            branch_C_samples[t] = _mccann_rows(
-                rows_C, ot_params["A_to_C"], alpha, sigma,
+            branch_C_samples[t] = _affine_rows(
+                rows_C, affine_params["A_to_C"], alpha, sigma,
                 subspace_slice, rng,
             )
     else:
@@ -684,14 +846,14 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
 
         for t, sigma in zip(t_branch, scales_B):
             alpha = (t - tau) / (1.0 - tau)
-            branch_B_samples[t] = _mccann_rows(
-                pool_B, ot_params["W_to_B"], alpha, sigma,
+            branch_B_samples[t] = _affine_rows(
+                pool_B, affine_params["W_to_B"], alpha, sigma,
                 subspace_slice, rng,
             )
         for t, sigma in zip(t_branch, scales_C):
             alpha = (t - tau) / (1.0 - tau)
-            branch_C_samples[t] = _mccann_rows(
-                pool_C, ot_params["W_to_C"], alpha, sigma,
+            branch_C_samples[t] = _affine_rows(
+                pool_C, affine_params["W_to_C"], alpha, sigma,
                 subspace_slice, rng,
             )
 
@@ -702,5 +864,6 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
         "branch_B": branch_B_samples,
         "branch_C": branch_C_samples,
         "waypoint": {"mu": mu_W, "Sigma": Sigma_W},
-        "ot_params": ot_params,
+        "affine_params": affine_params,
+        "ot_params": affine_params,
     }

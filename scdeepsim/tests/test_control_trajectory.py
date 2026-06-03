@@ -2,11 +2,14 @@ import numpy as np
 import pytest
 
 from scdeepsim.control import (
+    apply_affine_interpolation,
     branch_from_direction,
     branch_trajectory_ot,
     gaussian_ot_map,
     gaussian_ot_map_from_moments,
     trajectory_ot_interpolate,
+    whitening_recoloring_map,
+    whitening_recoloring_map_from_moments,
 )
 
 
@@ -55,6 +58,43 @@ def test_gaussian_ot_map_moments_agrees():
 
     moments_direct = gaussian_ot_map_from_moments(mu_R, Sigma_R, mu_T, Sigma_T)
     assert np.linalg.norm(sample_form["A"] - moments_direct["A"]) < 0.2
+
+
+def test_whitening_recoloring_map_moments_agrees_and_matches_covariance():
+    rng = np.random.RandomState(10)
+    d = 5
+    mu_R = rng.standard_normal(d)
+    mu_T = rng.standard_normal(d) + 2.0
+    Sigma_R = _random_psd(rng, d, scale=0.6)
+    Sigma_T = _random_psd(rng, d, scale=1.4)
+
+    X_R = _sample_gaussian(rng, mu_R, Sigma_R, n=4000)
+    X_T = _sample_gaussian(rng, mu_T, Sigma_T, n=4000)
+
+    sample_form = whitening_recoloring_map(X_R, X_T)
+    moments_form = whitening_recoloring_map_from_moments(
+        X_R.mean(axis=0),
+        np.cov(X_R, rowvar=False, ddof=1),
+        X_T.mean(axis=0),
+        np.cov(X_T, rowvar=False, ddof=1),
+    )
+
+    assert sample_form["method"] == "whitening_recoloring"
+    assert np.allclose(sample_form["A"], moments_form["A"])
+    assert np.allclose(sample_form["mu_ref"], moments_form["mu_ref"])
+    assert np.allclose(sample_form["mu_target"], moments_form["mu_target"])
+
+    X_mapped = apply_affine_interpolation(
+        X_R,
+        sample_form["mu_ref"],
+        sample_form["mu_target"],
+        sample_form["A"],
+        alpha=1.0,
+    )
+    target_cov = np.cov(X_T, rowvar=False, ddof=1)
+
+    assert np.allclose(X_mapped.mean(axis=0), X_T.mean(axis=0), atol=1e-8)
+    assert np.allclose(np.cov(X_mapped, rowvar=False, ddof=1), target_cov)
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +196,33 @@ def test_trajectory_ot_wrapper_equivalence():
         assert np.allclose(wrapper_result["samples"][a], direct_result["samples"][a])
 
 
+def test_trajectory_supports_whitening_recoloring_method():
+    rng = np.random.RandomState(11)
+    d = 4
+
+    mu_A = rng.standard_normal(d)
+    mu_B = rng.standard_normal(d) + 1.0
+    Sigma_A = _random_psd(rng, d, scale=0.5)
+    Sigma_B = _random_psd(rng, d, scale=0.9)
+
+    X_A = _sample_gaussian(rng, mu_A, Sigma_A, n=600)
+    X_B = _sample_gaussian(rng, mu_B, Sigma_B, n=600)
+
+    res = trajectory_ot_interpolate(
+        X_A,
+        X_B,
+        alphas=[0.0, 0.5, 1.0],
+        n_samples_per_alpha=200,
+        seed=13,
+        method="whitening_recoloring",
+    )
+
+    assert res["affine_params"] is res["ot_params"]
+    assert res["affine_params"]["method"] == "whitening_recoloring"
+    assert set(res["samples"]) == {0.0, 0.5, 1.0}
+    assert res["samples"][1.0].shape == (200, d)
+
+
 # ---------------------------------------------------------------------------
 # 4. branch_trajectory_ot - tau = 0 edge case
 # ---------------------------------------------------------------------------
@@ -196,6 +263,40 @@ def test_branch_trajectory_tau_zero():
 
     assert np.linalg.norm(bB_end.mean(axis=0) - mu_B) < 0.2
     assert np.linalg.norm(bC_end.mean(axis=0) - mu_C) < 0.2
+
+
+def test_branch_trajectory_supports_whitening_recoloring_method():
+    rng = np.random.RandomState(12)
+    d = 4
+    Sigma_A = _random_psd(rng, d, scale=0.2)
+    Sigma_W = _random_psd(rng, d, scale=0.3)
+    Sigma_B = _random_psd(rng, d, scale=0.4)
+    Sigma_C = _random_psd(rng, d, scale=0.5)
+
+    X_A = _sample_gaussian(rng, np.zeros(d), Sigma_A, n=500)
+    X_W = _sample_gaussian(rng, np.ones(d), Sigma_W, n=500)
+    X_B = _sample_gaussian(rng, np.array([1.0, 2.0, 0.0, 0.0]), Sigma_B, n=500)
+    X_C = _sample_gaussian(rng, np.array([1.0, 0.0, 2.0, 0.0]), Sigma_C, n=500)
+
+    res = branch_trajectory_ot(
+        X_A,
+        X_W,
+        X_B,
+        X_C,
+        t_values=[0.0, 0.5, 1.0],
+        tau=0.5,
+        n_samples_per_t=100,
+        seed=19,
+        method="whitening_recoloring",
+    )
+
+    assert res["affine_params"] is res["ot_params"]
+    assert set(res["affine_params"]) == {"A_to_W", "W_to_B", "W_to_C"}
+    for params in res["affine_params"].values():
+        assert params["method"] == "whitening_recoloring"
+    assert res["trunk"][0.5].shape == (200, d)
+    assert res["branch_B"][1.0].shape == (100, d)
+    assert res["branch_C"][1.0].shape == (100, d)
 
 
 # ---------------------------------------------------------------------------
