@@ -6,13 +6,6 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ## Main Figures
 
-### Figure 0. Quality-Control Tradeoff
-
-- Problem: Existing simulators are either realistic but hard to control, or controllable but less realistic.
-- Implementation: Table, or scatter plot comparing methods by simulation quality and controllability. Candidate methods: scDeepSim, scDesign3, Splatter.
-- Interpretation: scDeepSim should occupy the useful region: high realism and explicit continuous control.
-- Status: Not implemented. Need define a practical "controllability score".
-
 ### Figure 1. Method Overview
 
 - Problem: How can our simulator support control while producing realistic data?
@@ -20,42 +13,49 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Interpretation: Our model learns realistic data distribution while supporting control over interpretable signal axes.
 - Status: Not implemented.
 
+### Figure. Quality-Control Tradeoff
+
+- Problem: Existing simulators are either realistic but hard to control, or controllable but less realistic.
+- Implementation: Table comparing methods by simulation quality and controllability. Candidate methods: scDeepSim, scDesign3, Splatter.
+- Interpretation: scDeepSim should occupy the useful region: high realism and explicit continuous control.
+- Status: Not implemented. Need define a practical "controllability score".
+
 ### Figure 2. Disentangled Latent Space
 
 - Problem: Does the latent space contain disentangled subspaces that make targeted control possible?
+
 - Panel A: Latent Vector layout schematic
-    ```
-    z = [ z_celltype | z_batch | z_residual ]
-    ```
+  
+  ```
+  z = [ z_celltype | z_batch | z_residual ]
+  ```
+
 - Panel B: Covariate predictability heatmap
-    - Rows: labels to predict, e.g. cell type, batch.
-    - Columns: latent subspaces, e.g. cell-type, batch, residual.
-
+  
+  - Rows: labels to predict, e.g. cell type, batch.
+  
+  - Columns: latent subspaces, e.g. cell-type, batch, residual.
+    
     Each cell shows the accuracy.
-- Panel C: Classification accuracy and real-simulated RF AUC for different supervised weights. (Implemented)
-- Interpretation: Disentanglement concentrates controlled factors into assigned subspaces without substantially degrading simulation quality.
-- Status: Panel C available; Panels A and B not yet implemented.
 
-![Cell-type disentanglement](../experiments/outputs/checkpoints/test_supervised/tn_vae/supervised_weight_comparison.png)
+- Interpretation: Disentanglement concentrates controlled factors into assigned subspaces, supporting targeted latent-space control.
 
-![Batch disentanglement](../experiments/outputs/2026-04-06/20-22-21_batch_disentanglement/batch_supervised_weight_comparison.png)
+- Status: Panels A and B not yet implemented.
 
 ### Figure 3. Uncontrolled Simulation Quality
 
 - Problem: Does scDeepSim generate realistic single-cell data before applying any control?
-- Implementation: Compare real data, *VAE reconstruction*, VAE+Diffusion, and scDesign3 using UMAP, RF real-vs-simulated discriminability, and data statistics (gene expression means, variances, zero proportions).
+- Implementation: Compare real data, *VAE reconstruction*, VAE+Diffusion, and scDesign3 using UMAP, RF real-vs-simulated discriminability, and data statistiwcs (gene expression means, variances, zero proportions).
 - Interpretation: VAE+Diffusion gives more realistic data than baselines.
-- Status: Mostly available; needs final panel assembly. Consider add more baseline simulators like splatter.
+- Status: Mostly available; needs final panel assembly. 
+  - Consider add more baseline simulators including zinbwave and scdiffusion
+  - We should run a supervised version of our model for comparison with others. Consider the settings in [the batch interpolation experiment](../experiments/multirun/2026-04-07/22-35-18/0/.hydra/config.yaml)
 
 ![UMAP comparison](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/umap_comparison.png)
 
 ![Gene expression statistics](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/gene_expression_scatter.png)
 
 ![Quality metrics summary](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/quality_metrics_summary.png)
-
-
-
-
 
 ### Figure 4. Batch Effect Control
 
@@ -65,7 +65,9 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Panel C: Batch signal Intervention: Batch ASW and LISI across alpha values.
 - Panel D: Biological signal preservation: Cell-type ASW, RF AUC, and cLISI across alpha values.
 - Interpretation: Batch effect strength changes monotonically with alpha, while cell-type structure remains stable.
-- Status: Preliminary figures available; But mean-shift should likely be the main text panel rather than Gaussian OT.
+- Status: Preliminary figures available; 
+  - We should reproduce the figures with linear interpolation rather than Gaussian OT.
+  - We should run this in multiple datasets to show generality, in supplementary figures.
 
 ![Gaussian OT batch dose response](../experiments/multirun/2026-04-07/22-21-54/1/results/dose_response_curves.png)
 
@@ -104,7 +106,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ## Supplementary Or Planned Figures
 
-### Figure S1. Batch-Control Assumptions
+<!-- ### Figure S1. Batch-Control Assumptions
 
 - Problem: Does Gaussian OT match the empirical latent batch distributions?
 - Implementation: Mahalanobis QQ plots, covariance spectra, Frobenius distances, and principal angles.
@@ -117,27 +119,32 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ![Relative Frobenius heatmap](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/relative_frobenius_heatmap.png)
 
-![Principal angles](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/principal_angles.png)
+![Principal angles](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/principal_angles.png) -->
 
-### Figure S2. Generality Across Datasets
+### Generality Across Datasets
 
 - Problem: Are results robust beyond one dataset and one control setting?
 - Implementation: Repeat compact summaries of simulation quality, batch control, and biological preservation across multiple datasets.
 - Interpretation: Shows the framework is general, not a tuned case study.
 - Status: Not implemented.
 
-### Figure S3. Generative Model Ablations
+<!-- ### Generative Model Ablations
 
 - Problem: Which design choices are necessary?
 - Implementation: Compare TN-VAE vs raw-count/ZINB VAE, VAE prior sampling vs VAE+Diffusion, disentangled vs non-disentangled latent spaces, and CFG conditioning vs geometric control.
 - Interpretation: Justifies the main architecture and control strategy.
-- Status: Not implemented.
+- Status: Not implemented. -->
 
-### Figure S4. Supervised Head Ablations
+### Supervised Head Ablations
 
-- Problem: Does the supervised VAE gives better simulation?
-- Implementation: Manipulate in correct subspace v.s. in latent space of a VAE without supervised heads, showing only the former gives desired control without damaging simulation quality.
+- Problem: Does the supervised VAE give better simulation?
+- Implementation: Manipulate in the correct subspace vs. the latent space of a VAE without supervised heads, showing only the former gives desired control without damaging simulation quality. Include the former Figure 2 Panel C: classification accuracy and real-simulated RF AUC across supervised weights.
 - Interpretation: Shows that supervised heads are necessary for effective control.
+- Status: Supervised-weight comparison panels are available.
+
+![Cell-type supervised-weight ablation](../experiments/outputs/checkpoints/test_supervised/tn_vae/supervised_weight_comparison.png)
+
+![Batch supervised-weight ablation](../experiments/outputs/2026-04-06/20-22-21_batch_disentanglement/batch_supervised_weight_comparison.png)
 
 ## Next Steps
 

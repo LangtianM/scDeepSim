@@ -59,149 +59,136 @@ The latent diffusion model is a denoising diffusion probabilistic model (DDPM) o
 
 ## Proposed Control Methods
 
+### Common Primitive: Sample-Linear Affine Interpolation
+
+The control primitive is a linear affine interpolation between two latent distributions. Given source samples $z_s$, source moments $(\mu_0, \Sigma_0)$, target moments $(\mu_1, \Sigma_1)$, and a matrix $B$, define:
+
+$$
+T_B(z_s) = \mu_1 + B(z_s - \mu_0)
+$$
+
+and interpolate each sample toward its affine endpoint:
+
+$$
+z_s(\alpha) = (1 - \alpha) z_s + \alpha T_B(z_s).
+$$
+
+Equivalently,
+
+$$
+z_s(\alpha) = z_s + \alpha\left[(\mu_1 - \mu_0) + (B - I)(z_s - \mu_0)\right].
+$$
+
+The scalar $\alpha$ is the control strength: $\alpha = 0$ leaves samples unchanged, $0 < \alpha < 1$ gives interpolation, $\alpha = 1$ applies the full endpoint map, and $\alpha > 1$ extrapolates the same sample-linear map beyond the target endpoint. This is a post-hoc latent operation and does not require retraining the VAE or diffusion model.
+
+### Choice of $B$
+
+The matrix $B$ is not unique and determines which moment differences are controlled.
+
+**1. Mean-shift affine interpolation.**
+
+$$
+B = I
+$$
+
+Then the residual term is unchanged, the interpolation reduces to a simple mean shift:
+
+$$
+z_s(\alpha) = z_s + \alpha(\mu_1 - \mu_0).
+$$
+
+This captures first-moment differences only.
+
+**2. Whitening-recoloring affine interpolation.**
+
+$$
+B = \Sigma_1^{1/2}\Sigma_0^{-1/2}
+$$
+
+It matches the target mean and covariance by whitening the source residuals and recoloring them with the target covariance.
+
+**3. Gaussian OT / Bures-Wasserstein affine interpolation.**
+
+$$
+B = \Sigma_0^{-1/2}\left(\Sigma_0^{1/2}\Sigma_1\Sigma_0^{1/2}\right)^{1/2}\Sigma_0^{-1/2}
+$$
+
+This is the closed-form optimal-transport map between Gaussian distributions with squared Euclidean cost. The resulting interpolation is the Bures-Wasserstein / McCann displacement interpolation between the two moment-matched Gaussian endpoints. If the empirical latent distributions are not Gaussian, this should be interpreted only as a second-order affine map between their Gaussian approximations, not as exact OT between empirical distributions.
+
 ### Batch Effect Control
 
-**Status:** We decided to use the mean-shift and the Gaussian OT direction in the batch subspace, and they are implemented in `scdeepsim/src/scdeepsim/control.py`.
+For batch control, the primitive is applied only in the disentangled batch subspace, dimensions $[d_c,\; d_c + d_b)$ of the latent vector. The source and target moments are estimated from the reference and target batch distributions in that subspace, then the controlled batch coordinates are spliced back into the full latent vector before decoding.
 
-#### Core Method: Geometric Manipulation in the Batch Subspace
+This keeps the intended batch manipulation local to the batch-specific coordinates. It also gives a direct signal-strength parameter: $\alpha = 0$ removes the post-hoc batch perturbation, $\alpha = 1$ applies the observed reference-to-target batch map, and $\alpha > 1$ simulates stronger-than-observed batch effects.
 
-The key idea is to operate entirely in the disentangled batch subspace of the latent space. After training the disentangled VAE with batch labels, the batch subspace occupies dimensions $[d_c,\; d_c + d_b)$ of the latent vector. We compute a batch direction $\delta_b$ from the training data, then apply it to generated latents with a controllable strength coefficient $\alpha$:
-
-$$
-z' = z + \alpha \cdot \delta_b
-$$
-
-where:
-
-- $\alpha = 0$: no batch effect,
-- $0 < \alpha < 1$: weaker-than-observed effect (interpolation),
-- $\alpha = 1$: effect matching the observed batch difference,
-- $\alpha > 1$: stronger-than-observed effect (extrapolation).
-
-This is a post-hoc geometric operation — no retraining is needed. The disentanglement ensures the shift only modifies batch-related structure by construction.
-
-**Why not CFG-based batch conditioning?** Although the diffusion model already supports classifier-free guidance, CFG cannot generate data that is out of the distribution of the training data. CFG reweights existing conditional modes but cannot interpolate between or extrapolate beyond observed batch distributions. Our goal requires producing data with *arbitrary signal strength*, including strengths not represented in the training data. The geometric manipulation approach with the $\alpha$ parameter naturally supports this.
-
-#### Direction-Finding Methods
-
-The choice of how to compute $\delta_b$ determines how much distributional information is captured.
-
-**1. Mean-shift direction :**
-
-The simplest approach estimates the batch direction as the cell-type-stratified mean shift relative to a reference batch:
-
-$$
-\delta_b = \frac{1}{|C|} \sum_{c \in C} \left( \bar{z}_{b,c} - \bar{z}_{\text{ref},c} \right)
-$$
-
-where $\bar{z}_{b,c}$ is the centroid of cell type $c$ in batch $b$'s batch subspace. The cell-type stratification ensures the direction captures batch-specific effects rather than confounded cell-composition differences between batches.
-
-**Limitation:** This captures only the first-moment difference. If two batches differ in variance or covariance structure (e.g., one batch has more spread in certain genes), the mean-shift direction will not represent this.
-
-**2. Optimal transport (OT) direction:**
-
-OT provides the richest characterisation of batch differences by finding the map that transforms one batch's distribution into another while minimizing transport cost. Unlike the mean-shift approach, OT captures differences in mean, variance, covariance, and higher moments.
-
-**Gaussian OT** When the batch distributions in the subspace are approximately Gaussian ($P_{\text{ref}} = \mathcal{N}(\mu_1, \Sigma_1)$, $P_{\text{target}} = \mathcal{N}(\mu_2, \Sigma_2)$), the OT map has a closed-form solution:
-
-$$
-T(z) = \mu_2 + A\,(z - \mu_1), \quad A = \Sigma_1^{-1/2}\bigl(\Sigma_1^{1/2}\,\Sigma_2\,\Sigma_1^{1/2}\bigr)^{1/2}\Sigma_1^{-1/2}
-$$
-
-Note that when $\Sigma_1 = \Sigma_2$, $A = I$ and the OT map reduces to a pure translation $T(z) = z + (\mu_2 - \mu_1)$, recovering the mean-shift approach as a special case.
-
-**McCann displacement interpolation for arbitrary signal strength.** The Wasserstein geodesic between the two distributions is parameterised by $\alpha$:
-
-$$
-T_\alpha(z) = \bigl[(1-\alpha)\,I + \alpha\,A\bigr](z - \mu_1) + (1-\alpha)\,\mu_1 + \alpha\,\mu_2
-$$
-
-- $\alpha \in (0,1)$: interpolation along the Wasserstein geodesic — the theoretically optimal path in distribution space.
-- $\alpha = 1$: the full OT map, transforming the reference distribution to the target.
-- $\alpha > 1$: extrapolation beyond the target distribution. This is mathematically well-defined: the affine map extends naturally. Since we operate in a low-dimensional disentangled subspace, moderate extrapolation ($\alpha \lesssim 2$) should remain in a reasonable region of the latent space.
-
-**Empirical (non-Gaussian) OT.** When the batch distributions are not well-approximated by Gaussians, we can use discrete OT (e.g., via the POT library) to compute an empirical coupling matrix. Displacement interpolation is then defined cell-by-cell via the coupling. This is more expensive but captures the full distributional difference. For the typical batch subspace dimensionality ($d_b \sim 5$--$20$) and dataset sizes ($n \sim 10^3$--$10^4$), this is computationally feasible.
-
-**Hierarchy of approaches (from simple to expressive):**
-
-| Method       | What it captures  | Cost                 | When to use                                                   |
-| ------------ | ----------------- | -------------------- | ------------------------------------------------------------- |
-| Mean shift   | First moment only | Negligible           | Quick baseline; sufficient if batches differ only in location |
-| Gaussian OT  | Mean + covariance | Low (closed form)    | When batches differ in spread or correlation structure        |
-| Empirical OT | Full distribution | Moderate (OT solver) | When Gaussian assumption is poor                              |
-
----
+**Why not CFG-based batch conditioning?** Although the diffusion model supports classifier-free guidance, CFG reweights learned conditional modes and is not designed to create arbitrary continuous effect strengths outside the observed training conditions. The affine interpolation primitive exposes this strength explicitly through $\alpha$.
 
 ### Pseudo-time Control
 
-**Status:** Gaussian OT interpolation is implemented in `scdeepsim/src/scdeepsim/control.py`.
-
 Pseudo-time represents a cell's position along a continuous developmental or differentiation trajectory. Controlling pseudo-time in simulation means being able to generate cells at any desired developmental stage. A key use case is **benchmarking trajectory inference (TI) methods**: generating synthetic datasets with known ground-truth pseudo-time ordering, so that TI methods can be quantitatively evaluated on their ability to recover this ordering.
 
-**Remark:** A simulator designed to benchmark TI methods **must not use TI methods in its own data generation pipeline**. If a TI method (e.g., Monocle, or even fitting a principal curve in latent space) is used to define the ground-truth trajectory, then the benchmark becomes circular — it evaluates TI methods against a ground truth that was itself produced by a TI method. This rules out our earlier proposal of fitting a principal curve $\gamma(t)$ in the VAE latent space using standard TI tools.
+**Remark:** A simulator designed to benchmark TI methods **must not use TI methods in its own data generation pipeline**. If a TI method (e.g., Monocle, or even fitting a principal curve in latent space) is used to define the ground-truth trajectory, then the benchmark becomes circular: it evaluates TI methods against a ground truth that was itself produced by a TI method. This rules out the earlier proposal of fitting a principal curve $\gamma(t)$ in the VAE latent space using standard TI tools.
 
-#### Approach 1: Optimal Transport Interpolation Between Known States
+#### Affine Interpolation Between Known States
 
-We construct a ground-truth pseudo-time by interpolating between two or more known cell states in the latent space. This can be done by either linear interpolation in the mean and the covariance matrix, or by optimal transport in the latent space.
-
-**Setup.** Suppose we have a dataset containing cells from two known biological states (e.g., undifferentiated stem cells and terminally differentiated neurons). After training the disentangled VAE, we encode these cells into the latent space and obtain two distributions in the non-batch subspace:
+We construct a ground-truth pseudo-time by interpolating between two or more known cell states in the latent space. Suppose the dataset contains cells from two labelled biological states, such as undifferentiated stem cells and terminally differentiated neurons. After training the disentangled VAE, we encode these cells and estimate source and target moments in the non-batch biological subspace:
 
 $$
-P_{\text{start}} = \mathcal{N}(\mu_1, \Sigma_1), \quad P_{\text{end}} = \mathcal{N}(\mu_2, \Sigma_2)
+P_{\text{start}} \approx (\mu_0, \Sigma_0), \quad P_{\text{end}} \approx (\mu_1, \Sigma_1).
 $$
 
-The batch subspace is excluded so that the interpolation captures biological variation only.
-
-**Gaussian OT map.** The optimal transport map from $P_{\text{start}}$ to $P_{\text{end}}$ is:
+The batch subspace is excluded so that the interpolation captures biological variation only. We then choose one of the affine maps above, typically the Gaussian OT / Bures-Wasserstein choice of $B$ when covariance structure should change along the path, and evaluate:
 
 $$
-T(\mathbf{z}) = \mu_2 + A(\mathbf{z} - \mu_1), \quad A = \Sigma_1^{-1/2}\left(\Sigma_1^{1/2} \Sigma_2 \Sigma_1^{1/2}\right)^{1/2} \Sigma_1^{-1/2}
+z_s(\alpha) = (1 - \alpha)z_s + \alpha T_B(z_s), \qquad \alpha \in [0, 1].
 $$
 
-**McCann displacement interpolation.** The Wasserstein geodesic between the two distributions is parameterised by $\alpha \in [0, 1]$:
+For any $\alpha$, sampling $z_s$ from the start-state latent distribution and computing $z_s(\alpha)$ yields a latent vector corresponding to developmental progress $\alpha$. Decoding via the VAE produces a synthetic cell with **ground-truth pseudo-time $\alpha$**.
 
-$$
-T_\alpha(\mathbf{z}) = \left[(1 - \alpha)I + \alpha A\right](\mathbf{z} - \mu_1) + (1 - \alpha)\mu_1 + \alpha \mu_2
-$$
-
-For any $\alpha$, sampling $\mathbf{z} \sim P_{\text{start}}$ and computing $T_\alpha(\mathbf{z})$ yields a latent vector corresponding to developmental progress $\alpha$. Decoding via the VAE produces a synthetic cell with **ground-truth pseudo-time $\alpha$**.
-
-**Remark:** Could we use a linear interpolation in both of the mean and the covariance matrix? -- The linear interpolation produces a path that is inflated in the middle. But it could still be an option to compare with.
-
-**Could the decoded path be non-trivial?** Although the latent-space path is geometrically simple (a Wasserstein geodesic), the VAE decoder $D: \mathbb{R}^d \to \mathbb{R}^p$ is a highly non-linear mapping trained on real data. The decoded trajectory in gene expression space can therefore exhibit complex, biologically plausible dynamics. But it depends highly on whether the decoder has learned the real data manifold well.
+**Could the decoded path be non-trivial?** Although the latent-space path is geometrically simple, the VAE decoder $D: \mathbb{R}^d \to \mathbb{R}^p$ is a highly non-linear mapping trained on real data. The decoded trajectory in gene-expression space can therefore exhibit complex, biologically plausible dynamics. This depends on whether the decoder has learned the real data manifold well.
 
 #### Extension to Branching Trajectories
 
-To simulate non-linear topologies (e.g., bifurcations), we define **multiple OT paths** sharing common segments. For example, given three states A (progenitor), B (intermediate), C and D (two terminal fates):
+To simulate non-linear topologies such as bifurcations, we define multiple affine interpolation paths sharing common segments. For example, given four states A (progenitor), B (intermediate), C and D (two terminal fates):
 
 ```gantt
-    A ────────B───── C
-              └───── D
+    A --------B----- C
+              |----- D
 ```
 
-This produces a bifurcating trajectory. The ground-truth topology and per-branch pseudo-time are known by construction. More complex topologies (converging, cyclic, multi-furcating) can be built by composing additional OT paths.
+This produces a bifurcating trajectory. The ground-truth topology and per-branch pseudo-time are known by construction. More complex topologies, such as converging, cyclic, or multi-furcating trajectories, can be built by composing additional affine interpolation segments.
 
-**Data availability.** Datasets containing cells from two or more known discrete states are common in practice: time-course differentiation experiments, reprogramming studies, and embryonic development atlases routinely provide cells labelled by developmental stage or cell type. This makes the "known states" assumption realistic.
+**Data availability.** Datasets containing cells from two or more known discrete states are common in practice: time-course differentiation experiments, reprogramming studies, and embryonic development atlases routinely provide cells labelled by developmental stage or cell state. This makes the "known states" assumption realistic.
 
 #### Controlling Discrepancy between Two Branches
 
-Beyond producing a bifurcation with known topology, we want a continuous knob for **how different the two daughter branches look**, from nearly indistinguishable (low discrepancy) to strongly diverging (high discrepancy). This is what lets us stress-test TI methods on their ability to *resolve* branches, not just order cells within one branch.
+Beyond producing a bifurcation with known topology, we want a continuous knob for **how different the two daughter branches look**, from nearly indistinguishable (low discrepancy) to strongly diverging (high discrepancy). This lets us stress-test TI methods on their ability to resolve branches, not just order cells within one branch.
 
-We expose three approximately independent knobs. All three operate in the non-batch biological subspace and reduce to affine/OT operations.
+We expose three approximately independent knobs. All three operate in the non-batch biological subspace and reduce to sample-linear affine interpolation.
 
-**1. Direction and length $(u, r)$ — geometric knob.** A branch is characterised by the displacement vector $d = r \cdot u$ from the shared start $A$ to the branch endpoint, where $u$ is a unit direction and $r \ge 0$ is a length. Given a start distribution $\mathcal{N}(\mu_A, \Sigma_A)$ and a target covariance $\Sigma_{\text{target}}$ (defaulting to $\Sigma_A$, so at $\alpha = 1$ the branch is a pure translation of $A$), the branch is generated by Gaussian OT from $\mathcal{N}(\mu_A, \Sigma_A)$ to $\mathcal{N}(\mu_A + d,\ \Sigma_{\text{target}})$ with $\alpha \in [0, 1]$ indexing pseudo-time. Sharing $\Sigma_{\text{target}}$ across the two branches makes the cosine similarity $\langle u_1, u_2 \rangle$ a clean one-parameter characterisation of *directional* discrepancy, and $r$ independently controls how far each branch travels. Constructing the $u$ vectors (from real endpoints, rotations, etc.) is the caller's responsibility and lives outside this function.
+**1. Direction and length $(u, r)$: geometric knob.** A branch is characterised by the displacement vector $d = r \cdot u$ from the shared start $A$ to the branch endpoint, where $u$ is a unit direction and $r \ge 0$ is a length. Given a start distribution with moments $(\mu_A, \Sigma_A)$ and a target covariance $\Sigma_{\text{target}}$ (defaulting to $\Sigma_A$, so the branch is a pure translation at $\alpha = 1$), the branch endpoint moments are:
 
-Our existing trajectory interpolation between two observed states becomes a wrapper of this more general primitive, with $d = \mu_{\text{end}} - \mu_A$ and $\Sigma_{\text{target}} = \Sigma_{\text{end}}$.
+$$
+\mu_{\text{target}} = \mu_A + d, \qquad \Sigma_{\text{target}}.
+$$
 
-**2. Branch-point position $\tau$ — topological knob.** Instead of splitting at the root, pick a third observed state $W$ to act as a shared waypoint and split at pseudo-time $\tau \in [0, 1]$. Run three independent OT interpolations — $A \to W$, $W \to B$, $W \to C$ — each over $\alpha \in [0, 1]$, and map them onto a common pseudo-time axis by rescaling:
+The branch is generated by applying the affine interpolation primitive from $(\mu_A, \Sigma_A)$ to $(\mu_{\text{target}}, \Sigma_{\text{target}})$, with $\alpha \in [0, 1]$ indexing pseudo-time. Sharing $\Sigma_{\text{target}}$ across two branches makes the cosine similarity $\langle u_1, u_2 \rangle$ a clean one-parameter characterisation of directional discrepancy, while $r$ independently controls how far each branch travels. Constructing the $u$ vectors, for example from real endpoints or controlled rotations, is the caller's responsibility and lives outside this primitive.
+
+The existing trajectory interpolation between two observed states is a special case, with $d = \mu_{\text{end}} - \mu_A$ and $\Sigma_{\text{target}} = \Sigma_{\text{end}}$.
+
+**2. Branch-point position $\tau$: topological knob.** Instead of splitting at the root, pick a third observed state $W$ to act as a shared waypoint and split at pseudo-time $\tau \in [0, 1]$. Run three independent affine interpolations, $A \to W$, $W \to B$, and $W \to C$, each over $\alpha \in [0, 1]$, and map them onto a common pseudo-time axis by rescaling:
 
 $$
 t_{\text{trunk}} = \tau \cdot \alpha, \qquad t_{\text{branch}} = \tau + (1 - \tau) \cdot \alpha.
 $$
 
-Because the Wasserstein geodesic is invariant under monotone reparametrisations of $\alpha$, this rescaling is purely a relabelling of pseudo-time and leaves the per-$t$ distributions unchanged. Cell counts should be allocated proportionally (trunk $\propto \tau$, each branch $\propto 1 - \tau$) to keep density uniform in pseudo-time, and per-cell continuity at $\tau$ can be enforced by using the trunk's $\alpha = 1$ samples as the start of each branch. $\tau \to 0$ recovers a "split at the root" bifurcation; $\tau \to 1$ gives a near-linear trajectory with a very late split. This knob controls discrepancy *without touching the endpoints*, and maps directly onto a ground-truth quantity that TI methods are themselves supposed to estimate.
+This rescaling is purely a relabelling of pseudo-time and leaves the per-segment interpolation unchanged. Cell counts can be allocated proportionally (trunk $\propto \tau$, each branch $\propto 1 - \tau$) to keep density roughly uniform in pseudo-time, and per-cell continuity at $\tau$ can be enforced by using the trunk's $\alpha = 1$ samples as the start of each branch. $\tau \to 0$ recovers a split at the root; $\tau \to 1$ gives a near-linear trajectory with a very late split. This knob controls discrepancy without changing the endpoints, and maps directly onto a ground-truth quantity that TI methods are expected to estimate.
 
-**3. Noise scale $\sigma$** Orthogonal to geometry and topology, per-branch isotropic Gaussian noise controls the SNR at which the branches are seen. Fixing other parameters and sweeping $\sigma$ gives an SNR-based discrepancy axis that is expected to stress different TI methods differently (graph-based vs. principal-curve vs. diffusion-map).
+**3. Noise scale $\sigma$: SNR knob.** Orthogonal to geometry and topology, per-branch isotropic Gaussian noise controls the signal-to-noise ratio at which branches are observed. Fixing other parameters and sweeping $\sigma$ gives an SNR-based discrepancy axis that is expected to stress different TI methods differently, such as graph-based methods, principal-curve methods, and diffusion-map methods.
+
+### Possible Extensions: Empirical OT
+
+Empirical OT between finite samples and cell-type-stratified affine maps remain possible future extensions. Empirical OT targets a discrete coupling, whereas the methods above use a closed-form sample-linear affine map.
 
 ---
 
@@ -367,7 +354,7 @@ We check the normality assumption by a Mahalanobis QQ plot.
 
 ![Mahalanobis QQ Plot](../experiments/outputs/2026-04-28/17-12-37_batch_latent_gaussianity/results/mahalanobis_qq_by_batch.png)
 
-It seems that the Gaussian assumption does not hold for the batch latents. 
+It seems that the Gaussian assumption does not hold for the batch latents.
 
 We then check the covariance structure by a covariance spectra and relative Frobenius heatmap.
 
