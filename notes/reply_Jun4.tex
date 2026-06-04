@@ -22,9 +22,9 @@ latent distribution more accurately. This is analogous to latent diffusion in
 image generation: the VAE learns a compressed representation, and the
 diffusion model learns the distribution of that representation.
 
-This also explains how our goal differs from scVI. scVI is mainly designed for representation learning, denoising, and batch correction. It
+This also explains how our goal differs from scVI. scVI is mainly designed for representation learning and batch correction. It
 can produce posterior samples, but those are not from the standard generation procedure discussed above. They are closer to
-reconstruction or imputation than to genuine simulation. If $x$ is an
+reconstruction than to genuine simulation. If $x$ is an
 observed cell, the provided interface \texttt{posterior\_predictive\_sample()} samples
 from $p_\theta(\hat{x}\mid x)$, that is, the observed cell is first encoded and
 then decoded. This can give very realistic-looking samples, but each synthetic
@@ -32,23 +32,24 @@ cell is still anchored to a real input cell. It cannot
 generate new datasets of arbitrary size without providing matching real
 cells.
 
-One can also sample from the scVI prior, but raw-count generation still
-requires specifying library sizes. In posterior sampling the library size comes
-from the observed cell; in prior sampling it must be supplied or borrowed from
-real cells. Our current model instead works in log-normalised expression
-space, so library size is removed before training. Once the VAE and latent
-diffusion model are trained, we can sample new latents and decode them without
-providing an input cell or an observed library size. The trade-off is that our
-model is more complex than scVI and currently does not directly simulate raw
-library-size variation. Its advantage is that it is designed for controllable simulation, especially when we want to vary signals such as batch
-effect strength or trajectory structure.
+The more relevant comparison is sampling from the prior, which means drawing
+$z \sim \mathcal{N}(0,I)$ and then decoding it with the scVI decoder. They did not provide any interface for this, but I managed to do it by calling some internal functions. It truns out that the sample quality is usually much worse, where the UMAP below illustrates this
+point. This suggests that VAE alone is not
+accurate enough as a sampler for the learned latent space.
+
+On the other hand, with a latent diffusion model, we can
+generate cells by sampling new latents and decoding them, but with much
+better sample quality than direct sampling from the VAE. The main advantage is that we
+aim for high-quality genuine simulation while also keeping latent-space
+controls for signals such as batch effect strength. The disadvantage is that we need to train and sample from an additional diffusion model, and we have to working on log-normalized space instead of raw counts since the library size variations is very hard to learn with limited data.
+
+In short, our model is not a replacement for scVI. scVI focuses on representation learning and batch correction, whereas our model is more focused on high-quality simulation with controllable latent factors, which is a different but complementary goal.
 
 \begin{center}
-    \includegraphics[width=0.62\textwidth]{scvi_umap.png}
+    \includegraphics[width=0.8\textwidth]{scvi_umap.png}
 \end{center}
 
-For question 2, I would interpret the latent blocks as supervised subspaces,
-not as individually interpretable biological coordinates. For example, we may
+For question 2, I would interpret the latent blocks as supervised subspaces. For example, we may
 write $z=(z_{\mathrm{cell}}, z_{\mathrm{batch}}, z_{\mathrm{residual}})$.
 During VAE training, classification heads encourage cell-type information to
 concentrate in $z_{\mathrm{cell}}$ and batch information to concentrate in
@@ -57,15 +58,11 @@ can shift only the batch block to introduce a batch effect while keeping the
 cell-type block fixed.
 
 The number of blocks is determined by the factors we want to control or
-protect. In the current project, the natural choices are cell type, batch, and
-residual biological variation. The dimension of each block is a hyperparameter:
-large enough to encode the target factor, but not so large that it absorbs
-unrelated variation. We choose it empirically by checking disentanglement: the
+protect. In the current project, the natural choices are cell type and batch labels. The dimension of each block is a hyperparameter:
+large enough to encode the target factor, but not so large that it occupies most of the latent space. We choose it empirically by checking disentanglement: the
 intended label should be predictable from its own block, but much less
 predictable from the other blocks, while reconstruction and simulation quality
-remain stable. So the blocks are best viewed as practical control devices,
-rather than a literal decomposition of biology into independent mechanisms.
-
+remain stable. Our current choice is 16 dimensions over a total of 128 dimensions for both cell type and batch labels, which seems to work well.
 Best,
 
 Langtian
