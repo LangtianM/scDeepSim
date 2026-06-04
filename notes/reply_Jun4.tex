@@ -1,0 +1,73 @@
+\documentclass{article}
+\usepackage[english]{babel}
+\usepackage{amsmath,graphicx}
+\usepackage{geometry}
+\graphicspath{{notes/assets/}{assets/}}
+
+\begin{document}
+\small
+
+I would answer questions 1 and 3 together, since they are closely
+related.
+
+The VAE in our model is mainly for representation learning and compression. It gives a lower-dimensional latent space where manipulation is easier, but
+direct VAE sampling is usually not accurate enough for single-cell simulation.
+In principle, a standard VAE samples $z \sim \mathcal{N}(0,I)$ and then
+$\hat{x} \sim p_\theta(x\mid z)$. This assumes that the decoder $p_\theta$ has learned a
+good map from a Gaussian prior to the data distribution. In practice,
+the encoded single-cell latents are much more complicated and sampling directly from
+$\mathcal{N}(0,I)$ can therefore land in regions that do not match the
+empirical latent distribution well. The diffusion model is added to learn this
+latent distribution more accurately. This is analogous to latent diffusion in
+image generation: the VAE learns a compressed representation, and the
+diffusion model learns the distribution of that representation.
+
+This also explains how our goal differs from scVI. scVI is mainly designed for representation learning, denoising, and batch correction. It
+can produce posterior samples, but those are not from the standard generation procedure discussed above. They are closer to
+reconstruction or imputation than to genuine simulation. If $x$ is an
+observed cell, the provided interface \texttt{posterior\_predictive\_sample()} samples
+from $p_\theta(\hat{x}\mid x)$, that is, the observed cell is first encoded and
+then decoded. This can give very realistic-looking samples, but each synthetic
+cell is still anchored to a real input cell. It cannot 
+generate new datasets of arbitrary size without providing matching real
+cells.
+
+One can also sample from the scVI prior, but raw-count generation still
+requires specifying library sizes. In posterior sampling the library size comes
+from the observed cell; in prior sampling it must be supplied or borrowed from
+real cells. Our current model instead works in log-normalised expression
+space, so library size is removed before training. Once the VAE and latent
+diffusion model are trained, we can sample new latents and decode them without
+providing an input cell or an observed library size. The trade-off is that our
+model is more complex than scVI and currently does not directly simulate raw
+library-size variation. Its advantage is that it is designed for controllable simulation, especially when we want to vary signals such as batch
+effect strength or trajectory structure.
+
+\begin{center}
+    \includegraphics[width=0.62\textwidth]{scvi_umap.png}
+\end{center}
+
+For question 2, I would interpret the latent blocks as supervised subspaces,
+not as individually interpretable biological coordinates. For example, we may
+write $z=(z_{\mathrm{cell}}, z_{\mathrm{batch}}, z_{\mathrm{residual}})$.
+During VAE training, classification heads encourage cell-type information to
+concentrate in $z_{\mathrm{cell}}$ and batch information to concentrate in
+$z_{\mathrm{batch}}$. This gives us handles for intervention: for example, we
+can shift only the batch block to introduce a batch effect while keeping the
+cell-type block fixed.
+
+The number of blocks is determined by the factors we want to control or
+protect. In the current project, the natural choices are cell type, batch, and
+residual biological variation. The dimension of each block is a hyperparameter:
+large enough to encode the target factor, but not so large that it absorbs
+unrelated variation. We choose it empirically by checking disentanglement: the
+intended label should be predictable from its own block, but much less
+predictable from the other blocks, while reconstruction and simulation quality
+remain stable. So the blocks are best viewed as practical control devices,
+rather than a literal decomposition of biology into independent mechanisms.
+
+Best,
+
+Langtian
+
+\end{document}
