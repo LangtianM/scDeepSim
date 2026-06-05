@@ -18,3 +18,10 @@ experiments/multirun/*
 *.pdf
 experiments/notebooks/data/Pancreas/endocrinogenesis_day15.h5ad
 AGENTS.md
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
+notes/assets/*
+notes/reply_Jun4.tex

@@ -13,7 +13,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Interpretation: Our model learns realistic data distribution while supporting control over interpretable signal axes.
 - Status: Not implemented.
 
-### Figure. Quality-Control Tradeoff
+### Figure. Quality-Control Tradeoff (Optional)
 
 - Problem: Existing simulators are either realistic but hard to control, or controllable but less realistic.
 - Implementation: Table comparing methods by simulation quality and controllability. Candidate methods: scDeepSim, scDesign3, Splatter.
@@ -24,23 +24,26 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 - Problem: Does the latent space contain disentangled subspaces that make targeted control possible?
 
-- Panel A: Latent Vector layout schematic
+- Implementation: Latent Vector layout schematic aligned with a covariate predicatability heatmap.
   
-  ```
-  z = [ z_celltype | z_batch | z_residual ]
-  ```
-
-- Panel B: Covariate predictability heatmap
-  
-  - Rows: labels to predict, e.g. cell type, batch.
-  
-  - Columns: latent subspaces, e.g. cell-type, batch, residual.
+  - Latent Vector layout schematic:
     
-    Each cell shows the accuracy.
+    ```
+    z = [ z_celltype | z_batch | z_residual ]
+    ```
+  
+  - Covariate predictability heatmap
+    
+    - Rows: labels to predict, e.g. cell type, batch.
+    
+    - Columns: latent subspaces, e.g. cell-type, batch, residual.
+      
+      Each cell shows the accuracy.
+  
+  - A scratch of assembled result:
+    ![scratch](assets/heatmap_scratch.png)
 
 - Interpretation: Disentanglement concentrates controlled factors into assigned subspaces, supporting targeted latent-space control.
-
-- Status: Panels A and B not yet implemented.
 
 ### Figure 3. Uncontrolled Simulation Quality
 
