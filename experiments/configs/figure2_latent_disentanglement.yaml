@@ -1,0 +1,44 @@
+seed: 42
+
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+
+data:
+  n_cells: null
+  n_genes: 2000
+  min_genes: 10
+  min_cells: 2
+  celltype_key: celltype
+  batch_key: sequencing.batch
+
+vae:
+  latent_dim: 128
+  enc_hidden: [512, 256]
+  dec_hidden: [256, 512]
+  input_dropout: 0.1
+  beta: 1.0
+  beta_warmup_epochs: 10
+  zero_inflated: true
+  sup_head_hidden: 64
+  max_epochs: 100
+  batch_size: 256
+
+supervision:
+  celltype_weight: 5.0
+  celltype_latent_dims: 32
+  batch_weight: 5.0
+  batch_latent_dims: 32
+
+eval:
+  rf_n_estimators: 100
+  rf_max_depth: 10
+  test_size: 0.2
+
+figure:
+  cmap: viridis
+  dpi: 300
+
+hydra:
+  run:
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure2_latent_disentanglement
