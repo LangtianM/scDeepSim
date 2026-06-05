@@ -1,0 +1,159 @@
+seed: 42
+
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+
+data:
+  n_cells: 16000
+  n_genes: 10000
+  min_genes: 10
+  min_cells: 2
+  celltype_key: celltype
+  batch_key: sequencing.batch
+
+# Canonical method keys only. scDiffusion can use a precomputed sample_path,
+# a custom command, or the built-in end-to-end external runner below.
+methods: [scdeepsim, scdiffusion, scvi_prior, scdesign3, zinbwave]
+
+vae:
+  latent_dim: 128
+  enc_hidden: [512, 256]
+  dec_hidden: [256, 512]
+  dropout: 0.1
+  input_dropout: 0.1
+  beta: 1.0
+  beta_warmup_epochs: 10
+  zero_inflated: true
+  sup_head_hidden: 64
+  supervision_weight: 5.0
+  supervised_latent_dims: 32
+  epochs: 100
+  batch_size: 256
+  latent_statistic: posterior_sample
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+
+diffusion:
+  objective: pred_v
+  hidden_dims: [512, 256, 256, 128]
+  beta_schedule: linear
+  dropout: 0.05
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  use_ema: true
+  ema_decay: 0.999
+  guidance_dropout: 0.1
+  guidance_scale: 1.5
+  timesteps: 1000
+  sampling_steps: 1000
+  epochs: 200
+
+scvi:
+  max_epochs: 400
+  n_latent: 10
+  n_hidden: 128
+  n_layers: 1
+  gene_likelihood: zinb
+  use_celltype_covariate: true
+
+scdesign3:
+  conda_env: lightning
+  n_cores: 2
+  celltype: ${data.celltype_key}
+  mu_formula: celltype
+  sigma_formula: "1"
+  family_use: nb
+  corr_formula: celltype
+  copula: gaussian
+  copula_genes: all
+  usebam: false
+  if_sparse: false
+  fastmvn: false
+  DT: true
+  pseudo_obs: false
+  nonzerovar: false
+  parallelization: mcmapply
+
+zinbwave:
+  conda_env: lightning
+  use_celltype: true
+  K: 2
+  n_cores: 1
+  commondispersion: true
+  zeroinflation: true
+  nb_repeat_initialize: 2
+  maxiter_optimize: 25
+
+scdiffusion:
+  conda_env: scdiffusion
+  source_path: ${paths.root_dir}/experiments/external/scDiffusion
+  clone_url: git@github.com:EperLuo/scDiffusion.git
+  sample_path: null
+  output_space: normalized_log1p
+  command: []
+  command_workdir: ${scdiffusion.source_path}
+  expected_output_path: null
+  run_end_to_end: true
+  loader:
+    num_workers: 0
+    filter_data: false
+  vae:
+    max_steps: 5000
+    max_minutes: 3000
+    checkpoint_freq: 1000
+    batch_size: 128
+    hidden_dim: 128
+    seed: 0
+    loss_ae: mse
+    decoder_activation: ReLU
+    state_dict_path: null
+  diffusion:
+    model_name: figure3_scdiffusion_diffusion
+    lr: 1.0e-4
+    weight_decay: 1.0e-4
+    lr_anneal_steps: 10000
+    batch_size: 128
+    microbatch: -1
+    ema_rate: "0.9999"
+    save_interval: 20000
+    input_dim: ${scdiffusion.vae.hidden_dim}
+    hidden_dim: [512, 512, 256, 128]
+    dropout: 0.0
+    diffusion_steps: 1000
+    noise_schedule: linear
+    use_fp16: false
+  sampling:
+    batch_size: 1024
+    use_ddim: false
+    clip_denoised: false
+  decoding:
+    batch_size: 1024
+
+training:
+  enable_progress_bar: true
+  enable_model_summary: false
+
+eval:
+  n_samples: ${data.n_cells}
+  continue_on_baseline_failure: false
+  discriminability_method: rf
+  n_neighbors: 10
+  rf_n_estimators: 100
+  rf_max_depth: null
+  pca_components: null
+  max_discriminability_cells: null
+  compute_vae_reconstruction: true
+  save_intermediates: true
+  umap_n_neighbors: 15
+  umap_min_dist: 0.1
+  umap_max_cells_per_method: 2000
+  umap_equal_aspect: false
+
+figure:
+  dpi: 300
+  cmap: tab20
+
+hydra:
+  run:
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure3_uncontrolled_quality

@@ -48,9 +48,9 @@ The trade-off between simulation quality and controllability is not fundamental.
 ### Figure 3. Uncontrolled Simulation Quality
 
 - Problem: Does scDeepSim generate realistic single-cell data before applying any control?
-- Implementation: Compare real data, *VAE reconstruction*, VAE+Diffusion, and scDesign3 using UMAP, RF real-vs-simulated discriminability, and data statistiwcs (gene expression means, variances, zero proportions).
+- Implementation: Compare real data, VAE+Diffusion, scDiffusion, scVI prior sampling, scDesign3 and zinbwavesimulated data using UMAP, RF real-vs-simulated discriminability, and data statistiwcs (gene expression means, variances, zero proportions).
 - Interpretation: VAE+Diffusion gives more realistic data than baselines.
-- Status: Mostly available; needs final panel assembly. 
+- Status: Preliminary version avaliable.
   - Consider add more baseline simulators including zinbwave and scdiffusion
   - We should run a supervised version of our model for comparison with others. Consider the settings in [the batch interpolation experiment](../experiments/multirun/2026-04-07/22-35-18/0/.hydra/config.yaml)
   - The final figure in the paper should not include the VAE Reconstruction method.
@@ -152,7 +152,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ## Next Steps
 
-- Run covariate predictability experiments to confirm disentanglement produce figure 2. B.
+- Run covariate predictability experiments to confirm disentanglement produce figure 2. 
 - Compare with more baseline simulators for figure 3.
 - Assemble Figures 2-6 from existing outputs with consistent styling and labels.
 - Robustness experiments across an additional dataset.

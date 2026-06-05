@@ -8,6 +8,9 @@ checkpoints/*
 tests/*
 *.pyc
 experiments/outputs/*
+experiments/external/
+experiments/baseline_cache/
+experiments/baseline_scratch/
 *_plan.md
 .agents/
 .vscode/
