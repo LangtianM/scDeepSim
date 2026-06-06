@@ -100,6 +100,9 @@ zinbwave:
 
 scdiffusion:
   conda_env: scdiffusion
+  # auto prefers MPS on Apple Silicon, CUDA where available, then CPU.
+  # Use cpu only as a fallback if upstream scDiffusion hits an unsupported op.
+  device: auto
   source_path: ${paths.root_dir}/experiments/external/scDiffusion
   clone_url: git@github.com:EperLuo/scDiffusion.git
   sample_path: null

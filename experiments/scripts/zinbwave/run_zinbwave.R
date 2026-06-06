@@ -64,6 +64,34 @@ if (use_celltype && !celltype_key %in% colnames(metadata)) {
   stop(sprintf("celltype key '%s' not found in metadata", celltype_key))
 }
 
+cell_count_sums <- Matrix::colSums(counts)
+keep_cells <- cell_count_sums > 0
+if (!all(keep_cells)) {
+  dropped <- sum(!keep_cells)
+  message(sprintf(
+    "Dropping %d zero-count cell(s) before ZINB-WaVE fitting: %s",
+    dropped,
+    paste(metadata$cell_id[!keep_cells], collapse = ", ")
+  ))
+  counts <- counts[, keep_cells, drop = FALSE]
+  metadata <- metadata[keep_cells, , drop = FALSE]
+}
+if (ncol(counts) == 0) {
+  stop("No nonzero-count cells remain for ZINB-WaVE fitting")
+}
+
+gene_count_sums <- Matrix::rowSums(counts)
+keep_genes <- gene_count_sums > 0
+if (!all(keep_genes)) {
+  dropped <- sum(!keep_genes)
+  message(sprintf("Dropping %d zero-count gene(s) before ZINB-WaVE fitting", dropped))
+  counts <- counts[keep_genes, , drop = FALSE]
+  genes <- genes[keep_genes, , drop = FALSE]
+}
+if (nrow(counts) == 0) {
+  stop("No nonzero-count genes remain for ZINB-WaVE fitting")
+}
+
 rownames(counts) <- make.unique(as.character(genes$gene_id))
 colnames(counts) <- make.unique(as.character(metadata$cell_id))
 rownames(metadata) <- colnames(counts)
