@@ -44,7 +44,7 @@ maxiter_optimize <- as.integer(args[[14]])
 
 set.seed(seed)
 
-counts <- Matrix::readMM(counts_path)
+counts <- methods::as(Matrix::readMM(counts_path), "CsparseMatrix")
 genes <- read.csv(genes_path, stringsAsFactors = FALSE)
 metadata <- read.csv(metadata_path, stringsAsFactors = FALSE, check.names = FALSE)
 

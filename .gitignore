@@ -11,6 +11,9 @@ experiments/outputs/*
 experiments/external/
 experiments/baseline_cache/
 experiments/baseline_scratch/
+experiments/renv/cache/
+experiments/renv/root/
+experiments/renv/sandbox/
 *_plan.md
 .agents/
 .vscode/
@@ -28,3 +31,4 @@ AGENTS.md
 *.synctex.gz
 notes/assets/*
 notes/reply_Jun4.tex
+experiments/renv/*

@@ -7,10 +7,12 @@ paths:
 cache:
   enabled: true
   dir: ${paths.root_dir}/experiments/baseline_cache/figure3_uncontrolled_quality
+  reuse_samples: true
   reuse_scdeepsim: true
   reuse_scdiffusion: true
   reuse_scvi: true
   force_retrain: false
+  force_resimulate: false
 
 data:
   n_cells: 5000
@@ -86,7 +88,8 @@ scdesign3:
   parallelization: mcmapply
 
 zinbwave:
-  conda_env: lightning
+  rscript: /usr/local/bin/Rscript
+  renv_project: ${paths.root_dir}/experiments/renv/zinbwave
   use_celltype: true
   K: 2
   n_cores: 1
@@ -146,7 +149,7 @@ training:
 
 eval:
   n_samples: ${data.n_cells}
-  continue_on_baseline_failure: false
+  continue_on_baseline_failure: true
   discriminability_method: rf
   n_neighbors: 10
   rf_n_estimators: 100

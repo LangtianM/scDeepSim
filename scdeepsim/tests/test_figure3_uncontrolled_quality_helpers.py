@@ -15,13 +15,21 @@ from experiments.scripts.figure3_uncontrolled_quality import (
     MethodOutput,
     as_dense,
     build_scdeepsim_cache_paths,
+    build_sample_cache_paths,
     build_scdiffusion_cache_paths,
     build_scdiffusion_runner_paths,
     build_metrics_table,
     failed_method_output,
+    load_sample_cache,
     load_sample_matrix,
     method_order,
     normalize_log1p_counts,
+    require_executable,
+    run_method_with_sample_cache,
+    sample_cache_key_payload,
+    save_sample_cache,
+    zinbwave_renv_env,
+    zinbwave_renv_project,
     write_scdiffusion_input,
 )
 
@@ -44,6 +52,37 @@ def test_failed_method_output_metadata():
     assert output.status == "failed"
     assert output.error == "missing R package"
     assert output.include_in_main is False
+
+
+def test_zinbwave_runtime_uses_project_renv(tmp_path):
+    rscript = tmp_path / "Rscript"
+    rscript.write_text("#!/bin/sh\n")
+    rscript.chmod(0o755)
+    renv_project = tmp_path / "zinbwave_renv"
+    activate = renv_project / "renv" / "activate.R"
+    activate.parent.mkdir(parents=True)
+    activate.write_text("")
+    cfg = OmegaConf.create(
+        {"zinbwave": {"rscript": str(rscript), "renv_project": str(renv_project)}}
+    )
+
+    assert require_executable(cfg.zinbwave.rscript, "ZINB-WaVE") == str(rscript)
+    assert zinbwave_renv_project(cfg) == renv_project
+
+
+def test_zinbwave_renv_env_scrubs_inherited_r_settings(monkeypatch):
+    monkeypatch.setenv("R_HOME", "/tmp/conda/R")
+    monkeypatch.setenv("R_LIBS", "/tmp/conda/libs")
+    monkeypatch.setenv("R_LIBS_USER", "/tmp/user/libs")
+    monkeypatch.setenv("R_LIBS_SITE", "/tmp/site/libs")
+
+    env = zinbwave_renv_env()
+
+    assert "R_HOME" not in env
+    assert "R_LIBS" not in env
+    assert "R_LIBS_USER" not in env
+    assert "R_LIBS_SITE" not in env
+    assert env["RENV_PATHS_CACHE"].endswith("experiments/renv/cache")
 
 
 def test_normalize_log1p_counts_preserves_shape_and_zeros():
@@ -207,3 +246,140 @@ def test_build_metrics_table_includes_failed_rows():
     assert metrics["method_key"].tolist() == ["real", "scdeepsim", "zinbwave"]
     assert metrics.loc[metrics["method_key"] == "zinbwave", "status"].item() == "failed"
     assert metrics.loc[metrics["method_key"] == "scdeepsim", "auc"].notna().item()
+
+
+def sample_cache_cfg(tmp_path):
+    return OmegaConf.create(
+        {
+            "seed": 7,
+            "paths": {"data_path": str(tmp_path / "data.h5ad")},
+            "cache": {
+                "enabled": True,
+                "dir": str(tmp_path / "cache"),
+                "reuse_samples": True,
+                "force_resimulate": False,
+            },
+            "data": {"n_cells": 2, "n_genes": 2},
+            "eval": {"n_samples": 2, "compute_vae_reconstruction": False},
+            "vae": {"latent_dim": 4, "epochs": 1, "latent_statistic": "posterior_mean"},
+            "diffusion": {"sampling_steps": 2, "epochs": 1},
+        }
+    )
+
+
+def sample_cache_adata():
+    return ad.AnnData(
+        X=np.array([[0, 1], [2, 3]], dtype=np.float32),
+        obs=pd.DataFrame({"celltype": ["a", "b"]}, index=["c1", "c2"]),
+        var=pd.DataFrame(index=["g1", "g2"]),
+    )
+
+
+def test_sample_cache_key_changes_with_config_and_selection(tmp_path):
+    adata = sample_cache_adata()
+    cfg = sample_cache_cfg(tmp_path)
+
+    key = build_sample_cache_paths("scdeepsim", adata, cfg)["key"]
+    assert key == build_sample_cache_paths("scdeepsim", adata, cfg)["key"]
+
+    seed_cfg = OmegaConf.merge(cfg, {"seed": 8})
+    assert build_sample_cache_paths("scdeepsim", adata, seed_cfg)["key"] != key
+
+    eval_cfg = OmegaConf.merge(cfg, {"eval": {"n_samples": 3}})
+    assert build_sample_cache_paths("scdeepsim", adata, eval_cfg)["key"] != key
+
+    changed_selection = adata[:, ["g1"]].copy()
+    assert build_sample_cache_paths("scdeepsim", changed_selection, cfg)["key"] != key
+
+    payload = sample_cache_key_payload("scdeepsim", adata, cfg)
+    assert payload["output_space"] == "normalized_log1p"
+    assert payload["eval"]["n_samples"] == 2
+
+
+def test_sample_cache_round_trip_preserves_output(tmp_path):
+    adata = sample_cache_adata()
+    cfg = sample_cache_cfg(tmp_path)
+    paths = build_sample_cache_paths("scdeepsim", adata, cfg)
+    output = MethodOutput(
+        key="scdeepsim",
+        x=np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+        labels=np.array(["a", "b"]),
+        runtime_seconds=12.5,
+        metadata={"source": "fake"},
+        reference_dependent=False,
+    )
+
+    cache_dir = save_sample_cache(output, paths)
+    loaded = load_sample_cache("scdeepsim", paths)
+
+    assert cache_dir == paths["dir"]
+    assert loaded is not None
+    assert loaded.x.tolist() == output.x.tolist()
+    assert loaded.labels.tolist() == ["a", "b"]
+    assert loaded.runtime_seconds == 0.0
+    assert loaded.metadata["source"] == "fake"
+    assert loaded.metadata["sample_cache"]["hit"] is True
+    assert loaded.include_in_main is True
+    assert loaded.reference_dependent is False
+
+
+def test_sample_cache_skips_failed_outputs(tmp_path):
+    adata = sample_cache_adata()
+    cfg = sample_cache_cfg(tmp_path)
+    paths = build_sample_cache_paths("zinbwave", adata, cfg)
+
+    result = save_sample_cache(failed_method_output("zinbwave", "missing package"), paths)
+
+    assert result is None
+    assert not paths["dir"].exists()
+
+
+def test_run_method_with_sample_cache_uses_cache_and_retries_failures(tmp_path):
+    adata = sample_cache_adata()
+    cfg = sample_cache_cfg(tmp_path)
+    cached_paths = build_sample_cache_paths("cached", adata, cfg)
+    save_sample_cache(
+        MethodOutput(
+            key="cached",
+            x=np.ones((2, 2), dtype=np.float32),
+            labels=np.array(["a", "b"]),
+        ),
+        cached_paths,
+    )
+
+    calls = {"cached": 0, "new": 0, "failed": 0}
+
+    cached_outputs, cached_hit = run_method_with_sample_cache(
+        "cached",
+        lambda: calls.__setitem__("cached", calls["cached"] + 1) or [],
+        adata,
+        cfg,
+    )
+    assert cached_hit is True
+    assert calls["cached"] == 0
+    assert cached_outputs[0].metadata["sample_cache"]["hit"] is True
+
+    def run_new():
+        calls["new"] += 1
+        return [MethodOutput(key="new", x=np.zeros((2, 2), dtype=np.float32))]
+
+    new_outputs, new_hit = run_method_with_sample_cache("new", run_new, adata, cfg)
+    assert new_hit is False
+    assert calls["new"] == 1
+    assert new_outputs[0].metadata["sample_cache"]["hit"] is False
+    assert build_sample_cache_paths("new", adata, cfg)["dir"].exists()
+
+    def run_failed():
+        calls["failed"] += 1
+        raise RuntimeError("boom")
+
+    try:
+        run_method_with_sample_cache("failed", run_failed, adata, cfg)
+    except RuntimeError as exc:
+        failed = failed_method_output("failed", exc)
+    else:
+        raise AssertionError("expected fake method failure")
+
+    assert calls["failed"] == 1
+    assert failed.status == "failed"
+    assert not build_sample_cache_paths("failed", adata, cfg)["dir"].exists()

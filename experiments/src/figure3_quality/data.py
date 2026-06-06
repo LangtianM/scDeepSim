@@ -1,0 +1,142 @@
+"""Data loading, preprocessing, and fingerprinting for Figure 3."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+import anndata as ad
+import numpy as np
+import pandas as pd
+import scanpy as sc
+from omegaconf import DictConfig
+
+from .common import as_dense, optional_int, resolve_path, root, stable_hash
+
+log = logging.getLogger(__name__)
+
+
+def path_fingerprint(path_like: Any) -> dict[str, Any]:
+    """Fingerprint a local file path by path, size, and mtime when available."""
+    path = resolve_path(path_like)
+    if path is None:
+        return {"path": None, "exists": False}
+    payload: dict[str, Any] = {"path": str(path), "exists": path.exists()}
+    if path.exists():
+        stat = path.stat()
+        payload.update({"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)})
+    return payload
+
+
+def adata_selection_fingerprint(adata: ad.AnnData) -> dict[str, Any]:
+    """Fingerprint the selected cells/genes without hashing the full matrix."""
+    return {
+        "shape": [int(adata.n_obs), int(adata.n_vars)],
+        "obs_names_hash": stable_hash(adata.obs_names.astype(str).tolist()),
+        "var_names_hash": stable_hash(adata.var_names.astype(str).tolist()),
+    }
+
+
+def subset_hvgs(adata: ad.AnnData, n_genes: int) -> ad.AnnData:
+    """Select HVGs, falling back to raw variance for tiny singular subsets."""
+    try:
+        sc.pp.highly_variable_genes(
+            adata, flavor="seurat_v3", n_top_genes=n_genes
+        )
+        return adata[:, adata.var["highly_variable"]].copy()
+    except Exception as exc:
+        log.warning(
+            "Seurat v3 HVG selection failed (%s); using top raw-count variance genes.",
+            exc,
+        )
+        x = as_dense(adata.X)
+        top_idx = np.argsort(np.var(x, axis=0))[-n_genes:]
+        top_idx = np.sort(top_idx)
+        return adata[:, top_idx].copy()
+
+
+def normalize_log1p_counts(counts: np.ndarray, target_sum: float = 1e4) -> np.ndarray:
+    """Normalize raw count matrix to counts-per-target-sum and log1p."""
+    counts = np.rint(np.clip(as_dense(counts), 0, None)).astype(np.float32)
+    sim_adata = ad.AnnData(X=counts)
+    sc.pp.normalize_total(sim_adata, target_sum=target_sum)
+    sc.pp.log1p(sim_adata)
+    return as_dense(sim_adata.X).astype(np.float32)
+
+
+def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
+    """Load counts, pick one shared cell/HVG subset, and normalize a copy."""
+    rng = np.random.default_rng(int(cfg.seed))
+    adata = sc.read_h5ad(cfg.paths.data_path)
+    adata.var_names_make_unique()
+    sc.pp.filter_cells(adata, min_genes=int(cfg.data.min_genes))
+    sc.pp.filter_genes(adata, min_cells=int(cfg.data.min_cells))
+
+    if cfg.data.celltype_key not in adata.obs:
+        raise ValueError(f"Missing celltype column: {cfg.data.celltype_key}")
+    if cfg.data.batch_key is not None and cfg.data.batch_key not in adata.obs:
+        raise ValueError(f"Missing batch column: {cfg.data.batch_key}")
+
+    n_cells = optional_int(cfg.data.n_cells)
+    if n_cells is not None:
+        if n_cells > adata.n_obs:
+            raise ValueError(
+                f"Requested {n_cells} cells, but only {adata.n_obs} remain after filtering."
+            )
+        idx = rng.choice(adata.n_obs, size=n_cells, replace=False)
+        adata = adata[idx].copy()
+    else:
+        adata = adata.copy()
+
+    n_genes = optional_int(cfg.data.n_genes)
+    if n_genes is not None and n_genes < adata.n_vars:
+        adata = subset_hvgs(adata, n_genes)
+    elif n_genes is not None and n_genes > adata.n_vars:
+        log.warning(
+            "Requested %d genes, but only %d are available after filtering; using all genes.",
+            n_genes,
+            adata.n_vars,
+        )
+
+    adata.obs["celltype"] = adata.obs[cfg.data.celltype_key].astype(str)
+    if cfg.data.batch_key is not None:
+        adata.obs["batch"] = adata.obs[cfg.data.batch_key].astype(str)
+
+    adata_raw = adata.copy()
+    adata_raw.X = np.rint(np.clip(as_dense(adata_raw.X), 0, None)).astype(np.float32)
+
+    adata_norm = adata.copy()
+    adata_norm.X = as_dense(adata_norm.X).astype(np.float32)
+    sc.pp.normalize_total(adata_norm, target_sum=1e4)
+    sc.pp.log1p(adata_norm)
+    adata_norm.X = as_dense(adata_norm.X).astype(np.float32)
+
+    log.info("Shared data shape: %s", adata_norm.shape)
+    return adata_norm, adata_raw
+
+
+def load_sample_matrix(path: Path) -> np.ndarray:
+    """Load a sample matrix from npy, npz, csv, tsv, or h5ad."""
+    if not path.exists():
+        raise FileNotFoundError(path)
+    suffix = path.suffix.lower()
+    if suffix == ".npy":
+        return np.asarray(np.load(path))
+    if suffix == ".npz":
+        archive = np.load(path)
+        for key in ("samples", "cell_gen"):
+            if key in archive.files:
+                return np.asarray(archive[key])
+        for key in archive.files:
+            value = np.asarray(archive[key])
+            if value.ndim == 2:
+                return value
+        raise ValueError(f"No 2D sample matrix found in {path}")
+    if suffix == ".h5ad":
+        return as_dense(sc.read_h5ad(path).X)
+    if suffix == ".csv":
+        return pd.read_csv(path, index_col=0).to_numpy()
+    if suffix == ".tsv":
+        return pd.read_csv(path, sep="\t", index_col=0).to_numpy()
+    raise ValueError(f"Unsupported sample file extension for {path}")
