@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import umap
+from matplotlib.lines import Line2D
 from omegaconf import DictConfig
 
 from .common import METHOD_COLORS, METHOD_DISPLAY_NAMES, MethodOutput, method_order, optional_int
@@ -87,6 +88,38 @@ def label_color_dict(records: list[dict[str, Any]], cmap: str) -> dict[str, Any]
     return {label: colormap(i / denom) for i, label in enumerate(unique)}
 
 
+def add_celltype_legend(fig: plt.Figure, colors: dict[str, Any]) -> None:
+    """Add one shared legend explaining UMAP cell-type colors."""
+    if not colors:
+        return
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="none",
+            markersize=5,
+            markerfacecolor=color,
+            markeredgecolor="none",
+            label=label,
+        )
+        for label, color in sorted(colors.items())
+    ]
+    ncol = min(max(len(handles), 1), 6)
+    fig.legend(
+        handles=handles,
+        title="Cell type",
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=ncol,
+        frameon=False,
+        fontsize=7,
+        title_fontsize=8,
+        handletextpad=0.35,
+        columnspacing=0.9,
+    )
+
+
 def plot_embedding_panel(
     ax: plt.Axes,
     embedding: np.ndarray,
@@ -158,6 +191,7 @@ def plot_umap_comparison(
     set_shared_limits(axes[:n], records)
     for ax in axes[n:]:
         ax.axis("off")
+    add_celltype_legend(fig, colors)
     fig.tight_layout()
     fig.savefig(save_path, dpi=int(cfg.figure.dpi), bbox_inches="tight")
     plt.close(fig)
@@ -360,6 +394,7 @@ def plot_figure3(
         )
         umap_axes.append(ax)
     set_shared_limits(umap_axes, records)
+    add_celltype_legend(fig, colors)
 
     ax_auc = fig.add_subplot(bottom[0, 0])
     ax_mean = fig.add_subplot(bottom[0, 1])
