@@ -929,17 +929,60 @@ def scdiffusion_list_arg(value: Any) -> str:
     return json.dumps([int(x) for x in list(value)])
 
 
-def build_scdiffusion_env(source_path: Path) -> dict[str, str]:
-    env = os.environ.copy()
-    pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(source_path)
-        if not pythonpath
-        else str(source_path) + os.pathsep + pythonpath
+def scdiffusion_device(cfg: DictConfig) -> str:
+    """Return the requested torch device policy for upstream scDiffusion."""
+    value = str(cfg.scdiffusion.get("device", "auto")).lower()
+    valid = {"auto", "cpu", "cuda", "mps"}
+    if value not in valid:
+        raise ValueError(
+            f"Unknown scdiffusion.device: {value}. Expected one of {sorted(valid)}."
+        )
+    return value
+
+
+def write_scdiffusion_torch_bootstrap(bootstrap_dir: Path, device: str) -> Path | None:
+    """Write a sitecustomize module for explicit non-MPS device overrides."""
+    if device in {"auto", "mps"}:
+        return None
+    bootstrap_dir.mkdir(parents=True, exist_ok=True)
+    sitecustomize = bootstrap_dir / "sitecustomize.py"
+    sitecustomize.write_text(
+        '"""Runtime torch device patch for scDiffusion subprocesses."""\n'
+        "\n"
+        "import os\n"
+        "\n"
+        "_device = os.environ.get('SCDIFFUSION_TORCH_DEVICE', '').lower()\n"
+        "if _device in {'cpu', 'cuda'}:\n"
+        "    import torch\n"
+        "    if hasattr(torch.backends, 'mps'):\n"
+        "        torch.backends.mps.is_available = lambda: False\n"
+        "    if _device == 'cpu':\n"
+        "        torch.cuda.is_available = lambda: False\n"
     )
+    return bootstrap_dir
+
+
+def build_scdiffusion_env(
+    source_path: Path,
+    *,
+    bootstrap_dir: Path | None = None,
+    device: str = "auto",
+) -> dict[str, str]:
+    env = os.environ.copy()
+    pythonpath_parts = []
+    if bootstrap_dir is not None:
+        pythonpath_parts.append(str(bootstrap_dir))
+    pythonpath_parts.append(str(source_path))
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        pythonpath_parts.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_parts)
     env["PROJECT_ROOT"] = str(root)
     env["SCDIFFUSION_SOURCE"] = str(source_path)
     env.setdefault("SCDIFFUSION_SINGLE_PROCESS", "1")
+    env["SCDIFFUSION_TORCH_DEVICE"] = device
+    if device in {"auto", "mps"}:
+        env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     return env
 
 
@@ -968,7 +1011,16 @@ def run_scdiffusion_end_to_end(
             path.mkdir(parents=True, exist_ok=True)
 
     input_path = write_scdiffusion_input(adata_raw, paths["input_h5ad"])
-    env = build_scdiffusion_env(source_path)
+    device = scdiffusion_device(cfg)
+    bootstrap_dir = write_scdiffusion_torch_bootstrap(
+        paths["run_dir"] / "python_bootstrap",
+        device,
+    )
+    env = build_scdiffusion_env(
+        source_path,
+        bootstrap_dir=bootstrap_dir,
+        device=device,
+    )
     conda_prefix = [conda, "run", "-n", str(cfg.scdiffusion.conda_env)]
     hidden_dim = int(cfg.scdiffusion.vae.hidden_dim)
     filter_data = scdiffusion_bool_arg(cfg.scdiffusion.loader.filter_data)
@@ -1163,6 +1215,8 @@ def run_scdiffusion_end_to_end(
         str(hidden_dim),
         "--batch_size",
         str(int(cfg.scdiffusion.decoding.batch_size)),
+        "--device",
+        device,
     ]
     run_logged_subprocess(
         decode_cmd,
@@ -1193,6 +1247,7 @@ def run_scdiffusion_end_to_end(
                 **OmegaConf.to_container(cfg.scdiffusion.sampling, resolve=True),
                 "num_samples": n_samples,
             },
+            "device": device,
         },
         "cache": {
             "enabled": cache_enabled(cfg, "reuse_scdiffusion"),

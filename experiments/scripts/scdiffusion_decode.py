@@ -10,7 +10,20 @@ import numpy as np
 import torch
 
 
-def choose_device() -> torch.device:
+def choose_device(policy: str) -> torch.device:
+    policy = policy.lower()
+    if policy == "cpu":
+        return torch.device("cpu")
+    if policy == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("scDiffusion decode requested CUDA, but CUDA is unavailable.")
+        return torch.device("cuda")
+    if policy == "mps":
+        if not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+            raise RuntimeError("scDiffusion decode requested MPS, but MPS is unavailable.")
+        return torch.device("mps")
+    if policy != "auto":
+        raise ValueError(f"Unknown decode device policy: {policy}")
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")
     if torch.cuda.is_available():
@@ -39,6 +52,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num_genes", type=int, required=True)
     parser.add_argument("--hidden_dim", type=int, default=128)
     parser.add_argument("--batch_size", type=int, default=1024)
+    parser.add_argument(
+        "--device",
+        choices=["auto", "mps", "cuda", "cpu"],
+        default="auto",
+    )
     return parser.parse_args()
 
 
@@ -48,7 +66,7 @@ def main() -> None:
 
     from VAE.VAE_model import VAE
 
-    device = choose_device()
+    device = choose_device(args.device)
     autoencoder = VAE(
         num_genes=args.num_genes,
         device=str(device),
