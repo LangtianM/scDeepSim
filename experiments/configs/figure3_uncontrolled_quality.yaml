@@ -4,9 +4,17 @@ paths:
   root_dir: ${oc.env:PROJECT_ROOT}
   data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
 
+cache:
+  enabled: true
+  dir: ${paths.root_dir}/experiments/baseline_cache/figure3_uncontrolled_quality
+  reuse_scdeepsim: true
+  reuse_scdiffusion: true
+  reuse_scvi: true
+  force_retrain: false
+
 data:
-  n_cells: 16000
-  n_genes: 10000
+  n_cells: 5000
+  n_genes: 1000
   min_genes: 10
   min_cells: 2
   celltype_key: celltype
@@ -66,10 +74,12 @@ scdesign3:
   family_use: nb
   corr_formula: celltype
   copula: gaussian
-  copula_genes: all
+  # Fit the expensive copula on top-variance genes while keeping full-gene
+  # marginal fits and full-gene simulated output.
+  copula_genes: 1000
   usebam: false
   if_sparse: false
-  fastmvn: false
+  fastmvn: true
   DT: true
   pseudo_obs: false
   nonzerovar: false

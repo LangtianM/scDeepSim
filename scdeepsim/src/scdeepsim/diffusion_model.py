@@ -37,7 +37,8 @@ def project(x, y):
     y, _ = pack_one_with_inverse(y, "b *")
 
     dtype = x.dtype
-    x, y = x.double(), y.double()
+    project_dtype = torch.float64 if x.device.type != "mps" else torch.float32
+    x, y = x.to(project_dtype), y.to(project_dtype)
     unit = F.normalize(y, dim=-1)
 
     parallel = (x * unit).sum(dim=-1, keepdim=True) * unit

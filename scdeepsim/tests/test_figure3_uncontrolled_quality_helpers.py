@@ -14,6 +14,8 @@ if str(ROOT) not in sys.path:
 from experiments.scripts.figure3_uncontrolled_quality import (
     MethodOutput,
     as_dense,
+    build_scdeepsim_cache_paths,
+    build_scdiffusion_cache_paths,
     build_scdiffusion_runner_paths,
     build_metrics_table,
     failed_method_output,
@@ -82,6 +84,99 @@ def test_build_scdiffusion_runner_paths_are_deterministic(tmp_path):
     assert paths["latent_npz"].name == "scdiffusion_latent.npz"
     assert paths["decoded_npz"].name == "scdiffusion_decoded.npz"
     assert paths["diffusion_model_dir"] == paths["diffusion_checkpoint_root"] / "tiny_model"
+
+
+def test_model_cache_paths_do_not_depend_on_run_output_dir(tmp_path):
+    adata = ad.AnnData(
+        X=np.array([[0, 1], [2, 3]], dtype=np.float32),
+        obs=pd.DataFrame({"celltype": ["a", "b"]}, index=["c1", "c2"]),
+        var=pd.DataFrame(index=["g1", "g2"]),
+    )
+    cfg = OmegaConf.create(
+        {
+            "seed": 7,
+            "paths": {"data_path": str(tmp_path / "data.h5ad")},
+            "cache": {
+                "enabled": True,
+                "dir": str(tmp_path / "cache"),
+                "reuse_scdeepsim": True,
+                "reuse_scdiffusion": True,
+                "force_retrain": False,
+            },
+            "data": {"n_cells": 2, "n_genes": 2},
+            "vae": {
+                "latent_dim": 4,
+                "enc_hidden": [8],
+                "dec_hidden": [8],
+                "dropout": 0.0,
+                "input_dropout": 0.0,
+                "beta": 1.0,
+                "beta_warmup_epochs": 1,
+                "zero_inflated": False,
+                "sup_head_hidden": 4,
+                "supervision_weight": 1.0,
+                "supervised_latent_dims": 2,
+                "epochs": 1,
+                "batch_size": 2,
+                "latent_statistic": "posterior_mean",
+                "lr": 1e-3,
+                "weight_decay": 0.0,
+            },
+            "diffusion": {
+                "objective": "pred_v",
+                "hidden_dims": [8],
+                "beta_schedule": "linear",
+                "dropout": 0.0,
+                "lr": 1e-4,
+                "weight_decay": 0.0,
+                "use_ema": False,
+                "ema_decay": 0.99,
+                "guidance_dropout": 0.0,
+                "guidance_scale": 1.0,
+                "timesteps": 10,
+                "sampling_steps": 2,
+                "epochs": 1,
+            },
+            "scdiffusion": {
+                "loader": {"num_workers": 0, "filter_data": False},
+                "vae": {
+                    "max_steps": 1,
+                    "max_minutes": 1,
+                    "checkpoint_freq": 1,
+                    "batch_size": 2,
+                    "hidden_dim": 4,
+                    "seed": 0,
+                    "loss_ae": "mse",
+                    "decoder_activation": "ReLU",
+                    "state_dict_path": None,
+                },
+                "diffusion": {
+                    "model_name": "tiny",
+                    "lr": 1e-4,
+                    "weight_decay": 0.0,
+                    "lr_anneal_steps": 1,
+                    "batch_size": 2,
+                    "microbatch": -1,
+                    "ema_rate": "0.999",
+                    "save_interval": 1,
+                    "input_dim": 4,
+                    "hidden_dim": [8],
+                    "dropout": 0.0,
+                    "diffusion_steps": 10,
+                    "noise_schedule": "linear",
+                    "use_fp16": False,
+                },
+            },
+        }
+    )
+    scdeepsim_paths = build_scdeepsim_cache_paths(adata, cfg, np.array(["a", "b"]))
+    scdiffusion_paths = build_scdiffusion_cache_paths(adata, cfg, source_path=None)
+    assert scdeepsim_paths["vae_ckpt"].parent.parent.name == "vae"
+    assert scdeepsim_paths["diffusion_ckpt"].parent.parent.name == "diffusion"
+    assert scdiffusion_paths["vae_ckpt"].name == "model.pt"
+    assert scdiffusion_paths["diffusion_ckpt"].name == "model.pt"
+    assert str(tmp_path / "cache") in str(scdeepsim_paths["vae_ckpt"])
+    assert str(tmp_path / "cache") in str(scdiffusion_paths["diffusion_ckpt"])
 
 
 def test_build_metrics_table_includes_failed_rows():

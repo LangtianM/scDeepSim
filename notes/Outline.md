@@ -70,12 +70,12 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Panel D: Biological signal preservation: Cell-type ASW, RF AUC, and cLISI across alpha values.
 - Interpretation: Batch effect strength changes monotonically with alpha, while cell-type structure remains stable.
 - Status: Preliminary figures available; 
-  - We should reproduce the figures with linear interpolation rather than Gaussian OT.
-  - We should run this in multiple datasets to show generality, in supplementary figures.
 
 ![Gaussian OT batch dose response](../experiments/multirun/2026-04-07/22-21-54/1/results/dose_response_curves.png)
 
 ![Gaussian OT batch UMAP interpolation](../experiments/multirun/2026-04-07/22-35-18/1/results/compare_umap_batch_interpolation.png)
+
+![Gaussian OT batch interpolation UMAP](../experiments/multirun/2026-04-07/22-35-18/0/results/umap_batch_interpolation.png)
 
 ### Figure 5. Developmental Trajectory Control
 
@@ -152,8 +152,8 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ## Next Steps
 
-- Run covariate predictability experiments to confirm disentanglement produce figure 2. 
-- Compare with more baseline simulators for figure 3.
-- Assemble Figures 2-6 from existing outputs with consistent styling and labels.
-- Robustness experiments across an additional dataset.
-- Ablation studies to justify design choices.
+- [x] Run covariate predictability experiments to confirm disentanglement produce figure 2. 
+- [ ] Compare with more baseline simulators for figure 3.
+- [ ] Assemble Figures 2-6 from existing outputs with consistent styling and labels.
+- [ ] Robustness experiments across an additional dataset.
+- [ ] Ablation studies to justify design choices.

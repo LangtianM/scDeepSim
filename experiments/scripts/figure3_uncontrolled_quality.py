@@ -20,6 +20,7 @@ root = pyrootutils.setup_root(
 )
 
 import json
+import hashlib
 import logging
 import os
 import shutil
@@ -149,6 +150,88 @@ def resolve_path(path_like: Any) -> Path | None:
     if path.is_absolute():
         return path
     return Path(root) / path
+
+
+def stable_hash(payload: Any, length: int = 16) -> str:
+    """Return a stable short hash for JSON-serializable config/data payloads."""
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=json_default,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:length]
+
+
+def path_fingerprint(path_like: Any) -> dict[str, Any]:
+    """Fingerprint a local file path by path, size, and mtime when available."""
+    path = resolve_path(path_like)
+    if path is None:
+        return {"path": None, "exists": False}
+    payload: dict[str, Any] = {"path": str(path), "exists": path.exists()}
+    if path.exists():
+        stat = path.stat()
+        payload.update({"size": int(stat.st_size), "mtime_ns": int(stat.st_mtime_ns)})
+    return payload
+
+
+def adata_selection_fingerprint(adata: ad.AnnData) -> dict[str, Any]:
+    """Fingerprint the selected cells/genes without hashing the full matrix."""
+    return {
+        "shape": [int(adata.n_obs), int(adata.n_vars)],
+        "obs_names_hash": stable_hash(adata.obs_names.astype(str).tolist()),
+        "var_names_hash": stable_hash(adata.var_names.astype(str).tolist()),
+    }
+
+
+def config_container(value: Any) -> Any:
+    if isinstance(value, (ListConfig, DictConfig)):
+        return OmegaConf.to_container(value, resolve=True)
+    return value
+
+
+def cache_root(cfg: DictConfig) -> Path:
+    cache_cfg = cfg.get("cache", {})
+    configured = cache_cfg.get("dir") if cache_cfg else None
+    return resolve_path(configured) or Path(root) / "experiments" / "baseline_cache" / "figure3_uncontrolled_quality"
+
+
+def cache_enabled(cfg: DictConfig, key: str) -> bool:
+    cache_cfg = cfg.get("cache", {})
+    if not cache_cfg:
+        return False
+    return bool(cache_cfg.get("enabled", False)) and bool(cache_cfg.get(key, True))
+
+
+def force_retrain(cfg: DictConfig) -> bool:
+    cache_cfg = cfg.get("cache", {})
+    return bool(cache_cfg.get("force_retrain", False)) if cache_cfg else False
+
+
+def copy_checkpoint_to_cache(source: Path, target: Path) -> Path:
+    """Copy a freshly trained checkpoint into the stable cache."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.resolve() != target.resolve():
+        shutil.copy2(source, target)
+    return target
+
+
+def copy_tree_to_cache(source: Path, target: Path) -> Path:
+    """Copy a freshly trained model directory into the stable cache."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.resolve() != target.resolve():
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(source, target)
+    return target
+
+
+def preferred_torch_device() -> torch.device:
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
 def optional_int(value: Any, default: int | None = None) -> int | None:
@@ -440,6 +523,44 @@ def make_supervised_config(cfg: DictConfig, n_celltypes: int) -> list[dict[str, 
     ]
 
 
+def build_scdeepsim_cache_paths(
+    adata_norm: ad.AnnData,
+    cfg: DictConfig,
+    celltype_classes: np.ndarray,
+) -> dict[str, Any]:
+    """Build stable cache paths for scDeepSim VAE and diffusion checkpoints."""
+    base_payload = {
+        "data_path": path_fingerprint(cfg.paths.data_path),
+        "selected_data": adata_selection_fingerprint(adata_norm),
+        "data": config_container(cfg.data),
+        "seed": int(cfg.seed),
+        "celltype_classes": np.asarray(celltype_classes).astype(str).tolist(),
+    }
+    vae_payload = {
+        **base_payload,
+        "model": "scdeepsim_vae",
+        "vae": config_container(cfg.vae),
+    }
+    vae_key = stable_hash(vae_payload)
+    diffusion_payload = {
+        **base_payload,
+        "model": "scdeepsim_diffusion",
+        "vae_key": vae_key,
+        "diffusion": config_container(cfg.diffusion),
+        "latent_statistic": str(cfg.vae.latent_statistic),
+    }
+    diffusion_key = stable_hash(diffusion_payload)
+    root_dir = cache_root(cfg) / "scdeepsim"
+    return {
+        "vae_key": vae_key,
+        "diffusion_key": diffusion_key,
+        "vae_payload": vae_payload,
+        "diffusion_payload": diffusion_payload,
+        "vae_ckpt": root_dir / "vae" / vae_key / "scdeepsim_vae.ckpt",
+        "diffusion_ckpt": root_dir / "diffusion" / diffusion_key / "scdeepsim_diffusion.ckpt",
+    }
+
+
 def train_vae(
     adata: ad.AnnData,
     supervised_config: list[dict[str, Any]],
@@ -602,16 +723,45 @@ def run_scdeepsim(
     encoder = make_celltype_encoder(adata_norm)
     n_celltypes = len(encoder.classes_)
     supervised_config = make_supervised_config(cfg, n_celltypes)
+    cache_paths = build_scdeepsim_cache_paths(adata_norm, cfg, encoder.classes_)
+    use_cache = cache_enabled(cfg, "reuse_scdeepsim") and not force_retrain(cfg)
+    device = preferred_torch_device()
 
-    log.info("Training scDeepSim VAE")
-    vae = train_vae(adata_norm, supervised_config, cfg, output_dir)
+    run_vae_ckpt = output_dir / "models" / "scdeepsim_vae.ckpt"
+    vae_cache_hit = use_cache and Path(cache_paths["vae_ckpt"]).exists()
+    if vae_cache_hit:
+        log.info("Loading cached scDeepSim VAE: %s", cache_paths["vae_ckpt"])
+        vae = TruncatedNormalVAE.load_from_checkpoint(
+            str(cache_paths["vae_ckpt"]),
+            map_location="cpu",
+        ).to(device)
+        copy_checkpoint_to_cache(Path(cache_paths["vae_ckpt"]), run_vae_ckpt)
+    else:
+        log.info("Training scDeepSim VAE")
+        vae = train_vae(adata_norm, supervised_config, cfg, output_dir).to(device)
+        if cache_enabled(cfg, "reuse_scdeepsim"):
+            copy_checkpoint_to_cache(run_vae_ckpt, Path(cache_paths["vae_ckpt"]))
 
+    torch.manual_seed(int(cfg.seed))
     x_recon, z_recon = reconstruct(vae, x_real, cfg)
+    torch.manual_seed(int(cfg.seed))
     latent_vectors = encode_to_latent(vae, x_real, cfg)
     latent_adata = ad.AnnData(X=latent_vectors, obs=adata_norm.obs.copy())
 
-    log.info("Training scDeepSim latent diffusion")
-    diffusion = train_diffusion(latent_adata, n_celltypes, cfg, output_dir)
+    run_diffusion_ckpt = output_dir / "models" / "scdeepsim_diffusion.ckpt"
+    diffusion_cache_hit = use_cache and Path(cache_paths["diffusion_ckpt"]).exists()
+    if diffusion_cache_hit:
+        log.info("Loading cached scDeepSim latent diffusion: %s", cache_paths["diffusion_ckpt"])
+        diffusion = LightningDiffusion.load_from_checkpoint(
+            str(cache_paths["diffusion_ckpt"]),
+            map_location="cpu",
+        ).to(device)
+        copy_checkpoint_to_cache(Path(cache_paths["diffusion_ckpt"]), run_diffusion_ckpt)
+    else:
+        log.info("Training scDeepSim latent diffusion")
+        diffusion = train_diffusion(latent_adata, n_celltypes, cfg, output_dir).to(device)
+        if cache_enabled(cfg, "reuse_scdeepsim"):
+            copy_checkpoint_to_cache(run_diffusion_ckpt, Path(cache_paths["diffusion_ckpt"]))
 
     real_label_codes = encoder.transform(adata_norm.obs["celltype"].astype(str))
     probs = np.bincount(real_label_codes, minlength=n_celltypes) / len(real_label_codes)
@@ -622,6 +772,7 @@ def run_scdeepsim(
     sampled_label_names = encoder.inverse_transform(sampled_labels)
 
     log.info("Sampling scDeepSim")
+    torch.manual_seed(int(cfg.seed))
     x_sim, z_sim = sample_scdeepsim(diffusion, vae, sampled_labels, cfg)
     runtime = time.time() - start
 
@@ -639,6 +790,16 @@ def run_scdeepsim(
                 "vae_epochs": int(cfg.vae.epochs),
                 "diffusion_epochs": int(cfg.diffusion.epochs),
                 "sampling_steps": int(cfg.diffusion.sampling_steps),
+                "cache": {
+                    "enabled": cache_enabled(cfg, "reuse_scdeepsim"),
+                    "force_retrain": force_retrain(cfg),
+                    "vae_hit": bool(vae_cache_hit),
+                    "diffusion_hit": bool(diffusion_cache_hit),
+                    "vae_key": str(cache_paths["vae_key"]),
+                    "diffusion_key": str(cache_paths["diffusion_key"]),
+                    "vae_checkpoint": str(cache_paths["vae_ckpt"]),
+                    "diffusion_checkpoint": str(cache_paths["diffusion_ckpt"]),
+                },
             },
             reference_dependent=False,
         )
@@ -660,6 +821,16 @@ def run_scdeepsim(
         "celltype_classes": encoder.classes_.astype(str).tolist(),
         "latent_real_shape": list(z_recon.shape),
         "latent_sim_shape": list(z_sim.shape),
+        "cache": {
+            "enabled": cache_enabled(cfg, "reuse_scdeepsim"),
+            "force_retrain": force_retrain(cfg),
+            "vae_hit": bool(vae_cache_hit),
+            "diffusion_hit": bool(diffusion_cache_hit),
+            "vae_key": str(cache_paths["vae_key"]),
+            "diffusion_key": str(cache_paths["diffusion_key"]),
+            "vae_checkpoint": str(cache_paths["vae_ckpt"]),
+            "diffusion_checkpoint": str(cache_paths["diffusion_ckpt"]),
+        },
     }
     return outputs, metadata
 
@@ -917,6 +1088,24 @@ def sample_from_scvi_prior(
     return counts, label_names
 
 
+def build_scvi_cache_paths(adata_raw: ad.AnnData, cfg: DictConfig) -> dict[str, Any]:
+    """Build stable cache paths for the scVI baseline model directory."""
+    payload = {
+        "model": "scvi_prior",
+        "data_path": path_fingerprint(cfg.paths.data_path),
+        "selected_data": adata_selection_fingerprint(adata_raw),
+        "data": config_container(cfg.data),
+        "seed": int(cfg.seed),
+        "scvi": config_container(cfg.scvi),
+    }
+    key = stable_hash(payload)
+    return {
+        "key": key,
+        "payload": payload,
+        "model_dir": cache_root(cfg) / "scvi_prior" / key / "model",
+    }
+
+
 def run_scvi_prior(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
     """Train scVI and sample from its prior using real library sizes."""
     start = time.time()
@@ -940,8 +1129,18 @@ def run_scvi_prior(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> 
         n_layers=int(cfg.scvi.n_layers),
         gene_likelihood=str(cfg.scvi.gene_likelihood),
     )
-    model.train(max_epochs=int(cfg.scvi.max_epochs))
-    model.save(str(model_dir), overwrite=True)
+    cache_paths = build_scvi_cache_paths(adata_raw, cfg)
+    use_cache = cache_enabled(cfg, "reuse_scvi") and not force_retrain(cfg)
+    cache_hit = use_cache and Path(cache_paths["model_dir"]).exists()
+    if cache_hit:
+        log.info("Loading cached scVI prior model: %s", cache_paths["model_dir"])
+        model = scvi.model.SCVI.load(str(cache_paths["model_dir"]), adata=adata_scvi)
+        copy_tree_to_cache(Path(cache_paths["model_dir"]), model_dir)
+    else:
+        model.train(max_epochs=int(cfg.scvi.max_epochs))
+        model.save(str(model_dir), overwrite=True)
+        if cache_enabled(cfg, "reuse_scvi"):
+            copy_tree_to_cache(model_dir, Path(cache_paths["model_dir"]))
 
     rng = np.random.default_rng(int(cfg.seed))
     counts, labels = sample_from_scvi_prior(
@@ -958,6 +1157,13 @@ def run_scvi_prior(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> 
             "max_epochs": int(cfg.scvi.max_epochs),
             "n_latent": int(cfg.scvi.n_latent),
             "reference_dependency": "borrows latent library sizes and covariates from real cells",
+            "cache": {
+                "enabled": cache_enabled(cfg, "reuse_scvi"),
+                "force_retrain": force_retrain(cfg),
+                "hit": bool(cache_hit),
+                "key": str(cache_paths["key"]),
+                "model_dir": str(cache_paths["model_dir"]),
+            },
         },
         reference_dependent=True,
     )
@@ -1003,6 +1209,63 @@ def build_scdiffusion_runner_paths(
         "decode_log": logs_dir / "decode.log",
         "diffusion_logger_dir": logs_dir / "diffusion",
         "sample_logger_dir": logs_dir / "sample",
+    }
+
+
+def git_source_fingerprint(path: Path | None) -> dict[str, Any]:
+    """Fingerprint an external git checkout, including uncommitted diff content."""
+    metadata = git_metadata_for_path(path)
+    if path is None or not path.exists():
+        return metadata
+    proc = subprocess.run(
+        ["git", "-C", str(path), "diff"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        metadata["dirty_diff_hash"] = stable_hash(proc.stdout)
+        metadata["dirty"] = bool(proc.stdout.strip())
+    else:
+        metadata["dirty_diff_hash"] = None
+        metadata["dirty"] = None
+    return metadata
+
+
+def build_scdiffusion_cache_paths(
+    adata_raw: ad.AnnData,
+    cfg: DictConfig,
+    source_path: Path | None,
+) -> dict[str, Any]:
+    """Build stable cache paths for external scDiffusion checkpoints."""
+    base_payload = {
+        "data_path": path_fingerprint(cfg.paths.data_path),
+        "selected_data": adata_selection_fingerprint(adata_raw),
+        "data": config_container(cfg.data),
+        "seed": int(cfg.seed),
+        "source": git_source_fingerprint(source_path),
+        "loader": config_container(cfg.scdiffusion.loader),
+    }
+    vae_payload = {
+        **base_payload,
+        "model": "scdiffusion_vae",
+        "vae": config_container(cfg.scdiffusion.vae),
+    }
+    vae_key = stable_hash(vae_payload)
+    diffusion_payload = {
+        **base_payload,
+        "model": "scdiffusion_diffusion",
+        "vae_key": vae_key,
+        "diffusion": config_container(cfg.scdiffusion.diffusion),
+    }
+    diffusion_key = stable_hash(diffusion_payload)
+    root_dir = cache_root(cfg) / "scdiffusion"
+    return {
+        "vae_key": vae_key,
+        "diffusion_key": diffusion_key,
+        "vae_payload": vae_payload,
+        "diffusion_payload": diffusion_payload,
+        "vae_ckpt": root_dir / "vae" / vae_key / "model.pt",
+        "diffusion_ckpt": root_dir / "diffusion" / diffusion_key / "model.pt",
     }
 
 
@@ -1165,6 +1428,8 @@ def run_scdiffusion_end_to_end(
     conda = require_conda("scDiffusion")
     model_name = str(cfg.scdiffusion.diffusion.model_name)
     paths = build_scdiffusion_runner_paths(output_dir, model_name=model_name)
+    cache_paths = build_scdiffusion_cache_paths(adata_raw, cfg, source_path)
+    use_cache = cache_enabled(cfg, "reuse_scdiffusion") and not force_retrain(cfg)
     for path in paths.values():
         if path.suffix:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1178,111 +1443,137 @@ def run_scdiffusion_end_to_end(
     filter_data = scdiffusion_bool_arg(cfg.scdiffusion.loader.filter_data)
     num_workers = str(int(cfg.scdiffusion.loader.num_workers))
 
-    vae_cmd = [
-        *conda_prefix,
-        "python",
-        "VAE_train.py",
-        "--data_dir",
-        str(input_path),
-        "--num_genes",
-        str(adata_raw.n_vars),
-        "--batch_size",
-        str(int(cfg.scdiffusion.vae.batch_size)),
-        "--max_steps",
-        str(int(cfg.scdiffusion.vae.max_steps)),
-        "--max_minutes",
-        str(int(cfg.scdiffusion.vae.max_minutes)),
-        "--checkpoint_freq",
-        str(int(cfg.scdiffusion.vae.checkpoint_freq)),
-        "--save_dir",
-        str(paths["vae_checkpoint_dir"]),
-        "--seed",
-        str(int(cfg.scdiffusion.vae.seed)),
-        "--loss_ae",
-        str(cfg.scdiffusion.vae.loss_ae),
-        "--decoder_activation",
-        str(cfg.scdiffusion.vae.decoder_activation),
-        "--hidden_dim",
-        str(hidden_dim),
-        "--num_workers",
-        num_workers,
-        "--filter_data",
-        filter_data,
-    ]
-    state_dict_path = resolve_path(cfg.scdiffusion.vae.state_dict_path)
-    if state_dict_path is not None:
-        vae_cmd.extend(["--state_dict", str(state_dict_path)])
-    run_logged_subprocess(
-        vae_cmd,
-        paths["vae_log"],
-        cwd=source_path / "VAE",
-        env=env,
-        label="scDiffusion VAE training",
-    )
-    vae_checkpoint = latest_numbered_checkpoint(
-        paths["vae_checkpoint_dir"],
-        "model_seed=*_step=*.pt",
-        "step=",
-    )
+    vae_cache_hit = use_cache and Path(cache_paths["vae_ckpt"]).exists()
+    if vae_cache_hit:
+        vae_checkpoint = Path(cache_paths["vae_ckpt"])
+        paths["vae_log"].write_text(
+            f"Reused cached scDiffusion VAE checkpoint:\n{vae_checkpoint}\n"
+        )
+        log.info("Reusing cached scDiffusion VAE: %s", vae_checkpoint)
+    else:
+        vae_cmd = [
+            *conda_prefix,
+            "python",
+            "VAE_train.py",
+            "--data_dir",
+            str(input_path),
+            "--num_genes",
+            str(adata_raw.n_vars),
+            "--batch_size",
+            str(int(cfg.scdiffusion.vae.batch_size)),
+            "--max_steps",
+            str(int(cfg.scdiffusion.vae.max_steps)),
+            "--max_minutes",
+            str(int(cfg.scdiffusion.vae.max_minutes)),
+            "--checkpoint_freq",
+            str(int(cfg.scdiffusion.vae.checkpoint_freq)),
+            "--save_dir",
+            str(paths["vae_checkpoint_dir"]),
+            "--seed",
+            str(int(cfg.scdiffusion.vae.seed)),
+            "--loss_ae",
+            str(cfg.scdiffusion.vae.loss_ae),
+            "--decoder_activation",
+            str(cfg.scdiffusion.vae.decoder_activation),
+            "--hidden_dim",
+            str(hidden_dim),
+            "--num_workers",
+            num_workers,
+            "--filter_data",
+            filter_data,
+        ]
+        state_dict_path = resolve_path(cfg.scdiffusion.vae.state_dict_path)
+        if state_dict_path is not None:
+            vae_cmd.extend(["--state_dict", str(state_dict_path)])
+        run_logged_subprocess(
+            vae_cmd,
+            paths["vae_log"],
+            cwd=source_path / "VAE",
+            env=env,
+            label="scDiffusion VAE training",
+        )
+        vae_checkpoint = latest_numbered_checkpoint(
+            paths["vae_checkpoint_dir"],
+            "model_seed=*_step=*.pt",
+            "step=",
+        )
+        if cache_enabled(cfg, "reuse_scdiffusion"):
+            vae_checkpoint = copy_checkpoint_to_cache(
+                vae_checkpoint,
+                Path(cache_paths["vae_ckpt"]),
+            )
 
     hidden_dims = scdiffusion_list_arg(cfg.scdiffusion.diffusion.hidden_dim)
-    diffusion_cmd = [
-        *conda_prefix,
-        "python",
-        "cell_train.py",
-        "--data_dir",
-        str(input_path),
-        "--vae_path",
-        str(vae_checkpoint),
-        "--model_name",
-        model_name,
-        "--save_dir",
-        str(paths["diffusion_checkpoint_root"]),
-        "--log_dir",
-        str(paths["diffusion_logger_dir"]),
-        "--lr",
-        str(float(cfg.scdiffusion.diffusion.lr)),
-        "--weight_decay",
-        str(float(cfg.scdiffusion.diffusion.weight_decay)),
-        "--lr_anneal_steps",
-        str(int(cfg.scdiffusion.diffusion.lr_anneal_steps)),
-        "--batch_size",
-        str(int(cfg.scdiffusion.diffusion.batch_size)),
-        "--microbatch",
-        str(int(cfg.scdiffusion.diffusion.microbatch)),
-        "--ema_rate",
-        str(cfg.scdiffusion.diffusion.ema_rate),
-        "--save_interval",
-        str(int(cfg.scdiffusion.diffusion.save_interval)),
-        "--input_dim",
-        str(hidden_dim),
-        "--hidden_dim",
-        hidden_dims,
-        "--dropout",
-        str(float(cfg.scdiffusion.diffusion.dropout)),
-        "--diffusion_steps",
-        str(int(cfg.scdiffusion.diffusion.diffusion_steps)),
-        "--noise_schedule",
-        str(cfg.scdiffusion.diffusion.noise_schedule),
-        "--num_workers",
-        num_workers,
-        "--filter_data",
-        filter_data,
-        "--use_fp16",
-        scdiffusion_bool_arg(cfg.scdiffusion.diffusion.use_fp16),
-    ]
-    run_logged_subprocess(
-        diffusion_cmd,
-        paths["diffusion_log"],
-        cwd=source_path,
-        env=env,
-        label="scDiffusion diffusion training",
-    )
-    diffusion_checkpoint = latest_numbered_checkpoint(
-        paths["diffusion_model_dir"],
-        "model*.pt",
-        "model",
-    )
+    diffusion_cache_hit = use_cache and Path(cache_paths["diffusion_ckpt"]).exists()
+    if diffusion_cache_hit:
+        diffusion_checkpoint = Path(cache_paths["diffusion_ckpt"])
+        paths["diffusion_log"].write_text(
+            f"Reused cached scDiffusion diffusion checkpoint:\n{diffusion_checkpoint}\n"
+        )
+        log.info("Reusing cached scDiffusion diffusion: %s", diffusion_checkpoint)
+    else:
+        diffusion_cmd = [
+            *conda_prefix,
+            "python",
+            "cell_train.py",
+            "--data_dir",
+            str(input_path),
+            "--vae_path",
+            str(vae_checkpoint),
+            "--model_name",
+            model_name,
+            "--save_dir",
+            str(paths["diffusion_checkpoint_root"]),
+            "--log_dir",
+            str(paths["diffusion_logger_dir"]),
+            "--lr",
+            str(float(cfg.scdiffusion.diffusion.lr)),
+            "--weight_decay",
+            str(float(cfg.scdiffusion.diffusion.weight_decay)),
+            "--lr_anneal_steps",
+            str(int(cfg.scdiffusion.diffusion.lr_anneal_steps)),
+            "--batch_size",
+            str(int(cfg.scdiffusion.diffusion.batch_size)),
+            "--microbatch",
+            str(int(cfg.scdiffusion.diffusion.microbatch)),
+            "--ema_rate",
+            str(cfg.scdiffusion.diffusion.ema_rate),
+            "--save_interval",
+            str(int(cfg.scdiffusion.diffusion.save_interval)),
+            "--input_dim",
+            str(hidden_dim),
+            "--hidden_dim",
+            hidden_dims,
+            "--dropout",
+            str(float(cfg.scdiffusion.diffusion.dropout)),
+            "--diffusion_steps",
+            str(int(cfg.scdiffusion.diffusion.diffusion_steps)),
+            "--noise_schedule",
+            str(cfg.scdiffusion.diffusion.noise_schedule),
+            "--num_workers",
+            num_workers,
+            "--filter_data",
+            filter_data,
+            "--use_fp16",
+            scdiffusion_bool_arg(cfg.scdiffusion.diffusion.use_fp16),
+        ]
+        run_logged_subprocess(
+            diffusion_cmd,
+            paths["diffusion_log"],
+            cwd=source_path,
+            env=env,
+            label="scDiffusion diffusion training",
+        )
+        diffusion_checkpoint = latest_numbered_checkpoint(
+            paths["diffusion_model_dir"],
+            "model*.pt",
+            "model",
+        )
+        if cache_enabled(cfg, "reuse_scdiffusion"):
+            diffusion_checkpoint = copy_checkpoint_to_cache(
+                diffusion_checkpoint,
+                Path(cache_paths["diffusion_ckpt"]),
+            )
 
     n_samples = get_eval_n_samples(cfg, adata_raw.n_obs)
     sample_cmd = [
@@ -1371,6 +1662,16 @@ def run_scdiffusion_end_to_end(
                 **OmegaConf.to_container(cfg.scdiffusion.sampling, resolve=True),
                 "num_samples": n_samples,
             },
+        },
+        "cache": {
+            "enabled": cache_enabled(cfg, "reuse_scdiffusion"),
+            "force_retrain": force_retrain(cfg),
+            "vae_hit": bool(vae_cache_hit),
+            "diffusion_hit": bool(diffusion_cache_hit),
+            "vae_key": str(cache_paths["vae_key"]),
+            "diffusion_key": str(cache_paths["diffusion_key"]),
+            "vae_checkpoint": str(cache_paths["vae_ckpt"]),
+            "diffusion_checkpoint": str(cache_paths["diffusion_ckpt"]),
         },
     }
     return paths["decoded_npz"], metadata
