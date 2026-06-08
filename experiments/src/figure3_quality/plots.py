@@ -125,12 +125,21 @@ def plot_embedding_panel(
     embedding: np.ndarray,
     labels: np.ndarray | None,
     title: str,
+    method_key: str,
     colors: dict[str, Any],
     cfg: DictConfig,
 ) -> None:
     """Plot one UMAP panel."""
-    if labels is None:
-        ax.scatter(embedding[:, 0], embedding[:, 1], s=5, alpha=0.65, edgecolors="none")
+    color_by_celltype = bool(cfg.eval.get("umap_color_by_celltype", True))
+    if labels is None or not color_by_celltype:
+        ax.scatter(
+            embedding[:, 0],
+            embedding[:, 1],
+            s=5,
+            alpha=0.65,
+            edgecolors="none",
+            color=METHOD_COLORS.get(method_key, "#777777"),
+        )
     else:
         labels = np.asarray(labels).astype(str)
         for label in np.unique(labels):
@@ -178,20 +187,23 @@ def plot_umap_comparison(
         squeeze=False,
     )
     axes = axes_arr.ravel().tolist()
-    colors = label_color_dict(records, str(cfg.figure.cmap))
+    color_by_celltype = bool(cfg.eval.get("umap_color_by_celltype", True))
+    colors = label_color_dict(records, str(cfg.figure.cmap)) if color_by_celltype else {}
     for ax, record in zip(axes, records):
         plot_embedding_panel(
             ax,
             record["embedding"],
             record["labels"],
             record["title"],
+            record["key"],
             colors,
             cfg,
         )
     set_shared_limits(axes[:n], records)
     for ax in axes[n:]:
         ax.axis("off")
-    add_celltype_legend(fig, colors)
+    if color_by_celltype:
+        add_celltype_legend(fig, colors)
     fig.tight_layout()
     fig.savefig(save_path, dpi=int(cfg.figure.dpi), bbox_inches="tight")
     plt.close(fig)
@@ -379,7 +391,8 @@ def plot_figure3(
     outer = fig.add_gridspec(2, 1, height_ratios=[1.1, 1.0], hspace=0.35)
     top = outer[0].subgridspec(1, max(n, 1), wspace=0.08)
     bottom = outer[1].subgridspec(1, 3, wspace=0.32)
-    colors = label_color_dict(records, str(cfg.figure.cmap))
+    color_by_celltype = bool(cfg.eval.get("umap_color_by_celltype", True))
+    colors = label_color_dict(records, str(cfg.figure.cmap)) if color_by_celltype else {}
 
     umap_axes = []
     for i, record in enumerate(records):
@@ -389,12 +402,14 @@ def plot_figure3(
             record["embedding"],
             record["labels"],
             record["title"],
+            record["key"],
             colors,
             cfg,
         )
         umap_axes.append(ax)
     set_shared_limits(umap_axes, records)
-    add_celltype_legend(fig, colors)
+    if color_by_celltype:
+        add_celltype_legend(fig, colors)
 
     ax_auc = fig.add_subplot(bottom[0, 0])
     ax_mean = fig.add_subplot(bottom[0, 1])

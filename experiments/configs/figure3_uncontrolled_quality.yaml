@@ -164,6 +164,7 @@ eval:
   umap_n_neighbors: 15
   umap_min_dist: 0.1
   umap_max_cells_per_method: 2000
+  umap_color_by_celltype: false
   umap_equal_aspect: false
 
 figure:
