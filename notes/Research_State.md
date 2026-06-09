@@ -115,6 +115,22 @@ $$
 
 This is the closed-form optimal-transport map between Gaussian distributions with squared Euclidean cost. The resulting interpolation is the Bures-Wasserstein / McCann displacement interpolation between the two moment-matched Gaussian endpoints. If the empirical latent distributions are not Gaussian, this should be interpreted only as a second-order affine map between their Gaussian approximations, not as exact OT between empirical distributions.
 
+**Remark:** Distribution-wise linear interpolation may not work for extrapolation. 
+
+Define the interpolated mean and variance:
+
+$$
+\mu_\alpha = (1-\alpha)\mu_0 + \alpha \mu_1 \quad \Sigma_\alpha = (1-\alpha)\Sigma_0 + \alpha \Sigma_1
+$$
+
+Then the interpolated sample is:
+
+$$
+z(\alpha) = \mu_\alpha + \Sigma_\alpha^{1/2}\Sigma_0^{-1/2}(z-\mu_0)
+$$
+
+However, $\Sigma_\alpha = (1-\alpha)\Sigma_0 + \alpha \Sigma_1$ may not be positive definite when $\alpha>1$.
+
 ### Batch Effect Control
 
 For batch control, the primitive is applied only in the disentangled batch subspace, dimensions $[d_c,\; d_c + d_b)$ of the latent vector. The source and target moments are estimated from the reference and target batch distributions in that subspace, then the controlled batch coordinates are spliced back into the full latent vector before decoding.
@@ -254,6 +270,8 @@ As the supervision weight increases, the AUC on cell-type latents consistently r
 We also conducted a batch disentanglement evaluation on the scIBPancreas dataset:
 
 ![Batch Disentanglement Evaluation](../experiments/outputs/2026-04-06/20-22-21_batch_disentanglement/batch_supervised_weight_comparison.png)
+
+![heatmap](../experiments/outputs/2026-06-05/18-05-13_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
 
 **Next step:** Replicate this evaluation with batch labels to verify that the batch subspace is similarly disentangled before attempting batch effect control experiments.
 
@@ -484,7 +502,7 @@ TI Methods Benchmarking Across Noise Scale $\sigma$.
 - [x] Evaluate pseudo-time trajectory manipulation?
 - [x] Evluate branching point manipulation.
 - [x] Consolidate the way to benchmarking TI methods with our simulator
-- [ ] Batch Effect Benchmark: Observe difference with the traditional simulator benchmarking(splatter)
+- [ ] Scalability test: run across multiple data sizes?
 
 **Medium Priority**
 
@@ -495,6 +513,8 @@ TI Methods Benchmarking Across Noise Scale $\sigma$.
 - [ ] Reframe scVI comparison (reconstruction quality only)
 
 - [ ] Synthetic Null?
+
+- [ ] Batch Effect Benchmark: Observe difference with the traditional simulator benchmarking(splatter)
 
 **Low Priority**
 
