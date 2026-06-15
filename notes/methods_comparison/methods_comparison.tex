@@ -37,16 +37,16 @@
 \midrule
 Splatter
 &
-Parametric gamma-Poisson count simulator.
+Parametric Gamma-Poisson simulator for count data.
 &
-Library size, groups, differential expression, and batches
+Library size, groups, differential expression, and batch effects.
 &
-\multirow[c]{5}{=}{\centering Transparent and controllable, but less able to learn complex real-data manifolds.}
+\multirow[c]{5}{=}{\centering Transparent and controllable, but less capable of learning complex real-data manifolds.}
 \\
 \addlinespace
 dyngen 
 &
-Mechanistic trajectory or gene-regulatory simulators.
+Mechanistic trajectory and gene-regulatory simulator.
 &
 Lineage topology, pseudotime, and regulatory programs.
 &
@@ -66,7 +66,7 @@ GAN or conditional GAN for expression generation.
 &
 Discrete cell-type or cluster-conditional augmentation.
 &
-Early deep learning simulator, but cannot simulate out-of-distribution samples.
+Early deep learning simulator, but limited in simulating out-of-distribution conditions.
 \\
 \midrule
 scVI
@@ -75,7 +75,7 @@ VAE-based representation learning and batch correction.
 &
 Batch corrected embeddings and posterior sampling.
 &
-\multirow[c]{2}[10]{=}{\centering Cannot generate new samples without providing matching real cells. Does not learn a disentangled latent space for interpretable controls.}
+\multirow[c]{2}[10]{=}{\centering Requires matching real cells for generation and does not learn a disentangled latent space for interpretable control.}
 \\
 \addlinespace
 scGEN
@@ -90,9 +90,9 @@ scDiffusion / scLDM
 &
 Latent diffusion generation for single-cell expression.
 &
-Able to generate data with certain cell types that has been seen by the model.
+Generates cells from cell types observed during training.
 &
-Lacks the disentangled subspace and out-of-distribution interpolation and extrapolation capabilities.
+Lacks disentangled subspaces and out-of-distribution interpolation and extrapolation.
 \\
 \midrule
 \textbf{scDeepSim}
@@ -101,7 +101,7 @@ TN-VAE in log-normalised space plus latent diffusion and supervised latent disen
 &
 Cell type, batch effect strength, pseudotime, branch discrepancy, branching point, and noise.
 &
-Targets the middle ground: deep learned realism plus explicit, continuous, benchmark-ready controls.
+Combines realistic data generation with explicit, continuous, and interpretable controls.
 \\
 \bottomrule
 \end{tabularx}
