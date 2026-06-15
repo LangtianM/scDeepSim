@@ -39,27 +39,25 @@ The trade-off between simulation quality and controllability is not fundamental.
     - Columns: latent subspaces, e.g. cell-type, batch, residual.
       
       Each cell shows the accuracy.
-  
-  - A scratch of assembled result:
-    ![scratch](assets/heatmap_scratch.png)
 
 - Interpretation: Disentanglement concentrates controlled factors into assigned subspaces, supporting targeted latent-space control.
+
+- Status: scripts and preliminary results are ready. Need to run across more datasets and diagnose the cases where disentanglement is imperfect.
+
+![heatmap_embryoatalas](../experiments/outputs/2026-06-05/18-05-13_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
+
+![heatmap_scib](../experiments/outputs/2026-06-15/22-53-40_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
+
+*Remark: Random BA is the baseline balanced accuracy by random choice, Cell type ~ Batch BA is the balanced accuracy when predicting cell type from batch labels, serving as the other baseline.*
 
 ### Figure 3. Uncontrolled Simulation Quality
 
 - Problem: Does scDeepSim generate realistic single-cell data before applying any control?
-- Implementation: Compare real data, VAE+Diffusion, scDiffusion, scVI prior sampling, scDesign3 and zinbwavesimulated data using UMAP, RF real-vs-simulated discriminability, and data statistiwcs (gene expression means, variances, zero proportions).
+- Implementation: Compare real data, scDeepSim, scDiffusion, scVI prior sampling, scDesign3 and zinbwave simulated data using UMAP, RF real-vs-simulated discriminability, and data statistiwcs (gene expression means, variances, zero proportions).
 - Interpretation: VAE+Diffusion gives more realistic data than baselines.
-- Status: Preliminary version avaliable.
-  - Consider add more baseline simulators including zinbwave and scdiffusion
-  - We should run a supervised version of our model for comparison with others. Consider the settings in [the batch interpolation experiment](../experiments/multirun/2026-04-07/22-35-18/0/.hydra/config.yaml)
-  - The final figure in the paper should not include the VAE Reconstruction method.
+- Status: Available. Current result uses only 5000 genes and 1000 cells considering the limited scalability of zinbwave and scDesign3. We can try designing a more comprehensive and fair comparison so that the pros and cons of different methods are more clear.
 
-![UMAP comparison](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/umap_comparison.png)
-
-![Gene expression statistics](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/gene_expression_scatter.png)
-
-![Quality metrics summary](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/quality_metrics_summary.png)
+![Sim Quality](../experiments/outputs/2026-06-07/00-54-40_figure3_uncontrolled_quality/results/figure3_uncontrolled_quality.png)
 
 ### Figure 4. Batch Effect Control
 
@@ -83,7 +81,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Panel A: Schematic of trajectory control via latent interpolation, branch direction/length, and branch-point tau.
 - Panel B: UMAP showing controlled trajectory interpolation between two cell types.
 - Panel C: UMAP showing controlled branch endpoint discrepancy via branch direction/length.
-- Panel D: UMAP showing controlled branch-point timing via tau.
+- Panel D: UMAP showing controlled branch-point timing.
 - Interpretation: The simulator can produce controlled trajectories with known pseudotime, lineage, branch difficulty, and topology.
 - Status: Mostly available; needs one assembled figure that combines trajectory, discrepancy, and tau controls.
 
@@ -153,7 +151,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 ## Next Steps
 
 - [x] Run covariate predictability experiments to confirm disentanglement produce figure 2. 
-- [ ] Compare with more baseline simulators for figure 3.
+- [x] Compare with more baseline simulators for figure 3.
 - [ ] Assemble Figures 2-6 from existing outputs with consistent styling and labels.
 - [ ] Robustness experiments across an additional dataset.
 - [ ] Ablation studies to justify design choices.
