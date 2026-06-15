@@ -24,7 +24,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 - Problem: Does the latent space contain disentangled subspaces that make targeted control possible?
 
-- Implementation: Latent Vector layout schematic aligned with a covariate predicatability heatmap.
+- Implementation: Latent Vector layout schematic aligned with a covariate predictability heatmap.
   
   - Latent Vector layout schematic:
     
@@ -46,18 +46,24 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ![heatmap_embryoatalas](../experiments/outputs/2026-06-05/18-05-13_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
 
+*Embryo atlas covariate-predictability heatmap. Balanced accuracy is highest for the matched cell-type and batch subspaces, supporting partial latent disentanglement.*
+
 ![heatmap_scib](../experiments/outputs/2026-06-15/22-53-40_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
+
+*scIB covariate-predictability heatmap. The matched subspaces remain most predictive, while residual off-diagonal signal shows where disentanglement is incomplete.*
 
 *Remark: Random BA is the baseline balanced accuracy by random choice, Cell type ~ Batch BA is the balanced accuracy when predicting cell type from batch labels, serving as the other baseline.*
 
 ### Figure 3. Uncontrolled Simulation Quality
 
 - Problem: Does scDeepSim generate realistic single-cell data before applying any control?
-- Implementation: Compare real data, scDeepSim, scDiffusion, scVI prior sampling, scDesign3 and zinbwave simulated data using UMAP, RF real-vs-simulated discriminability, and data statistiwcs (gene expression means, variances, zero proportions).
+- Implementation: Compare real data, scDeepSim, scDiffusion, scVI prior sampling, scDesign3 and zinbwave simulated data using UMAP, RF real-vs-simulated discriminability, and data statistics (gene expression means, variances, zero proportions).
 - Interpretation: VAE+Diffusion gives more realistic data than baselines.
 - Status: Available. Current result uses only 5000 genes and 1000 cells considering the limited scalability of zinbwave and scDesign3. We can try designing a more comprehensive and fair comparison so that the pros and cons of different methods are more clear.
 
 ![Sim Quality](../experiments/outputs/2026-06-07/00-54-40_figure3_uncontrolled_quality/results/figure3_uncontrolled_quality.png)
+
+*UMAP and summary metrics comparing real cells with baseline simulators. More realistic simulations have lower real-vs-simulated RF AUC and gene-wise statistics closer to the diagonal.*
 
 ### Figure 4. Batch Effect Control
 
@@ -71,9 +77,11 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ![Gaussian OT batch dose response](../experiments/multirun/2026-04-07/22-21-54/1/results/dose_response_curves.png)
 
-![Gaussian OT batch UMAP interpolation](../experiments/multirun/2026-04-07/22-35-18/1/results/compare_umap_batch_interpolation.png)
+*Batch-control dose response. Increasing alpha strengthens batch separation while cell-type ASW, RF balanced accuracy, and cLISI remain close to reference or target baselines.*
 
 ![Gaussian OT batch interpolation UMAP](../experiments/multirun/2026-04-07/22-35-18/0/results/umap_batch_interpolation.png)
+
+*Overlay of real batch endpoints and simulated alpha levels. The continuous color gradient shows interpolation and extrapolation along the learned batch-effect direction.*
 
 ### Figure 5. Developmental Trajectory Control
 
@@ -87,11 +95,19 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ![Trajectory interpolation](../experiments/outputs/2026-04-14/22-14-26_trajectory_interpolation/results/trajectory_umap.png)
 
+*Ductal-to-beta trajectory interpolation. Grey points mark simulated intermediates, and alpha provides known pseudotime along the generated path.*
+
 ![Branch discrepancy low](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png)
+
+*Low-discrepancy two-branch simulation. The two branches share a similar direction from the root, producing a harder lineage-separation setting.*
 
 ![Branch discrepancy high](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png)
 
+*High-discrepancy two-branch simulation. Increasing the branch-direction weight separates endpoint trajectories more clearly.*
+
 ![Branch-point control](../experiments/outputs/2026-04-28/20-46-33_branch_point_tau/results/tau_comparison_umap.png)
+
+*Branch-point timing control. Tau shifts where the trunk splits into branches, giving synthetic datasets with known branch timing and lineage labels.*
 
 ### Figure 6. Controlled Simulation Enables Benchmarking
 
@@ -102,9 +118,15 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ![TI benchmark endpoint discrepancy](../experiments/outputs/2026-05-17/18-05-53_ti_benchmark/results/ti_metric_curves.png)
 
+*TI benchmark across endpoint discrepancy. Global pseudotime correlation and lineage ARI are compared for Monocle3, Scanpy DPT-PAGA, and Slingshot as branch endpoints become more separated.*
+
 ![TI benchmark branch-point tau](../experiments/outputs/2026-05-17/17-57-12_ti_benchmark/results/ti_metric_curves.png)
 
+*TI benchmark across branch-point tau. The controlled tau parameter tests how branch timing affects pseudotime recovery and lineage assignment.*
+
 ![TI benchmark noise scale](../experiments/outputs/2026-05-17/23-51-15_ti_benchmark/results/ti_metric_curves.png)
+
+*TI benchmark across noise scale. Increasing noise degrades pseudotime recovery, while lineage ARI summarizes branch-label sensitivity.*
 
 ## Supplementary Or Planned Figures
 
@@ -146,7 +168,11 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 ![Cell-type supervised-weight ablation](../experiments/outputs/checkpoints/test_supervised/tn_vae/supervised_weight_comparison.png)
 
+*Cell-type supervision ablation. Higher supervision concentrates cell-type information in the assigned latent dimensions while keeping real-vs-simulated AUC near the ideal 0.5 baseline.*
+
 ![Batch supervised-weight ablation](../experiments/outputs/2026-04-06/20-22-21_batch_disentanglement/batch_supervised_weight_comparison.png)
+
+*Batch supervision ablation. Increasing batch supervision improves batch predictability from the batch subspace without substantially increasing cell-type leakage into that subspace.*
 
 ## Next Steps
 
