@@ -1,0 +1,114 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=0.85in]{geometry}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage[numbers,sort&compress]{natbib}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  citecolor=blue!50!black,
+  urlcolor=blue!50!black
+}
+
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\setlength{\emergencystretch}{2em}
+
+\title{Concise Comparison of Single-Cell Simulation Methods}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\begin{table}[htbp]
+\centering
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.18}
+\label{tab:method-comparison}
+\begin{tabularx}{\textwidth}{@{}p{0.17\textwidth}Y Y Y@{}}
+\toprule
+\textbf{Method} & \textbf{Main idea} & \textbf{Controls} & \textbf{Difference from scDeepSim} \\
+\midrule
+Splatter
+&
+Parametric gamma-Poisson count simulator.
+&
+Library size, groups, differential expression, and batches
+&
+\multirow[c]{5}{=}{\centering Transparent and controllable, but less able to learn complex real-data manifolds.}
+\\
+\addlinespace
+dyngen 
+&
+Mechanistic trajectory or gene-regulatory simulators.
+&
+Lineage topology, pseudotime, and regulatory programs.
+&
+\\
+\addlinespace
+scDesign3 
+&
+Statistical simulator using marginal models plus dependence modelling.
+&
+Gene correlations, differential expression, cell states, and batch effects.
+&
+\\
+\midrule
+scGAN / cscGAN 
+&
+GAN or conditional GAN for expression generation.
+&
+Discrete cell-type or cluster-conditional augmentation.
+&
+Early deep learning simulator, but cannot simulate out-of-distribution samples.
+\\
+\midrule
+scVI
+&
+VAE-based representation learning and batch correction.
+&
+Batch corrected embeddings and posterior sampling.
+&
+\multirow[c]{2}[10]{=}{\centering Cannot generate new samples without providing matching real cells. Does not learn a disentangled latent space for interpretable controls.}
+\\
+\addlinespace
+scGEN
+&
+VAE-based latent vector perturbation for generating unobserved samples.
+&
+Perturbation vector transfer for conditional generation.  
+&
+\\
+\midrule
+scDiffusion / scLDM 
+&
+Latent diffusion generation for single-cell expression.
+&
+Able to generate data with certain cell types that has been seen by the model.
+&
+Lacks the disentangled subspace and out-of-distribution interpolation and extrapolation capabilities.
+\\
+\midrule
+\textbf{scDeepSim}
+&
+TN-VAE in log-normalised space plus latent diffusion and supervised latent disentanglement.
+&
+Cell type, batch effect strength, pseudotime, branch discrepancy, branching point, and noise.
+&
+Targets the middle ground: deep learned realism plus explicit, continuous, benchmark-ready controls.
+\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\newpage
+
+\bibliographystyle{plainnat}
+
+\end{document}

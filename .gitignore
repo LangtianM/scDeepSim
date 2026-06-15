@@ -29,6 +29,9 @@ AGENTS.md
 *.fls
 *.log
 *.synctex.gz
+*.bbl
+*.blg
+*.out
 notes/assets/*
 notes/reply_Jun4.tex
 experiments/renv/*
