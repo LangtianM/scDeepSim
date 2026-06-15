@@ -2,7 +2,7 @@
 for single-cell gene expression data in the log1p-normalised space."""
 
 import math
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -172,6 +172,90 @@ def hurdle_nll(
 
 
 # ---------------------------------------------------------------------------
+# Adversarial invariance helpers
+# ---------------------------------------------------------------------------
+class GradientReverse(torch.autograd.Function):
+    """Identity in the forward pass, scaled sign reversal in the backward pass."""
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, scale: float) -> torch.Tensor:
+        ctx.scale = float(scale)
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor):
+        return -ctx.scale * grad_output, None
+
+
+def gradient_reverse(x: torch.Tensor, scale: float) -> torch.Tensor:
+    """Apply gradient reversal with the requested backward scale."""
+    return GradientReverse.apply(x, scale)
+
+
+class ConditionalAdversarialHead(nn.Module):
+    """Predict a categorical target from latent features and a condition label."""
+
+    def __init__(
+        self,
+        n_input: int,
+        n_condition_classes: int,
+        n_output: int,
+        hidden_dim: int = 64,
+        condition_embedding_dim: int = 8,
+    ):
+        super().__init__()
+        self.condition_embedding = nn.Embedding(
+            n_condition_classes, condition_embedding_dim
+        )
+        self.net = nn.Sequential(
+            nn.Linear(n_input + condition_embedding_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, n_output),
+        )
+
+    def forward(
+        self, z_input: torch.Tensor, condition: torch.Tensor
+    ) -> torch.Tensor:
+        condition_emb = self.condition_embedding(condition.long())
+        return self.net(torch.cat([z_input, condition_emb], dim=1))
+
+    def compute_loss(
+        self,
+        z_input: torch.Tensor,
+        condition: torch.Tensor,
+        target: torch.Tensor,
+    ) -> torch.Tensor:
+        return F.cross_entropy(self.forward(z_input, condition), target.long())
+
+
+_DEFAULT_ADVERSARIAL_CONFIG = {
+    "enabled": True,
+    "weight": 1.0,
+    "warmup_epochs": 20,
+    "head_hidden": 64,
+    "condition_embedding_dim": 8,
+}
+
+
+def _normalize_adversarial_config(
+    adversarial_config: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if adversarial_config is None:
+        config = dict(_DEFAULT_ADVERSARIAL_CONFIG)
+        config["enabled"] = False
+        return config
+
+    config = dict(_DEFAULT_ADVERSARIAL_CONFIG)
+    config.update(dict(adversarial_config))
+    config["enabled"] = bool(config["enabled"])
+    config["weight"] = float(config["weight"])
+    config["warmup_epochs"] = int(config["warmup_epochs"])
+    config["head_hidden"] = int(config["head_hidden"])
+    config["condition_embedding_dim"] = int(config["condition_embedding_dim"])
+    return config
+
+
+# ---------------------------------------------------------------------------
 # Lightning module
 # ---------------------------------------------------------------------------
 class TruncatedNormalVAE(pl.LightningModule):
@@ -208,6 +292,11 @@ class TruncatedNormalVAE(pl.LightningModule):
         Supervised dimensions are assigned contiguously from the front of the
         latent vector in the order they appear in the list.
     sup_head_hidden : Hidden-layer width for each supervised MLP head.
+    adversarial_config : Optional dict enabling conditional adversarial
+        invariance for categorical supervised labels.  When enabled, each
+        categorical label is predicted from the non-assigned latent dimensions
+        while conditioned on the other categorical labels through learned
+        embeddings.  The gradient-reversal scale is linearly warmed up.
     lr : Learning rate.
     weight_decay : Weight decay for AdamW.
     gradient_clip_val : Gradient clipping value.
@@ -228,10 +317,12 @@ class TruncatedNormalVAE(pl.LightningModule):
         zero_inflated: bool = True,
         supervised_config: Optional[List[Dict]] = None,
         sup_head_hidden: int = 64,
+        adversarial_config: Optional[Dict[str, Any]] = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
         gradient_clip_val: float = 5.0,
     ):
+        adversarial_config = _normalize_adversarial_config(adversarial_config)
         super().__init__()
         self.save_hyperparameters()
 
@@ -279,6 +370,49 @@ class TruncatedNormalVAE(pl.LightningModule):
             )
             offset += n_dims
         self._sup_config = supervised_config or []
+        self._residual_slice = slice(offset, latent_dim)
+
+        # ---- conditional adversaries ----
+        self._adv_config = adversarial_config
+        self._adv_enabled = bool(adversarial_config["enabled"])
+        self.adv_heads = nn.ModuleDict()
+        self._adv_specs: List[Dict[str, Any]] = []
+        self._adv_targets: List[str] = []
+        if self._adv_enabled:
+            categorical_specs = [
+                spec for spec in self._sup_config
+                if spec.get("type") == "categorical"
+            ]
+            for target_spec in categorical_specs:
+                target_name = target_spec["name"]
+                target_slice = self._sup_slices[target_name]
+                n_input = latent_dim - (target_slice.stop - target_slice.start)
+                if n_input <= 0:
+                    continue
+                for condition_spec in categorical_specs:
+                    condition_name = condition_spec["name"]
+                    if condition_name == target_name:
+                        continue
+                    adv_name = f"{target_name}_given_{condition_name}"
+                    self.adv_heads[adv_name] = ConditionalAdversarialHead(
+                        n_input=n_input,
+                        n_condition_classes=int(condition_spec["n_classes"]),
+                        n_output=int(target_spec["n_classes"]),
+                        hidden_dim=int(adversarial_config["head_hidden"]),
+                        condition_embedding_dim=int(
+                            adversarial_config["condition_embedding_dim"]
+                        ),
+                    )
+                    self._adv_specs.append(
+                        {
+                            "name": adv_name,
+                            "target": target_name,
+                            "condition": condition_name,
+                            "target_slice": target_slice,
+                        }
+                    )
+                    if target_name not in self._adv_targets:
+                        self._adv_targets.append(target_name)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -288,6 +422,27 @@ class TruncatedNormalVAE(pl.LightningModule):
             return self.hparams.beta
         frac = min(1.0, self.current_epoch / self.hparams.beta_warmup_epochs)
         return frac * self.hparams.beta
+
+    def _effective_adv_weight(self) -> float:
+        if not self._adv_enabled:
+            return 0.0
+        max_weight = float(self._adv_config["weight"])
+        warmup_epochs = int(self._adv_config["warmup_epochs"])
+        if warmup_epochs <= 0:
+            return max_weight
+        frac = min(1.0, self.current_epoch / warmup_epochs)
+        return frac * max_weight
+
+    @staticmethod
+    def _latent_without_slice(z: torch.Tensor, slc: slice) -> torch.Tensor:
+        parts = []
+        if slc.start > 0:
+            parts.append(z[:, :slc.start])
+        if slc.stop < z.size(1):
+            parts.append(z[:, slc.stop:])
+        if parts:
+            return torch.cat(parts, dim=1)
+        return z.new_empty((z.size(0), 0))
 
     def reparameterize(
         self, mu: torch.Tensor, logvar: torch.Tensor
@@ -443,15 +598,51 @@ class TruncatedNormalVAE(pl.LightningModule):
                     name
                 ].compute_loss(z_slice, labels[name])
 
+        loss_adv = torch.tensor(0.0, device=x.device)
+        adv_by_target = {
+            target: torch.tensor(0.0, device=x.device)
+            for target in self._adv_targets
+        }
+        adv_weight = self._effective_adv_weight()
+        if self._adv_enabled and labels is not None:
+            for spec in self._adv_specs:
+                target_name = spec["target"]
+                condition_name = spec["condition"]
+                if target_name not in labels or condition_name not in labels:
+                    continue
+                z_adv = self._latent_without_slice(z, spec["target_slice"])
+                z_adv = gradient_reverse(z_adv, adv_weight)
+                target_loss = self.adv_heads[spec["name"]].compute_loss(
+                    z_adv,
+                    labels[condition_name],
+                    labels[target_name],
+                )
+                loss_adv = loss_adv + target_loss
+                adv_by_target[target_name] = adv_by_target[target_name] + target_loss
+
         beta = self._effective_beta()
-        loss = loss_recon + beta * loss_kl + loss_sup
-        return {
+        loss = loss_recon + beta * loss_kl + loss_sup + loss_adv
+        losses = {
             "loss": loss,
             "recon": loss_recon,
             "kl": loss_kl,
-            "kl_weight": torch.tensor(beta),
+            "kl_weight": torch.tensor(beta, device=x.device),
             "sup": loss_sup,
         }
+        if self._adv_enabled:
+            losses.update(
+                {
+                    "adv": loss_adv,
+                    "adv_weight": torch.tensor(adv_weight, device=x.device),
+                }
+            )
+            losses.update(
+                {
+                    f"adv_{target_name}": target_loss
+                    for target_name, target_loss in adv_by_target.items()
+                }
+            )
+        return losses
 
     # ------------------------------------------------------------------
     # Lightning steps

@@ -67,11 +67,34 @@ def as_dense(x):
     return x.toarray() if sp.issparse(x) else np.asarray(x)
 
 
+def selected_counts_layer(cfg):
+    """Return the configured raw-count layer name, if any."""
+    counts_layer = OmegaConf.select(cfg, "data.counts_layer", default=None)
+    if counts_layer in (None, "", "null", "none"):
+        return None
+    return str(counts_layer)
+
+
+def selected_adversarial_config(cfg):
+    """Return the configured adversarial settings as a plain dict, if present."""
+    adversarial = OmegaConf.select(cfg, "adversarial", default=None)
+    if adversarial is None:
+        return None
+    return OmegaConf.to_container(adversarial, resolve=True)
+
+
 def load_and_preprocess(cfg):
     """Load h5ad, optionally subsample, select HVGs, normalize, and log1p."""
     rng = np.random.default_rng(cfg.seed)
     adata = sc.read_h5ad(cfg.paths.data_path)
     adata.var_names_make_unique()
+
+    counts_layer = selected_counts_layer(cfg)
+    if counts_layer is not None:
+        if counts_layer not in adata.layers:
+            raise ValueError(f"Missing counts layer: {counts_layer}")
+        adata.X = adata.layers[counts_layer].copy()
+
     sc.pp.filter_cells(adata, min_genes=cfg.data.min_genes)
     sc.pp.filter_genes(adata, min_cells=cfg.data.min_cells)
 
@@ -157,6 +180,7 @@ def train_vae(adata, supervised_config, cfg, output_dir):
         zero_inflated=cfg.vae.zero_inflated,
         supervised_config=supervised_config,
         sup_head_hidden=cfg.vae.sup_head_hidden,
+        adversarial_config=selected_adversarial_config(cfg),
     )
     data_module = ScDataModule(
         adata,
@@ -223,13 +247,50 @@ def split_indices(labels, cfg):
         )
 
 
+def conditional_majority_baseline_ba(
+    target_labels,
+    condition_labels,
+    train_idx,
+    test_idx,
+):
+    """Predict target labels from condition labels with train-set majority lookup."""
+    train_targets = target_labels[train_idx]
+    train_conditions = condition_labels[train_idx]
+
+    values, counts = np.unique(train_targets, return_counts=True)
+    global_majority = values[np.argmax(counts)]
+    condition_to_target = {}
+    for condition_value in np.unique(train_conditions):
+        mask = train_conditions == condition_value
+        values, counts = np.unique(train_targets[mask], return_counts=True)
+        condition_to_target[condition_value] = values[np.argmax(counts)]
+
+    pred = np.array(
+        [
+            condition_to_target.get(condition_value, global_majority)
+            for condition_value in condition_labels[test_idx]
+        ]
+    )
+    return float(balanced_accuracy_score(target_labels[test_idx], pred))
+
+
 def evaluate_predictability(adata, subspaces, encoders, cfg):
     """Train RF classifiers for every label/subspace pair."""
     rows = []
     for label_name in ("celltype", "batch"):
         labels = encoders[label_name].transform(adata.obs[label_name])
         train_idx, test_idx = split_indices(labels, cfg)
-        chance = 1.0 / len(encoders[label_name].classes_)
+        random_ba = 1.0 / len(encoders[label_name].classes_)
+        conditional_label = "batch" if label_name == "celltype" else "celltype"
+        condition_labels = encoders[conditional_label].transform(
+            adata.obs[conditional_label]
+        )
+        conditional_ba = conditional_majority_baseline_ba(
+            labels,
+            condition_labels,
+            train_idx,
+            test_idx,
+        )
 
         for subspace_name, x_sub in subspaces.items():
             clf = RandomForestClassifier(
@@ -250,7 +311,11 @@ def evaluate_predictability(adata, subspaces, encoders, cfg):
                     "balanced_accuracy": balanced_accuracy_score(
                         labels[test_idx], pred
                     ),
-                    "chance": chance,
+                    "chance": random_ba,
+                    "random_ba": random_ba,
+                    "conditional_label": conditional_label,
+                    "conditional_label_display": DISPLAY_NAMES[conditional_label],
+                    "conditional_ba": conditional_ba,
                     "n_classes": len(encoders[label_name].classes_),
                     "n_train": len(train_idx),
                     "n_test": len(test_idx),
@@ -275,15 +340,30 @@ def plot_figure(metrics, slices, cfg, save_stem):
     row_labels = []
     for row_idx, label in enumerate(label_order):
         label_rows = metrics[metrics["label"] == label]
-        chance = float(label_rows["chance"].iloc[0])
-        row_labels.append(f"{DISPLAY_NAMES[label]}\nchance={chance:.2f}")
+        random_ba = float(label_rows["random_ba"].iloc[0])
+        conditional_ba = float(label_rows["conditional_ba"].iloc[0])
+        conditional_label = str(label_rows["conditional_label"].iloc[0])
+        conditional_display = {
+            "celltype": "Cell type",
+            "batch": "Batch",
+        }[conditional_label]
+        target_display = {
+            "celltype": "Cell type",
+            "batch": "Batch",
+        }[label]
+        row_labels.append(
+            f"{DISPLAY_NAMES[label]}\n"
+            f"random BA={random_ba:.2f}\n"
+            f"{target_display} ~ {conditional_display}\n"
+            f"BA={conditional_ba:.2f}"
+        )
         for col_idx, subspace in enumerate(subspace_order):
             value = label_rows.loc[
                 label_rows["subspace"] == subspace, "balanced_accuracy"
             ].iloc[0]
             matrix[row_idx, col_idx] = value
 
-    fig = plt.figure(figsize=(9.0, 4.8))
+    fig = plt.figure(figsize=(9.4, 5.2))
     grid = fig.add_gridspec(
         nrows=2,
         ncols=2,
@@ -291,7 +371,7 @@ def plot_figure(metrics, slices, cfg, save_stem):
         width_ratios=[1.0, 0.035],
         hspace=0.12,
         wspace=0.04,
-        left=0.18,
+        left=0.24,
         right=0.88,
         top=0.92,
         bottom=0.16,
@@ -424,10 +504,12 @@ def main(cfg: DictConfig) -> None:
     metadata = {
         "config": OmegaConf.to_container(cfg, resolve=True),
         "data_shape": {"n_cells": adata.n_obs, "n_genes": adata.n_vars},
+        "input_layer": selected_counts_layer(cfg) or "X",
         "label_keys": {
             "celltype": cfg.data.celltype_key,
             "batch": cfg.data.batch_key,
         },
+        "adversarial_config": selected_adversarial_config(cfg),
         "class_counts": class_counts,
         "latent_dim": int(z.shape[1]),
         "subspace_slices": {

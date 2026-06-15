@@ -12,36 +12,6 @@ This study addresses this trade-off by adapting disentangled variational autoenc
 
 We evaluate this approach on benchmark datasets with complex experimental designs, including those with varying signal strengths. We evaluate the quality of simulated data before and after control factors have been applied. We demonstrate that our approach retains high simulation quality even after manipulation, whereas classical methods either lack controllability or sacrifice realism when it is applied.
 
----
-
-## Literature Positioning and Novelty
-
-The novelty claim should not be that this is the first deep-learning-based single-cell simulator. Methods such as scGAN/cscGAN and recent diffusion models already show that neural generators can produce realistic scRNA-seq profiles. The stronger and more defensible claim is that this framework combines:
-
-1. high-fidelity deep generative modelling,
-2. genuine de novo generation without borrowing a real cell or a real library size at sampling time,
-3. supervised latent disentanglement of biological and technical factors,
-4. post-hoc continuous control of effect strength through explicit latent maps, and
-5. benchmark-ready ground truth for batch-effect and trajectory-inference stress tests.
-
-| Method / family | Model class | What it controls well | Strengths | Gap relative to this framework |
-| --- | --- | --- | --- | --- |
-| [Splatter / Splat](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-017-1305-0) | Parametric gamma-Poisson count simulator with library-size, dropout, group, batch and path parameters. | Explicit technical and group-level parameters; can simulate multiple populations and differentiation paths. | Transparent, reproducible, fast, and useful for controlled null or stress-test settings. | Statistical assumptions are relatively simple; high-dimensional gene-gene structure and complex real manifolds are not learned as flexibly as in neural generators. |
-| Mechanistic trajectory / GRN simulators such as PROSSTT, dyngen, SERGIO | Mechanistic or semi-mechanistic models built around lineage trees, kinetic models, ODEs, or user-specified gene regulatory networks. | Ground-truth lineage topology, pseudotime, regulatory structure, and sometimes multi-modal effects. | Strong for trajectory or GRN method benchmarking because the data-generating truth is explicit. | Often require strong structural assumptions or external networks, and are less directly optimized to mimic a specific real scRNA-seq distribution. They do not primarily address deep learned fidelity plus tunable batch/trajectory perturbations in a single latent framework. |
-| [scDesign2](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-021-02367-2) / [scDesign3](https://www.nature.com/articles/s41587-023-01772-1) | Statistical simulators using fitted marginal models and copulas/GAMLSS-style covariate modelling. | Gene-wise distributions, gene correlations, sequencing depth, cell states, trajectories, spatial locations, and multimodal designs. | Among the strongest transparent statistical simulators; scDesign3 explicitly targets realistic single-cell and spatial omics simulation with interpretable fitted parameters. | Control is implemented through statistical covariate models rather than a learned deep latent manifold. There is no disentangled latent diffusion generator or post-hoc affine strength parameter that can preserve one subspace while perturbing another. |
-| [scGAN / cscGAN](https://www.nature.com/articles/s41467-019-14018-z) | GAN or conditional GAN generating expression profiles in gene space, with library-size normalization. | Cell-type or cluster-conditional augmentation. | Demonstrated that neural networks can learn nonlinear gene-gene dependencies and generate realistic cells of defined types. | Closest early deep simulator, but control is mainly discrete conditioning. It is black-box, has no explicit latent factor disentanglement, no continuous batch or trajectory difficulty knobs, and no direct construction of benchmark ground truth such as branch-point position or branch discrepancy. |
-| [scVI](https://www.nature.com/articles/s41592-018-0229-2) and related VAE models | Probabilistic deep generative models for single-cell representation learning, usually in raw-count space with library-size modelling. | Batch-aware representation learning, uncertainty, reconstruction/posterior predictive sampling, differential expression. | Strong analysis model and useful reconstruction baseline. | Not designed as a standalone simulator with user-controlled ground truth. Prior sampling generally still requires a library-size choice; posterior predictive sampling is reconstruction-like because it is anchored to observed cells. |
-| [scGen](https://www.nature.com/articles/s41592-019-0494-8) and perturbation-vector models | VAE with latent vector arithmetic for perturbation response prediction. | Transfer of observed perturbation effects across cell types, studies, or species. | Shows that latent-space arithmetic can encode biologically meaningful responses. | The target is perturbation prediction, not general-purpose simulation. The control vector is learned from observed perturbation contrasts, whereas our controls are framed as explicit simulator knobs for batch strength, pseudotime, branch discrepancy, branch point, and noise. |
-| [scDiffusion](https://arxiv.org/abs/2401.03968) | Diffusion model for conditional single-cell generation, with classifier guidance and gradient interpolation. | Multi-condition generation, rare-cell generation, and continuous developmental trajectories from a given state. | The closest diffusion-based prior art: high-fidelity conditional generation with an explicit trajectory-generation component. | Conditioning and gradient interpolation do not by themselves provide disentangled biological/technical subspaces or moment-matched affine maps with an interpretable effect-strength parameter. The benchmarking emphasis is not on preserving one latent factor while continuously perturbing another. |
-| [scLDM](https://arxiv.org/abs/2511.02986) and emerging latent-diffusion/foundation models | VAE plus latent diffusion or transformer-based generative models for scalable single-cell expression generation. | High-quality unconditional or multi-conditional generation; in some models, multi-condition classifier-free guidance. | Strong evidence that diffusion priors are competitive for high-dimensional single-cell generation. | These methods primarily optimize generative quality and conditional synthesis. They do not directly provide the post-hoc, sample-linear control primitive used here to tune batch effects and trajectory difficulty with known ground truth. |
-| **scDeepSim (this project)** | TN-VAE in log-normalised space plus latent diffusion, supervised latent disentanglement, classifier-free guidance, and post-hoc affine latent controls. | Cell-type-conditional generation; batch-effect strength $\alpha$; pseudo-time $\alpha$; branch endpoint discrepancy; branch-point position $\tau$; noise scale $\sigma$. | Attempts to bridge deep fidelity and explicit controllability. The same generator supports quality benchmarking, batch-effect dose-response experiments, and trajectory-inference benchmarks with known metadata. | Current limitations are empirical: gene-space fidelity is still below reconstruction quality, held-out batch generation remains difficult, and the log-normalised-space design should be benchmarked against raw-count alternatives. |
-
-**Defensible novelty statement:** The framework is not novel simply because it uses a deep generator or a diffusion model. Its main novelty is the combination of a learned latent single-cell manifold with supervised factor disentanglement and explicit post-hoc affine controls that expose continuous, interpretable simulator knobs. This makes the simulator useful not only for producing realistic cells, but also for constructing controlled benchmark families where batch strength, pseudotime, branch difficulty, and noise are known by construction.
-
-**What to avoid claiming:** We should not claim priority for deep single-cell simulation, conditional cell-type generation, or diffusion-based single-cell generation. Those are already covered by scGAN/cscGAN, scDiffusion, and emerging latent diffusion models. The novelty should be framed around the specific control interface and benchmark design enabled by the disentangled VAE plus latent diffusion architecture.
-
----
-
 ## The Generative Model
 
 ### Disentangled VAE
@@ -57,6 +27,20 @@ The disentangled VAE is a variational autoencoder that uses:
 The decoder distribution is motivated by the empirical properties of log-normalised gene expression: values are non-negative, right-skewed, and exhibit excess zeros. In previous experiments we also tried a plain AE and a ZINB VAE, but simulation quality was not satisfactory; the truncated normal decoder provides the best balance (see discussion on library size below).
 
 The supervised heads serve a disentanglement objective: they encourage known covariate information to concentrate in designated subsets of latent dimensions, while biological variation unaccounted for by labels is captured in the remaining dimensions. For example, cell type information is encoded in the first $d_c$ latent dimensions and batch information in the next $d_b$ dimensions. This factorization enables targeted manipulation: introducing batch effect by shifting only the batch-specific subspace without disturbing the cell-type subspace.
+
+For Figure 2 we additionally enable conditional adversarial invariance in the TN-VAE. The training objective keeps the positive supervised heads on their intended subspaces while adding gradient-reversal adversaries on the wrong subspaces:
+
+$$
+\mathcal L =
+\mathcal L_\text{rec}
++ \beta \mathcal L_\text{KL}
++ \lambda_c CE(h_c(z_c), c)
++ \lambda_b CE(h_b(z_b), b)
++ CE(a_b(GRL_{\gamma_t}([z_c,z_r]), emb(c)), b)
++ CE(a_c(GRL_{\gamma_t}([z_b,z_r]), emb(b)), c).
+$$
+
+Here $z_c$, $z_b$, and $z_r$ denote the cell-type, batch, and residual latent blocks. The adversaries discourage residual or wrong-subspace leakage, approximately targeting lower $I(b; z_c,z_r \mid c)$ and $I(c; z_b,z_r \mid b)$, while preserving high predictability from the intended subspaces.
 
 ### Why Log-Normalised Space? The Library Size Problem
 
