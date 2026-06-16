@@ -22,25 +22,31 @@ The disentangled VAE is a variational autoencoder that uses:
 
 - a normal distribution as the encoder $q_\phi(z|x)$,
 - a zero-inflated truncated normal distribution as the decoder $p_\theta(x|z)$,
-- supervised classification heads for covariates (e.g., cell type, batch, developmental stage).
+- supervised classification heads for covariates.
 
 The decoder distribution is motivated by the empirical properties of log-normalised gene expression: values are non-negative, right-skewed, and exhibit excess zeros. In previous experiments we also tried a plain AE and a ZINB VAE, but simulation quality was not satisfactory; the truncated normal decoder provides the best balance (see discussion on library size below).
 
-The supervised heads serve a disentanglement objective: they encourage known covariate information to concentrate in designated subsets of latent dimensions, while biological variation unaccounted for by labels is captured in the remaining dimensions. For example, cell type information is encoded in the first $d_c$ latent dimensions and batch information in the next $d_b$ dimensions. This factorization enables targeted manipulation: introducing batch effect by shifting only the batch-specific subspace without disturbing the cell-type subspace.
+The supervised heads impose a structured disentanglement objective. They encourage each known covariate to be predictable from its designated latent block and uninformative outside that block. Specifically, cell-type information is assigned to the first $d_c$ latent dimensions, while batch information is assigned to the next $d_b$ dimensions. This decomposition supports targeted interventions: for example, a batch effect can be introduced by perturbing only the batch-specific subspace, leaving the cell-type subspace unchanged.
 
-For Figure 2 we additionally enable conditional adversarial invariance in the TN-VAE. The training objective keeps the positive supervised heads on their intended subspaces while adding gradient-reversal adversaries on the wrong subspaces:
+The training objectives are:
 
 $$
-\mathcal L =
-\mathcal L_\text{rec}
-+ \beta \mathcal L_\text{KL}
-+ \lambda_c CE(h_c(z_c), c)
-+ \lambda_b CE(h_b(z_b), b)
-+ CE(a_b(GRL_{\gamma_t}([z_c,z_r]), emb(c)), b)
-+ CE(a_c(GRL_{\gamma_t}([z_b,z_r]), emb(b)), c).
+\begin{align*}
+\mathcal L
+&= \mathcal L_\text{rec}
+ + \beta \mathcal L_\text{KL}
+ + \lambda_c CE(h_c(z_c), c)
+ + \lambda_b CE(h_b(z_b), b) \\
+&\quad + CE(a_b(GRL_{\gamma_t}([z_c,z_r]), emb(c)), b) \\
+&\quad + CE(a_c(GRL_{\gamma_t}([z_b,z_r]), emb(b)), c).
+\end{align*}
 $$
 
-Here $z_c$, $z_b$, and $z_r$ denote the cell-type, batch, and residual latent blocks. The adversaries discourage residual or wrong-subspace leakage, approximately targeting lower $I(b; z_c,z_r \mid c)$ and $I(c; z_b,z_r \mid b)$, while preserving high predictability from the intended subspaces.
+The notation is as follows. The input $x$ denotes the log-normalised gene-expression vector, and $z$ is the latent representation sampled from the encoder. The latent vector is partitioned as
+$$
+z = [z_c, z_b, z_r],
+$$
+where $z_c \in \mathbb R^{d_c}$ is the cell-type block, $z_b \in \mathbb R^{d_b}$ is the batch block, and $z_r$ is the residual block. The labels $c$ and $b$ denote the observed cell type and batch, respectively. The terms $\mathcal L_\text{rec}$ and $\mathcal L_\text{KL}$ are the reconstruction loss and the KL divergence to the latent prior. The scalar $\beta$ controls the strength of KL regularisation, while $\lambda_c$ and $\lambda_b$ weight the supervised cell-type and batch classification losses. The function $CE(\cdot,\cdot)$ denotes cross-entropy loss, $h_c$ and $h_b$ are classifiers trained to predict $c$ from $z_c$ and $b$ from $z_b$, and $a_c$ and $a_b$ are adversarial classifiers. The operator $GRL_{\gamma_t}$ is a gradient-reversal layer with strength $\gamma_t$, and $emb(\cdot)$ denotes the embedding of the conditioning covariate supplied to the adversary.
 
 ### Why Log-Normalised Space? The Library Size Problem
 
