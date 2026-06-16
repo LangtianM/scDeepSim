@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 from omegaconf import DictConfig
+from sklearn.model_selection import train_test_split
 
 from .common import as_dense, optional_int, resolve_path, root, stable_hash
 
@@ -114,6 +115,75 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
 
     log.info("Shared data shape: %s", adata_norm.shape)
     return adata_norm, adata_raw
+
+
+def train_test_split_adata(
+    adata_norm: ad.AnnData,
+    adata_raw: ad.AnnData,
+    cfg: DictConfig,
+) -> tuple[ad.AnnData, ad.AnnData, ad.AnnData, ad.AnnData, dict[str, Any]]:
+    """Split matched normalized/raw AnnData objects into train and evaluation sets."""
+    if adata_norm.n_obs != adata_raw.n_obs or not np.array_equal(
+        adata_norm.obs_names.to_numpy(), adata_raw.obs_names.to_numpy()
+    ):
+        raise ValueError("Normalized and raw AnnData objects must have matching cells.")
+
+    use_split = bool(cfg.eval.get("use_train_test_split", False))
+    if not use_split:
+        metadata = {
+            "enabled": False,
+            "n_train": int(adata_norm.n_obs),
+            "n_test": int(adata_norm.n_obs),
+            "test_size": None,
+            "stratified": False,
+        }
+        return adata_norm, adata_norm, adata_raw, adata_raw, metadata
+
+    indices = np.arange(adata_norm.n_obs)
+    test_size = cfg.eval.get("test_size", 0.2)
+    labels = adata_norm.obs["celltype"].astype(str).to_numpy()
+    stratify = labels if bool(cfg.eval.get("stratify_split", True)) else None
+    stratified = stratify is not None
+    try:
+        train_idx, test_idx = train_test_split(
+            indices,
+            test_size=test_size,
+            random_state=int(cfg.seed),
+            stratify=stratify,
+        )
+    except ValueError as exc:
+        if stratify is None:
+            raise
+        log.warning("Stratified train/test split failed (%s); using unstratified split.", exc)
+        train_idx, test_idx = train_test_split(
+            indices,
+            test_size=test_size,
+            random_state=int(cfg.seed),
+        )
+        stratified = False
+
+    train_idx = np.sort(train_idx)
+    test_idx = np.sort(test_idx)
+    metadata = {
+        "enabled": True,
+        "n_train": int(train_idx.size),
+        "n_test": int(test_idx.size),
+        "test_size": float(test_size),
+        "stratified": bool(stratified),
+        "train_obs_names_hash": stable_hash(
+            adata_norm.obs_names[train_idx].astype(str).tolist()
+        ),
+        "test_obs_names_hash": stable_hash(
+            adata_norm.obs_names[test_idx].astype(str).tolist()
+        ),
+    }
+    return (
+        adata_norm[train_idx].copy(),
+        adata_norm[test_idx].copy(),
+        adata_raw[train_idx].copy(),
+        adata_raw[test_idx].copy(),
+        metadata,
+    )
 
 
 def load_sample_matrix(path: Path) -> np.ndarray:

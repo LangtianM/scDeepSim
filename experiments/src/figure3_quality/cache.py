@@ -133,6 +133,13 @@ def sample_cache_key_payload(
         "data_path": path_fingerprint(cfg.paths.data_path),
         "selected_data": adata_selection_fingerprint(adata_selected),
         "data": _section(cfg, "data"),
+        "split": {
+            "use_train_test_split": bool(
+                cfg.eval.get("use_train_test_split", False)
+            ),
+            "test_size": cfg.eval.get("test_size", None),
+            "stratify_split": bool(cfg.eval.get("stratify_split", True)),
+        },
         "seed": int(cfg.seed),
         "eval": {"n_samples": resolved_n_samples},
         "method_config": method_sample_config(method_key, cfg),

@@ -28,6 +28,7 @@ from experiments.scripts.figure3_uncontrolled_quality import (
     run_method_with_sample_cache,
     sample_cache_key_payload,
     save_sample_cache,
+    train_test_split_adata,
     zinbwave_renv_env,
     zinbwave_renv_project,
     write_scdiffusion_input,
@@ -115,6 +116,41 @@ def test_load_sample_matrix_prefers_samples_and_supports_cell_gen(tmp_path):
     np.savez(legacy_path, cell_gen=legacy)
     assert load_sample_matrix(samples_path).tolist() == samples.tolist()
     assert load_sample_matrix(legacy_path).tolist() == legacy.tolist()
+
+
+def test_train_test_split_adata_returns_matched_train_and_eval_sets():
+    obs = pd.DataFrame(
+        {"celltype": ["a", "a", "a", "b", "b", "b"]},
+        index=[f"c{i}" for i in range(6)],
+    )
+    var = pd.DataFrame(index=["g1", "g2"])
+    x = np.arange(12, dtype=np.float32).reshape(6, 2)
+    adata_norm = ad.AnnData(X=x, obs=obs, var=var)
+    adata_raw = adata_norm.copy()
+    cfg = OmegaConf.create(
+        {
+            "seed": 3,
+            "eval": {
+                "use_train_test_split": True,
+                "test_size": 0.5,
+                "stratify_split": True,
+            },
+        }
+    )
+
+    train_norm, eval_norm, train_raw, eval_raw, metadata = train_test_split_adata(
+        adata_norm, adata_raw, cfg
+    )
+
+    assert train_norm.n_obs == 3
+    assert eval_norm.n_obs == 3
+    assert train_norm.obs_names.tolist() == train_raw.obs_names.tolist()
+    assert eval_norm.obs_names.tolist() == eval_raw.obs_names.tolist()
+    assert set(train_norm.obs_names).isdisjoint(set(eval_norm.obs_names))
+    assert metadata["enabled"] is True
+    assert metadata["stratified"] is True
+    assert set(train_norm.obs["celltype"].astype(str)) == {"a", "b"}
+    assert set(eval_norm.obs["celltype"].astype(str)) == {"a", "b"}
 
 
 def test_build_scdiffusion_runner_paths_are_deterministic(tmp_path):
@@ -260,7 +296,13 @@ def sample_cache_cfg(tmp_path):
                 "force_resimulate": False,
             },
             "data": {"n_cells": 2, "n_genes": 2},
-            "eval": {"n_samples": 2, "compute_vae_reconstruction": False},
+            "eval": {
+                "n_samples": 2,
+                "compute_vae_reconstruction": False,
+                "use_train_test_split": False,
+                "test_size": 0.2,
+                "stratify_split": True,
+            },
             "vae": {"latent_dim": 4, "epochs": 1, "latent_statistic": "posterior_mean"},
             "diffusion": {"sampling_steps": 2, "epochs": 1},
         }
@@ -288,12 +330,16 @@ def test_sample_cache_key_changes_with_config_and_selection(tmp_path):
     eval_cfg = OmegaConf.merge(cfg, {"eval": {"n_samples": 3}})
     assert build_sample_cache_paths("scdeepsim", adata, eval_cfg)["key"] != key
 
+    split_cfg = OmegaConf.merge(cfg, {"eval": {"use_train_test_split": True}})
+    assert build_sample_cache_paths("scdeepsim", adata, split_cfg)["key"] != key
+
     changed_selection = adata[:, ["g1"]].copy()
     assert build_sample_cache_paths("scdeepsim", changed_selection, cfg)["key"] != key
 
     payload = sample_cache_key_payload("scdeepsim", adata, cfg)
     assert payload["output_space"] == "normalized_log1p"
     assert payload["eval"]["n_samples"] == 2
+    assert payload["split"]["use_train_test_split"] is False
 
 
 def test_sample_cache_round_trip_preserves_output(tmp_path):
