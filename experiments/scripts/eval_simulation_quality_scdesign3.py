@@ -40,7 +40,7 @@ from omegaconf import DictConfig
 from scipy.io import mmread, mmwrite
 from sklearn.preprocessing import LabelEncoder
 
-from experiments.src.utils import as_dense, save_git_info
+from experiments.src.utils import as_dense, encode_matrix, save_git_info
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.plot import compare_umap
@@ -130,16 +130,6 @@ def train_vae(adata, cfg, output_dir):
     os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
     trainer.save_checkpoint(ckpt_path)
     return vae
-
-
-def encode_to_latent(vae, x):
-    device = next(vae.parameters()).device
-    vae.eval()
-    with torch.no_grad():
-        x_t = torch.tensor(x, dtype=torch.float32, device=device)
-        mu, logvar = vae.encode(x_t)
-        z = vae.reparameterize(mu, logvar)
-    return z.cpu().numpy()
 
 
 def reconstruct(vae, x):
@@ -483,7 +473,7 @@ def main(cfg: DictConfig) -> None:
 
     log.info("Reconstructing real data")
     x_recon, z_recon = reconstruct(vae, x_real)
-    latent_vectors = encode_to_latent(vae, x_real)
+    latent_vectors = encode_matrix(vae, x_real)
     latent_adata = ad.AnnData(X=latent_vectors, obs=adata.obs.copy())
 
     le = LabelEncoder()

@@ -57,10 +57,6 @@ from scdeepsim.quality import rf_discriminability
 log = logging.getLogger(__name__)
 
 
-def _dense(X):
-    return as_dense(X)
-
-
 def _sanitize_matrix(X, max_abs=1.0e6):
     """Replace non-finite values and clip extremes for metrics/plots."""
     X = np.asarray(X, dtype=np.float64)
@@ -483,7 +479,7 @@ def main(cfg: DictConfig) -> None:
 
     ref_mask = train_obs["batch"].to_numpy() == reference_batch
     z_ref_train = z_train[ref_mask]
-    X_ref = _sanitize_matrix(_dense(adata_train.X[ref_mask]))
+    X_ref = _sanitize_matrix(as_dense(adata_train.X[ref_mask]))
 
     direction_info = compute_global_direction(
         z_ref_train,
@@ -492,8 +488,8 @@ def main(cfg: DictConfig) -> None:
         method=cfg.generation.direction_method,
     )
 
-    X_calib = _sanitize_matrix(_dense(adata_calib.X))
-    X_heldout = _sanitize_matrix(_dense(adata_eval.X))
+    X_calib = _sanitize_matrix(as_dense(adata_calib.X))
+    X_heldout = _sanitize_matrix(as_dense(adata_eval.X))
 
     generator = str(cfg.generation.generator)
     generator_metadata = {}

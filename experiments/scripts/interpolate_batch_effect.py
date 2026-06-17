@@ -53,18 +53,6 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Data
-# ---------------------------------------------------------------------------
-
-def prepare_data(cfg):
-    """Load, preprocess, and identify the two largest batches."""
-    return prepare_celltype_batch_data(
-        cfg,
-        select_top_two_batches=True,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Visualisation
 # ---------------------------------------------------------------------------
 
@@ -243,7 +231,10 @@ def main(cfg: DictConfig) -> None:
     # -- 1. data --
     log.info("[1/5] Loading data...")
     (adata, ct_le, n_celltypes, batch_le, n_batches,
-     ref_batch, target_batch) = prepare_data(cfg)
+     ref_batch, target_batch) = prepare_celltype_batch_data(
+        cfg,
+        select_top_two_batches=True,
+    )
 
     # -- 2. train VAE --
     log.info("[2/5] Training VAE...")

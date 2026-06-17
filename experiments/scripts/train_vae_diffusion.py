@@ -149,15 +149,6 @@ def train_or_load_vae(adata, ckpt_path, log_dir, cfg):
     return vae
 
 
-# ===========================
-# Latent Encoding
-# ===========================
-
-def encode_to_latent(vae, adata):
-    """Encode all data to latent space using VAE."""
-    return encode_adata(vae, adata)
-
-
 def create_latent_dataset(adata, latent_vectors):
     """Create a dataset for training diffusion in latent space."""
     import anndata as ad
@@ -883,7 +874,7 @@ def main(cfg: DictConfig) -> None:
     print(f"\n{'='*70}")
     print("ENCODING TO LATENT SPACE")
     print(f"{'='*70}")
-    latent_vectors = encode_to_latent(vae, adata)
+    latent_vectors = encode_adata(vae, adata)
     print(f"  Latent vectors shape: {latent_vectors.shape}")
     print(f"  Latent mean: {latent_vectors.mean():.4f}, std: {latent_vectors.std():.4f}")
 
