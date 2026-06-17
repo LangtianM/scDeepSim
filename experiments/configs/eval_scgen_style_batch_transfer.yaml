@@ -1,0 +1,53 @@
+seed: 42
+
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+  data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
+
+data:
+  n_cells: 10000
+  n_genes: 2000
+  celltype_key: celltype
+  batch_key: tech
+
+split:
+  reference_batch: null
+  target_batch: null
+  heldout_celltype: null
+  min_cells_per_group: 20
+
+vae:
+  latent_dim: 128
+  enc_hidden: [512, 256]
+  dec_hidden: [256, 512]
+  input_dropout: 0.1
+  beta: 1.0
+  beta_warmup_epochs: 10
+  zero_inflated: true
+  sup_head_hidden: 64
+  max_epochs: 100
+  batch_size: 256
+
+supervision:
+  celltype_weight: 5.0
+  celltype_latent_dims: 16
+  batch_weight: 5.0
+  batch_latent_dims: 16
+
+direction:
+  method: whitening_recoloring
+  alpha: 1.0
+  covariance_ridge: 1.0e-6
+
+generation:
+  encode_batch_size: 1024
+  decode_batch_size: 1024
+
+evaluation:
+  top_de_genes: 100
+  umap_n_neighbors: 15
+  umap_min_dist: 0.5
+
+hydra:
+  run:
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_scgen_style_batch_transfer

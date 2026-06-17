@@ -18,6 +18,9 @@ from scdeepsim.control import (
     apply_ot_displacement,
     batch_directions,
     gaussian_ot_map,
+    gaussian_ot_map_from_moments,
+    whitening_recoloring_map,
+    whitening_recoloring_map_from_moments,
 )
 
 log = logging.getLogger(__name__)
@@ -31,6 +34,7 @@ def compute_batch_direction(
     ref_batch,
     target_batch,
     method,
+    covariance_ridge=0.0,
 ):
     """Estimate a reference-to-target batch transform in one latent subspace.
 
@@ -48,8 +52,11 @@ def compute_batch_direction(
     ref_batch, target_batch
         Batch labels defining the source and destination domains.
     method
-        ``"mean_shift"`` for a translation vector or ``"gaussian_ot"`` for an
-        affine Gaussian optimal-transport map.
+        ``"mean_shift"`` for a translation vector, ``"gaussian_ot"`` for an
+        affine Gaussian optimal-transport map, or ``"whitening_recoloring"``
+        for a whitening-recoloring affine map.
+    covariance_ridge
+        Non-negative ridge added to covariance diagonals for affine maps.
 
     Returns
     -------
@@ -76,22 +83,91 @@ def compute_batch_direction(
         log.info("  ||direction|| = %.4f", np.linalg.norm(direction))
         return {"method": "mean_shift", "direction": direction}
 
-    if method == "gaussian_ot":
-        ot_params = gaussian_ot_map(z_sub[ref_mask], z_sub[target_mask])
+    if method in {"gaussian_ot", "whitening_recoloring"}:
+        ot_params = _affine_map(
+            z_sub[ref_mask],
+            z_sub[target_mask],
+            method=method,
+            covariance_ridge=covariance_ridge,
+        )
+        direction_norm = float(
+            np.linalg.norm(ot_params["mu_target"] - ot_params["mu_ref"])
+        )
+        a_minus_i_fro = float(
+            np.linalg.norm(ot_params["A"] - np.eye(ot_params["A"].shape[0]))
+        )
         log.info(
             "  ||mu_shift|| = %.4f",
-            np.linalg.norm(ot_params["mu_target"] - ot_params["mu_ref"]),
+            direction_norm,
         )
         log.info(
             "  ||A - I||_F  = %.4f",
-            np.linalg.norm(ot_params["A"] - np.eye(ot_params["A"].shape[0])),
+            a_minus_i_fro,
         )
-        return {"method": "gaussian_ot", "ot_params": ot_params}
+        return {
+            "method": method,
+            "ot_params": ot_params,
+            "direction_norm": direction_norm,
+            "a_minus_i_fro": a_minus_i_fro,
+            "covariance_ridge": float(covariance_ridge),
+        }
 
     raise ValueError(f"Unknown direction_method: {method}")
 
 
-def compute_global_direction(z_ref, z_target, batch_slice, method="gaussian_ot"):
+def _covariance_moments(X, covariance_ridge=0.0):
+    """Estimate mean/covariance with optional diagonal ridge."""
+    X = np.asarray(X, dtype=np.float64)
+    if X.ndim != 2:
+        raise ValueError("Expected a 2D matrix for affine direction fitting.")
+    if X.shape[0] < 2:
+        raise ValueError("Need at least two rows to estimate covariance.")
+    covariance_ridge = float(covariance_ridge)
+    if covariance_ridge < 0.0:
+        raise ValueError("covariance_ridge must be non-negative.")
+
+    mu = X.mean(axis=0)
+    Sigma = np.atleast_2d(np.cov(X, rowvar=False, ddof=1))
+    if covariance_ridge > 0.0:
+        Sigma = Sigma + covariance_ridge * np.eye(Sigma.shape[0])
+    return mu, Sigma
+
+
+def _affine_map(z_ref_sub, z_target_sub, method, covariance_ridge=0.0):
+    """Build an affine map for supported batch-control methods."""
+    covariance_ridge = float(covariance_ridge)
+    if covariance_ridge == 0.0:
+        if method == "gaussian_ot":
+            return gaussian_ot_map(z_ref_sub, z_target_sub)
+        if method == "whitening_recoloring":
+            return whitening_recoloring_map(z_ref_sub, z_target_sub)
+
+    mu_ref, Sigma_ref = _covariance_moments(z_ref_sub, covariance_ridge)
+    mu_target, Sigma_target = _covariance_moments(z_target_sub, covariance_ridge)
+    if method == "gaussian_ot":
+        return gaussian_ot_map_from_moments(
+            mu_ref,
+            Sigma_ref,
+            mu_target,
+            Sigma_target,
+        )
+    if method == "whitening_recoloring":
+        return whitening_recoloring_map_from_moments(
+            mu_ref,
+            Sigma_ref,
+            mu_target,
+            Sigma_target,
+        )
+    raise ValueError(f"Unknown affine direction method: {method}")
+
+
+def compute_global_direction(
+    z_ref,
+    z_target,
+    batch_slice,
+    method="gaussian_ot",
+    covariance_ridge=0.0,
+):
     """Estimate a batch transform directly from source and target matrices.
 
     Unlike :func:`compute_batch_direction`, this helper receives already split
@@ -109,16 +185,22 @@ def compute_global_direction(z_ref, z_target, batch_slice, method="gaussian_ot")
             "direction_norm": float(np.linalg.norm(direction)),
             "fallback": False,
         }
-    if method == "gaussian_ot":
-        ot = gaussian_ot_map(z_ref_sub, z_target_sub)
+    if method in {"gaussian_ot", "whitening_recoloring"}:
+        ot = _affine_map(
+            z_ref_sub,
+            z_target_sub,
+            method=method,
+            covariance_ridge=covariance_ridge,
+        )
         return {
-            "method": "gaussian_ot",
+            "method": method,
             "ot_params": ot,
             "fallback": False,
             "direction_norm": float(np.linalg.norm(ot["mu_target"] - ot["mu_ref"])),
             "a_minus_i_fro": float(
                 np.linalg.norm(ot["A"] - np.eye(ot["A"].shape[0]))
             ),
+            "covariance_ridge": float(covariance_ridge),
         }
     raise ValueError(f"Unknown direction method: {method}")
 
