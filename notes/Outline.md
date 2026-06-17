@@ -48,7 +48,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 *Embryo atlas covariate-predictability heatmap. Balanced accuracy is highest for the matched cell-type and batch subspaces, supporting partial latent disentanglement.*
 
-![heatmap_scib](../experiments/outputs/2026-06-15/22-53-40_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
+![heatmap_scib](../experiments/outputs/2026-06-15/22-36-28_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
 
 *scIB covariate-predictability heatmap. The matched subspaces remain most predictive, while residual off-diagonal signal shows where disentanglement is incomplete.*
 

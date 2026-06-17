@@ -2,7 +2,8 @@
 
 - beta-VAE alone is not enough for subspace disentanglement.
 - Add adversarial classification heads for VAE training to allow better disentanglement.
-- Reducing the dimensionality helps with the disentanglement because it reduces the reconstruction pressure.
+- Reducing the dimensionality of cell type and batch subspace helps with the disentanglement because it reduces the reconstruction pressure.
+- `experiments/outputs/2026-06-15/22-36-28_figure2_latent_disentanglement` gives the best result. With adversarial heads and lower celltype/batch subspace dimensionality.
 
 ## Jun 16
 
