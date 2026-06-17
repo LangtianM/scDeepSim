@@ -28,44 +28,21 @@ root = pyrootutils.setup_root(
 import json
 import logging
 import os
-import subprocess
 
 import hydra
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pytorch_lightning as pl
 import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 from scipy.stats import chi2
-from sklearn.preprocessing import LabelEncoder
 
-from experiments.src.utils import load_and_preprocess
-from scdeepsim.dataset import ScDataModule
-from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
+from experiments.src.common import encode_all, save_git_info
+from experiments.src.data import prepare_celltype_batch_data
+from experiments.src.training import train_celltype_batch_vae as train_vae
 
 log = logging.getLogger(__name__)
-
-
-def save_git_info(output_dir):
-    """Save git hash and uncommitted diff into the run directory."""
-    hash_path = os.path.join(output_dir, "git_hash.txt")
-    diff_path = os.path.join(output_dir, "git_diff.patch")
-    try:
-        git_hash = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-        ).stdout.strip()
-        with open(hash_path, "w") as f:
-            f.write(git_hash + "\n")
-        git_diff = subprocess.run(
-            ["git", "diff"], capture_output=True, text=True
-        ).stdout
-        with open(diff_path, "w") as f:
-            f.write(git_diff)
-        log.info(f"Git hash: {git_hash}")
-    except FileNotFoundError:
-        log.warning("git not found -- skipping git info capture")
 
 
 # ---------------------------------------------------------------------------
@@ -74,102 +51,15 @@ def save_git_info(output_dir):
 
 def prepare_data(cfg):
     """Load, preprocess, and encode label cardinalities."""
-    adata = load_and_preprocess(
-        cfg.paths.data_path, cfg.data.n_cells, cfg.data.n_genes, seed=cfg.seed,
+    adata, ct_le, n_celltypes, batch_le, n_batches = prepare_celltype_batch_data(
+        cfg
     )
-    adata.obs["batch"] = adata.obs[cfg.data.batch_key].astype("category")
-
-    ct_le = LabelEncoder()
-    ct_le.fit(adata.obs["celltype"])
-    n_celltypes = len(ct_le.classes_)
-
-    batch_le = LabelEncoder()
-    batch_le.fit(adata.obs["batch"])
-    n_batches = len(batch_le.classes_)
-
     batch_counts = adata.obs["batch"].value_counts()
-    log.info(f"Data: {adata.X.shape}  |  {n_celltypes} celltypes, {n_batches} batches")
     log.info("Largest batches:")
     for batch, count in batch_counts.head(cfg.analysis.top_k_batches).items():
         log.info(f"  {batch}: {count}")
 
     return adata, ct_le, n_celltypes, batch_le, n_batches
-
-
-def train_vae(adata, n_celltypes, n_batches, cfg):
-    """Train a semi-supervised VAE with celltype and batch heads."""
-    output_dir = HydraConfig.get().runtime.output_dir
-
-    supervised_config = [
-        {
-            "name": "celltype",
-            "type": "categorical",
-            "n_classes": n_celltypes,
-            "latent_dims": cfg.supervision.celltype_latent_dims,
-            "weight": cfg.supervision.celltype_weight,
-        },
-        {
-            "name": "batch",
-            "type": "categorical",
-            "n_classes": n_batches,
-            "latent_dims": cfg.supervision.batch_latent_dims,
-            "weight": cfg.supervision.batch_weight,
-        },
-    ]
-
-    vae = TruncatedNormalVAE(
-        n_genes=adata.X.shape[1],
-        latent_dim=cfg.vae.latent_dim,
-        enc_hidden=list(cfg.vae.enc_hidden),
-        dec_hidden=list(cfg.vae.dec_hidden),
-        input_dropout=cfg.vae.input_dropout,
-        beta=cfg.vae.beta,
-        beta_warmup_epochs=cfg.vae.beta_warmup_epochs,
-        zero_inflated=cfg.vae.zero_inflated,
-        supervised_config=supervised_config,
-        sup_head_hidden=cfg.vae.sup_head_hidden,
-    )
-
-    dm = ScDataModule(
-        adata,
-        label_keys={
-            "celltype": {"obs_key": "celltype", "type": "categorical"},
-            "batch": {"obs_key": "batch", "type": "categorical"},
-        },
-        batch_size=cfg.vae.batch_size,
-    )
-
-    trainer = pl.Trainer(
-        max_epochs=cfg.vae.max_epochs,
-        accelerator="auto",
-        devices="auto",
-        log_every_n_steps=50,
-        enable_checkpointing=False,
-        logger=True,
-        default_root_dir=output_dir,
-        gradient_clip_val=vae.gradient_clip_val,
-    )
-    trainer.fit(vae, dm)
-    return vae
-
-
-def encode_all(vae, adata, latent_representation):
-    """Encode all cells and return either posterior means or sampled latents."""
-    device = next(vae.parameters()).device
-    X = torch.tensor(adata.X, dtype=torch.float32, device=device)
-    vae.eval()
-    with torch.no_grad():
-        mu, logvar = vae.encode(X)
-        if latent_representation == "mean":
-            z = mu
-        elif latent_representation == "sample":
-            z = vae.reparameterize(mu, logvar)
-        else:
-            raise ValueError(
-                "analysis.latent_representation must be 'mean' or 'sample', "
-                f"got {latent_representation!r}"
-            )
-    return z.cpu().numpy()
 
 
 def get_subspace_slice(vae, cfg):

@@ -52,6 +52,7 @@ from scdeepsim.dataset import ScDataModule
 from scdeepsim.quality import rf_discriminability
 from scdeepsim.quality import knn_discriminability 
 from scdeepsim.plot import compare_umap
+from experiments.src.common import encode_all
 
 
 # ===========================
@@ -154,15 +155,7 @@ def train_or_load_vae(adata, ckpt_path, log_dir, cfg):
 
 def encode_to_latent(vae, adata):
     """Encode all data to latent space using VAE."""
-    device = next(vae.parameters()).device
-    X_log1p = torch.tensor(adata.X, dtype=torch.float32, device=device)
-
-    vae.eval()
-    with torch.no_grad():
-        mu_z, logvar_z = vae.encode(X_log1p)
-        z = vae.reparameterize(mu_z, logvar_z)
-
-    return z.cpu().numpy()
+    return encode_all(vae, adata)
 
 
 def create_latent_dataset(adata, latent_vectors):

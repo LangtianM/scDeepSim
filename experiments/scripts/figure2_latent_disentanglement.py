@@ -31,7 +31,6 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import scanpy as sc
-import scipy.sparse as sp
 import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig, OmegaConf
@@ -40,7 +39,7 @@ from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-from experiments.src.utils import save_git_info
+from experiments.src.utils import as_dense, save_git_info
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
@@ -60,11 +59,6 @@ SUBSPACE_COLORS = {
     "z_batch": "#bebada",
     "z_residual": "#fb8072",
 }
-
-
-def as_dense(x):
-    """Return a dense numpy array."""
-    return x.toarray() if sp.issparse(x) else np.asarray(x)
 
 
 def selected_counts_layer(cfg):

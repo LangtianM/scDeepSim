@@ -23,7 +23,6 @@ root = pyrootutils.setup_root(
 import json
 import logging
 import os
-import subprocess
 
 import anndata as ad
 import hydra
@@ -38,37 +37,28 @@ from omegaconf import DictConfig, OmegaConf
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelEncoder
 
+from experiments.src.batch_control import (
+    apply_global_direction,
+    compute_global_direction,
+)
 from experiments.src.batch_metrics import batch_asw, ilisi
-from experiments.src.utils import load_and_preprocess
-from scdeepsim.control import apply_batch_shift, apply_ot_displacement, gaussian_ot_map
+from experiments.src.common import (
+    as_dense,
+    decode_latents,
+    encode_adata,
+    save_git_info,
+)
+from experiments.src.data import load_and_preprocess
+from experiments.src.training import train_batch_vae
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.quality import rf_discriminability
-from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
 log = logging.getLogger(__name__)
 
 
-def save_git_info(output_dir):
-    """Save git hash and uncommitted diff into the run directory."""
-    try:
-        git_hash = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-        ).stdout.strip()
-        with open(os.path.join(output_dir, "git_hash.txt"), "w") as f:
-            f.write(git_hash + "\n")
-        git_diff = subprocess.run(
-            ["git", "diff"], capture_output=True, text=True
-        ).stdout
-        with open(os.path.join(output_dir, "git_diff.patch"), "w") as f:
-            f.write(git_diff)
-        log.info("Git hash: %s", git_hash)
-    except FileNotFoundError:
-        log.warning("git not found -- skipping git info capture")
-
-
 def _dense(X):
-    return X.toarray() if hasattr(X, "toarray") else np.asarray(X)
+    return as_dense(X)
 
 
 def _sanitize_matrix(X, max_abs=1.0e6):
@@ -189,45 +179,6 @@ def per_gene_correlations(X_real, X_generated):
     }
 
 
-def compute_global_direction(z_ref, z_target, batch_slice, method="gaussian_ot"):
-    """Compute a global ref-to-target direction in the batch subspace."""
-    z_ref_sub = np.asarray(z_ref)[:, batch_slice]
-    z_target_sub = np.asarray(z_target)[:, batch_slice]
-
-    if method == "mean_shift":
-        direction = z_target_sub.mean(axis=0) - z_ref_sub.mean(axis=0)
-        return {
-            "method": "mean_shift",
-            "direction": direction,
-            "direction_norm": float(np.linalg.norm(direction)),
-            "fallback": False,
-        }
-    if method == "gaussian_ot":
-        ot = gaussian_ot_map(z_ref_sub, z_target_sub)
-        return {
-            "method": "gaussian_ot",
-            "ot_params": ot,
-            "fallback": False,
-            "direction_norm": float(np.linalg.norm(ot["mu_target"] - ot["mu_ref"])),
-            "a_minus_i_fro": float(
-                np.linalg.norm(ot["A"] - np.eye(ot["A"].shape[0]))
-            ),
-        }
-    raise ValueError(f"Unknown direction method: {method}")
-
-
-def apply_global_direction(z, direction_info, alpha, batch_slice):
-    """Apply a global batch direction to full latent rows."""
-    if direction_info["method"] == "mean_shift":
-        return apply_batch_shift(
-            z, direction_info["direction"], alpha, batch_slice
-        )
-    ot = direction_info["ot_params"]
-    return apply_ot_displacement(
-        z, ot["mu_ref"], ot["mu_target"], ot["A"], alpha, batch_slice
-    )
-
-
 def make_metric_record(generator, heldout_batch, reference_batch, n_generated,
                        n_heldout, direction_info, gene_metrics,
                        generated_vs_ref, heldout_vs_ref, discriminability):
@@ -288,65 +239,7 @@ def prepare_data(cfg):
 def train_vae(adata_train, cfg):
     """Train the batch-supervised VAE used to define the batch subspace."""
     n_batches = adata_train.obs["batch"].nunique()
-    supervised_config = [
-        {
-            "name": "batch",
-            "type": "categorical",
-            "n_classes": n_batches,
-            "latent_dims": cfg.supervision.batch_latent_dims,
-            "weight": cfg.supervision.batch_weight,
-        },
-    ]
-
-    vae = TruncatedNormalVAE(
-        n_genes=adata_train.X.shape[1],
-        latent_dim=cfg.vae.latent_dim,
-        enc_hidden=list(cfg.vae.enc_hidden),
-        dec_hidden=list(cfg.vae.dec_hidden),
-        input_dropout=cfg.vae.input_dropout,
-        beta=cfg.vae.beta,
-        beta_warmup_epochs=cfg.vae.beta_warmup_epochs,
-        zero_inflated=cfg.vae.zero_inflated,
-        supervised_config=supervised_config,
-        sup_head_hidden=cfg.vae.sup_head_hidden,
-    )
-
-    dm = ScDataModule(
-        adata_train,
-        label_keys={"batch": {"obs_key": "batch", "type": "categorical"}},
-        batch_size=cfg.vae.batch_size,
-    )
-    trainer = pl.Trainer(
-        max_epochs=cfg.vae.max_epochs,
-        accelerator="auto",
-        devices="auto",
-        log_every_n_steps=50,
-        enable_checkpointing=False,
-        logger=True,
-        default_root_dir=HydraConfig.get().runtime.output_dir,
-        gradient_clip_val=vae.gradient_clip_val,
-    )
-    trainer.fit(vae, dm)
-    return vae
-
-
-def encode_adata(vae, adata, batch_size=1024):
-    """Encode an AnnData matrix with the VAE."""
-    device = next(vae.parameters()).device
-    vae.eval()
-    chunks = []
-    X = _dense(adata.X)
-    with torch.no_grad():
-        for start in range(0, X.shape[0], batch_size):
-            x_t = torch.tensor(
-                X[start:start + batch_size],
-                dtype=torch.float32,
-                device=device,
-            )
-            mu, logvar = vae.encode(x_t)
-            z = vae.reparameterize(mu, logvar)
-            chunks.append(z.cpu().numpy())
-    return np.vstack(chunks)
+    return train_batch_vae(adata_train, n_batches, cfg)
 
 
 def train_diffusion(z_train, train_obs, cfg):
@@ -434,22 +327,6 @@ def sample_encoded_reference_latents(z_ref, n_samples, seed=42):
         "n_reference_latents_available": int(len(z_ref)),
         "n_reference_latents_sampled": int(n_samples),
     }
-
-
-def decode_latents(vae, z, batch_size=1024):
-    """Decode latent vectors with the VAE decoder."""
-    device = next(vae.parameters()).device
-    vae.eval()
-    chunks = []
-    with torch.no_grad():
-        for start in range(0, z.shape[0], batch_size):
-            z_t = torch.tensor(
-                z[start:start + batch_size],
-                dtype=torch.float32,
-                device=device,
-            )
-            chunks.append(vae.sample_from_latent(z_t).cpu().numpy())
-    return np.vstack(chunks)
 
 
 def compute_batch_comparison(X_ref, X_other, k):
