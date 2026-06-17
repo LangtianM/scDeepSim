@@ -35,137 +35,20 @@ root = pyrootutils.setup_root(
 import json
 import os
 import logging
-import subprocess
 import numpy as np
-import scanpy as sc
 import torch
-import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 from sklearn.preprocessing import LabelEncoder
 
-from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
-from scdeepsim.dataset import ScDataModule
+from experiments.src.common import as_dense, save_git_info
+from experiments.src.trajectory import encode_all, load_pancreas, train_vae
 from scdeepsim.control import trajectory_ot_interpolate
 from experiments.src.batch_metrics import batch_asw, ilisi
 
 log = logging.getLogger(__name__)
-
-
-def save_git_info(output_dir):
-    """Save git hash and uncommitted diff into the run directory."""
-    hash_path = os.path.join(output_dir, "git_hash.txt")
-    diff_path = os.path.join(output_dir, "git_diff.patch")
-    try:
-        git_hash = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-        ).stdout.strip()
-        with open(hash_path, "w") as f:
-            f.write(git_hash + "\n")
-        git_diff = subprocess.run(
-            ["git", "diff"], capture_output=True, text=True
-        ).stdout
-        with open(diff_path, "w") as f:
-            f.write(git_diff)
-        log.info(f"Git hash: {git_hash}")
-    except FileNotFoundError:
-        log.warning("git not found -- skipping git info capture")
-
-
-# ---------------------------------------------------------------------------
-# Data / VAE / encoding (copied from branch_direction_knob.py - scripts/ is
-# not a package, so cross-script imports are avoided)
-# ---------------------------------------------------------------------------
-
-def load_pancreas(cfg):
-    """Load the scvelo pancreas dataset and preprocess for the VAE."""
-    import scvelo as scv
-
-    log.info("Loading scvelo pancreas dataset...")
-    adata = scv.datasets.pancreas()
-    log.info(f"Raw data: {adata.shape}")
-
-    celltype_key = cfg.data.celltype_key
-    log.info(f"Cell type distribution ({celltype_key}):")
-    for ct, count in adata.obs[celltype_key].value_counts().items():
-        log.info(f"  {ct}: {count}")
-
-    adata.obs["celltype"] = adata.obs[celltype_key].astype(str)
-
-    adata.var_names_make_unique()
-    sc.pp.filter_cells(adata, min_genes=10)
-    sc.pp.filter_genes(adata, min_cells=2)
-
-    n_genes = min(cfg.data.n_genes, adata.n_vars)
-    sc.pp.highly_variable_genes(adata, flavor="seurat_v3", n_top_genes=n_genes)
-    adata = adata[:, adata.var["highly_variable"]].copy()
-    adata.X = adata.X.toarray() if hasattr(adata.X, "toarray") else adata.X
-
-    sc.pp.normalize_total(adata, target_sum=1e4)
-    sc.pp.log1p(adata)
-
-    log.info(f"Preprocessed data: {adata.shape}")
-    return adata
-
-
-def train_vae(adata, n_celltypes, cfg):
-    output_dir = HydraConfig.get().runtime.output_dir
-
-    supervised_config = [
-        {
-            "name": "celltype",
-            "type": "categorical",
-            "n_classes": n_celltypes,
-            "latent_dims": cfg.supervision.celltype_latent_dims,
-            "weight": cfg.supervision.celltype_weight,
-        },
-    ]
-
-    vae = TruncatedNormalVAE(
-        n_genes=adata.X.shape[1],
-        latent_dim=cfg.vae.latent_dim,
-        enc_hidden=list(cfg.vae.enc_hidden),
-        dec_hidden=list(cfg.vae.dec_hidden),
-        input_dropout=cfg.vae.input_dropout,
-        beta=cfg.vae.beta,
-        beta_warmup_epochs=cfg.vae.beta_warmup_epochs,
-        zero_inflated=cfg.vae.zero_inflated,
-        supervised_config=supervised_config,
-        sup_head_hidden=cfg.vae.sup_head_hidden,
-    )
-
-    dm = ScDataModule(
-        adata,
-        label_keys={
-            "celltype": {"obs_key": "celltype", "type": "categorical"},
-        },
-        batch_size=cfg.vae.batch_size,
-    )
-
-    trainer = pl.Trainer(
-        max_epochs=cfg.vae.max_epochs,
-        accelerator="auto",
-        devices="auto",
-        log_every_n_steps=20,
-        enable_checkpointing=False,
-        logger=True,
-        default_root_dir=output_dir,
-        gradient_clip_val=vae.gradient_clip_val,
-    )
-    trainer.fit(vae, dm)
-    return vae
-
-
-def encode_all(vae, adata):
-    device = next(vae.parameters()).device
-    X = torch.tensor(adata.X, dtype=torch.float32, device=device)
-    vae.eval()
-    with torch.no_grad():
-        mu, logvar = vae.encode(X)
-        z = vae.reparameterize(mu, logvar)
-    return z.cpu().numpy()
 
 
 # ---------------------------------------------------------------------------
@@ -261,9 +144,7 @@ def main(cfg: DictConfig) -> None:
     z_start = z_all[start_mask]
     z_end = z_all[end_mask]
 
-    ref_X = adata.X[start_mask]
-    if hasattr(ref_X, "toarray"):
-        ref_X = ref_X.toarray()
+    ref_X = as_dense(adata.X[start_mask])
 
     log.info(f"  {start_state}: n={z_start.shape[0]} cells (used as ref)")
     log.info(f"  {end_state}:   n={z_end.shape[0]} cells (trajectory target)")

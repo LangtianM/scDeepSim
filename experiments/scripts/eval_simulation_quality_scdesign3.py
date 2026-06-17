@@ -40,7 +40,7 @@ from omegaconf import DictConfig
 from scipy.io import mmread, mmwrite
 from sklearn.preprocessing import LabelEncoder
 
-from experiments.src.utils import save_git_info
+from experiments.src.utils import as_dense, save_git_info
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.plot import compare_umap
@@ -50,11 +50,6 @@ from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 os.environ.setdefault("PROJECT_ROOT", str(root))
 
 log = logging.getLogger(__name__)
-
-
-def as_dense(x):
-    """Return a dense numpy array."""
-    return x.toarray() if sp.issparse(x) else np.asarray(x)
 
 
 def compute_discriminability(x_real, x_sim, cfg):

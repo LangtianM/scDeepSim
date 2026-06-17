@@ -19,6 +19,8 @@ import pandas as pd
 import scanpy as sc
 import torch
 
+from experiments.src.common import decode_latents
+
 
 GROUND_TRUTH_COLUMNS = [
     "cell_id",
@@ -103,22 +105,6 @@ def flatten_branch_trajectory(
             simulator_settings, sort_keys=True
         )
     return latents, ground_truth
-
-
-def decode_latents(vae: torch.nn.Module, latents: np.ndarray, batch_size: int = 512) -> np.ndarray:
-    """Decode latent rows with a trained VAE in bounded batches."""
-    device = next(vae.parameters()).device
-    outputs = []
-    vae.eval()
-    with torch.no_grad():
-        for start in range(0, latents.shape[0], batch_size):
-            z = torch.tensor(
-                latents[start:start + batch_size],
-                dtype=torch.float32,
-                device=device,
-            )
-            outputs.append(vae.sample_from_latent(z).cpu().numpy())
-    return np.vstack(outputs)
 
 
 def build_benchmark_anndata(

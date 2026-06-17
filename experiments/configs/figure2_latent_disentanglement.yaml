@@ -2,7 +2,7 @@ seed: 42
 
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
-  data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+  data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
 
 data:
   n_cells: null
@@ -10,14 +10,15 @@ data:
   min_genes: 10
   min_cells: 2
   celltype_key: celltype
-  batch_key: sequencing.batch
+  batch_key: tech
+  counts_layer: counts
 
 vae:
   latent_dim: 128
   enc_hidden: [512, 256]
   dec_hidden: [256, 512]
   input_dropout: 0.1
-  beta: 1.0
+  beta: 5.0
   beta_warmup_epochs: 10
   zero_inflated: true
   sup_head_hidden: 64
@@ -29,6 +30,13 @@ supervision:
   celltype_latent_dims: 32
   batch_weight: 5.0
   batch_latent_dims: 32
+
+adversarial:
+  enabled: true
+  weight: 5.0
+  warmup_epochs: 20
+  head_hidden: 64
+  condition_embedding_dim: 8
 
 eval:
   rf_n_estimators: 100

@@ -60,6 +60,7 @@ from experiments.src.figure3_quality.data import (  # noqa: E402
     normalize_log1p_counts,
     path_fingerprint,
     subset_hvgs,
+    train_test_split_adata,
 )
 from experiments.src.figure3_quality.metrics import (  # noqa: E402
     build_metrics_table,

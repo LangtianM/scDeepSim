@@ -24,7 +24,7 @@ from .cache import (
     save_sample_cache,
 )
 from .common import MethodOutput, as_dense, failed_method_output, json_default
-from .data import load_and_preprocess
+from .data import load_and_preprocess, train_test_split_adata
 from .metrics import build_metrics_table
 from .methods import run_scdeepsim, run_single_baseline
 from .plots import (
@@ -193,6 +193,7 @@ def run_method_with_sample_cache(
 
 def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
     """Run the full Figure 3 experiment into a Hydra output directory."""
+    cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     torch.manual_seed(int(cfg.seed))
     np.random.seed(int(cfg.seed))
     pl.seed_everything(int(cfg.seed), workers=True)
@@ -207,8 +208,22 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
     log.info("Output directory: %s", output_dir)
 
     adata_norm, adata_raw = load_and_preprocess(cfg)
-    x_real = as_dense(adata_norm.X).astype(np.float32)
-    real_labels = adata_norm.obs["celltype"].astype(str).to_numpy()
+    (
+        adata_train_norm,
+        adata_eval_norm,
+        adata_train_raw,
+        _adata_eval_raw,
+        split_metadata,
+    ) = train_test_split_adata(adata_norm, adata_raw, cfg)
+    if cfg.eval.n_samples is None:
+        cfg.eval.n_samples = int(adata_eval_norm.n_obs)
+    x_real = as_dense(adata_eval_norm.X).astype(np.float32)
+    real_labels = adata_eval_norm.obs["celltype"].astype(str).to_numpy()
+    log.info(
+        "Evaluation reference shape: %s; training shape: %s",
+        adata_eval_norm.shape,
+        adata_train_norm.shape,
+    )
 
     outputs: list[MethodOutput] = []
     scdeepsim_extra: dict[str, Any] = {}
@@ -218,7 +233,7 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
             def run_scdeepsim_outputs() -> list[MethodOutput]:
                 nonlocal scdeepsim_extra
                 scdeepsim_outputs, scdeepsim_extra = run_scdeepsim(
-                    adata_norm, cfg, output_dir
+                    adata_train_norm, cfg, output_dir, adata_eval_norm=adata_eval_norm
                 )
                 if scdeepsim_outputs:
                     scdeepsim_outputs[0].metadata = {
@@ -230,7 +245,7 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
             scdeepsim_outputs, cache_hit = run_method_with_sample_cache(
                 "scdeepsim",
                 run_scdeepsim_outputs,
-                adata_norm,
+                adata_train_norm,
                 cfg,
                 output_keys=expected_output_keys("scdeepsim", cfg),
             )
@@ -257,12 +272,12 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
             log.info("Running baseline: %s", method)
 
             def run_baseline_outputs(method_key: str = method) -> list[MethodOutput]:
-                return [run_single_baseline(method_key, adata_raw, cfg, output_dir)]
+                return [run_single_baseline(method_key, adata_train_raw, cfg, output_dir)]
 
             baseline_outputs, _ = run_method_with_sample_cache(
                 method,
                 run_baseline_outputs,
-                adata_raw,
+                adata_train_raw,
                 cfg,
             )
             outputs.extend(baseline_outputs)
@@ -280,7 +295,13 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
         outputs,
         {
             "config": OmegaConf.to_container(cfg, resolve=True),
-            "data_shape": {"n_cells": int(adata_norm.n_obs), "n_genes": int(adata_norm.n_vars)},
+            "data_shape": {
+                "selected_n_cells": int(adata_norm.n_obs),
+                "train_n_cells": int(adata_train_norm.n_obs),
+                "eval_n_cells": int(adata_eval_norm.n_obs),
+                "n_genes": int(adata_norm.n_vars),
+            },
+            "split": split_metadata,
             "celltype_key": str(cfg.data.celltype_key),
             "batch_key": str(cfg.data.batch_key),
             "scdeepsim": scdeepsim_extra,

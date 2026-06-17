@@ -264,10 +264,12 @@ def run_scdeepsim(
     adata_norm: ad.AnnData,
     cfg: DictConfig,
     output_dir: Path,
+    adata_eval_norm: ad.AnnData | None = None,
 ) -> tuple[list[MethodOutput], dict[str, Any]]:
     """Train and sample scDeepSim; optionally include VAE reconstruction diagnostics."""
     start = time.time()
-    x_real = as_dense(adata_norm.X).astype(np.float32)
+    eval_adata = adata_eval_norm if adata_eval_norm is not None else adata_norm
+    x_train = as_dense(adata_norm.X).astype(np.float32)
     encoder = make_celltype_encoder(adata_norm)
     n_celltypes = len(encoder.classes_)
     supervised_config = make_supervised_config(cfg, n_celltypes)
@@ -290,10 +292,14 @@ def run_scdeepsim(
         if cache_enabled(cfg, "reuse_scdeepsim"):
             copy_checkpoint_to_cache(run_vae_ckpt, Path(cache_paths["vae_ckpt"]))
 
+    x_recon: np.ndarray | None = None
+    z_recon: np.ndarray | None = None
+    if bool(cfg.eval.compute_vae_reconstruction):
+        x_eval = as_dense(eval_adata.X).astype(np.float32)
+        torch.manual_seed(int(cfg.seed))
+        x_recon, z_recon = reconstruct(vae, x_eval, cfg)
     torch.manual_seed(int(cfg.seed))
-    x_recon, z_recon = reconstruct(vae, x_real, cfg)
-    torch.manual_seed(int(cfg.seed))
-    latent_vectors = encode_to_latent(vae, x_real, cfg)
+    latent_vectors = encode_to_latent(vae, x_train, cfg)
     latent_adata = ad.AnnData(X=latent_vectors, obs=adata_norm.obs.copy())
 
     run_diffusion_ckpt = output_dir / "models" / "scdeepsim_diffusion.ckpt"
@@ -353,13 +359,18 @@ def run_scdeepsim(
         )
     ]
     if bool(cfg.eval.compute_vae_reconstruction):
+        if x_recon is None:
+            raise RuntimeError("VAE reconstruction was requested but was not computed.")
         outputs.append(
             MethodOutput(
                 key="vae_reconstruction",
                 x=x_recon,
-                labels=adata_norm.obs["celltype"].astype(str).to_numpy(),
+                labels=eval_adata.obs["celltype"].astype(str).to_numpy(),
                 runtime_seconds=None,
-                metadata={"diagnostic": "posterior encode/decode reconstruction"},
+                metadata={
+                    "diagnostic": "posterior encode/decode reconstruction",
+                    "reference": "eval",
+                },
                 include_in_main=False,
                 reference_dependent=True,
             )
@@ -367,7 +378,10 @@ def run_scdeepsim(
 
     metadata = {
         "celltype_classes": encoder.classes_.astype(str).tolist(),
-        "latent_real_shape": list(z_recon.shape),
+        "latent_train_shape": list(latent_vectors.shape),
+        "latent_reconstruction_shape": None
+        if z_recon is None
+        else list(z_recon.shape),
         "latent_sim_shape": list(z_sim.shape),
         "cache": {
             "enabled": cache_enabled(cfg, "reuse_scdeepsim"),

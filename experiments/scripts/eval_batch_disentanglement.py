@@ -30,45 +30,23 @@ root = pyrootutils.setup_root(
 
 import os
 import logging
-import subprocess
 import numpy as np
 import torch
-import pytorch_lightning as pl
 import matplotlib.pyplot as plt
 import hydra
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
-from scdeepsim.dataset import ScDataModule
 from scdeepsim.quality import rf_discriminability
-from experiments.src.utils import load_and_preprocess
+from experiments.src.common import encode_all, save_git_info
+from experiments.src.data import prepare_celltype_batch_data
+from experiments.src.training import train_celltype_batch_vae
 
 log = logging.getLogger(__name__)
-
-
-def save_git_info(output_dir):
-    """Save git hash and uncommitted diff into the run directory."""
-    hash_path = os.path.join(output_dir, "git_hash.txt")
-    diff_path = os.path.join(output_dir, "git_diff.patch")
-    try:
-        git_hash = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True
-        ).stdout.strip()
-        with open(hash_path, "w") as f:
-            f.write(git_hash + "\n")
-        git_diff = subprocess.run(
-            ["git", "diff"], capture_output=True, text=True
-        ).stdout
-        with open(diff_path, "w") as f:
-            f.write(git_diff)
-        log.info(f"Git hash: {git_hash}")
-    except FileNotFoundError:
-        log.warning("git not found -- skipping git info capture")
 
 
 # ---------------------------------------------------------------------------
@@ -77,19 +55,14 @@ def save_git_info(output_dir):
 
 def prepare_data(cfg):
     """Load embryo atlas, derive batch column, return adata with metadata."""
-    adata = load_and_preprocess(
-        cfg.paths.data_path, cfg.data.n_cells, cfg.data.n_genes, seed=cfg.seed
+    adata, _, n_celltypes, _, n_batches = prepare_celltype_batch_data(
+        cfg,
+        batch_key=OmegaConf.select(
+            cfg,
+            "data.batch_key",
+            default="sequencing.batch",
+        ),
     )
-    adata.obs["batch"] = adata.obs["sequencing.batch"].astype("category")
-
-    celltype_le = LabelEncoder()
-    celltype_le.fit(adata.obs["celltype"])
-    n_celltypes = len(celltype_le.classes_)
-
-    batch_le = LabelEncoder()
-    batch_le.fit(adata.obs["batch"])
-    n_batches = len(batch_le.classes_)
-
     log.info(f"Data shape: {adata.X.shape}")
     log.info(f"Zero fraction: {(adata.X == 0).mean():.4f}")
     log.info(f"Found {n_celltypes} celltypes, {n_batches} batches")
@@ -103,61 +76,13 @@ def prepare_data(cfg):
 
 def train_vae(adata, n_celltypes, n_batches, batch_weight, cfg):
     """Train a VAE with fixed celltype weight and variable batch weight."""
-    output_dir = HydraConfig.get().runtime.output_dir
-
-    supervised_config = [
-        {
-            "name": "celltype",
-            "type": "categorical",
-            "n_classes": n_celltypes,
-            "latent_dims": cfg.supervision.celltype_latent_dims,
-            "weight": cfg.supervision.celltype_weight,
-        },
-        {
-            "name": "batch",
-            "type": "categorical",
-            "n_classes": n_batches,
-            "latent_dims": cfg.supervision.batch_latent_dims,
-            "weight": batch_weight,
-        },
-    ]
-
-    n_genes = adata.X.shape[1]
-    vae = TruncatedNormalVAE(
-        n_genes=n_genes,
-        latent_dim=cfg.vae.latent_dim,
-        enc_hidden=list(cfg.vae.enc_hidden),
-        dec_hidden=list(cfg.vae.dec_hidden),
-        input_dropout=cfg.vae.input_dropout,
-        beta=cfg.vae.beta,
-        beta_warmup_epochs=cfg.vae.beta_warmup_epochs,
-        zero_inflated=cfg.vae.zero_inflated,
-        supervised_config=supervised_config,
-        sup_head_hidden=cfg.vae.sup_head_hidden,
-    )
-
-    data_module = ScDataModule(
+    return train_celltype_batch_vae(
         adata,
-        label_keys={
-            "celltype": {"obs_key": "celltype", "type": "categorical"},
-            "batch": {"obs_key": "batch", "type": "categorical"},
-        },
-        batch_size=cfg.vae.batch_size,
+        n_celltypes,
+        n_batches,
+        cfg,
+        batch_weight=batch_weight,
     )
-
-    trainer = pl.Trainer(
-        max_epochs=cfg.vae.max_epochs,
-        accelerator="auto",
-        devices="auto",
-        log_every_n_steps=50,
-        enable_checkpointing=False,
-        logger=True,
-        default_root_dir=output_dir,
-        gradient_clip_val=vae.gradient_clip_val,
-    )
-
-    trainer.fit(vae, data_module)
-    return vae
 
 
 # ---------------------------------------------------------------------------
@@ -166,14 +91,7 @@ def train_vae(adata, n_celltypes, n_batches, batch_weight, cfg):
 
 def encode_data(vae, adata):
     """Encode all cells, return full z and the batch/celltype/other slices."""
-    device = next(vae.parameters()).device
-    X = torch.tensor(adata.X, dtype=torch.float32, device=device)
-
-    vae.eval()
-    with torch.no_grad():
-        mu, logvar = vae.encode(X)
-        z = vae.reparameterize(mu, logvar).cpu().numpy()
-
+    z = encode_all(vae, adata)
     ct_slice = vae._sup_slices.get("celltype", slice(0, 0))
     batch_slice = vae._sup_slices.get("batch", slice(0, 0))
 
