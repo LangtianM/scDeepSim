@@ -1,4 +1,10 @@
-"""Persistent sample cache for Figure 3 simulation outputs."""
+"""Persistent sample cache for Figure 3 simulation outputs.
+
+Sample caches store successful ``MethodOutput`` matrices in normalized log1p
+space. Cache keys include the selected data fingerprint, relevant config
+sections, method-specific source metadata, and local Figure 3 implementation
+fingerprints so stale outputs are naturally invalidated.
+"""
 
 from __future__ import annotations
 
@@ -30,11 +36,13 @@ SAMPLE_CACHE_VERSION = "normalized_log1p_v1"
 
 
 def force_resimulate(cfg: DictConfig) -> bool:
+    """Return whether cached simulated samples should be ignored."""
     cache_cfg = cfg.get("cache", {})
     return bool(cache_cfg.get("force_resimulate", False)) if cache_cfg else False
 
 
 def sample_cache_enabled(cfg: DictConfig) -> bool:
+    """Return whether simulated sample reuse is enabled for this run."""
     return cache_enabled(cfg, "reuse_samples") and not force_resimulate(cfg)
 
 
@@ -71,6 +79,7 @@ def figure3_code_fingerprint() -> dict[str, Any]:
 
 
 def _section(cfg: DictConfig, name: str) -> Any:
+    """Return a resolved config section or an empty mapping."""
     return config_container(cfg.get(name, {}))
 
 
@@ -152,6 +161,7 @@ def build_sample_cache_paths(
     adata_selected: ad.AnnData,
     cfg: DictConfig,
 ) -> dict[str, Any]:
+    """Return cache key, payload, and filesystem paths for one method output."""
     payload = sample_cache_key_payload(method_key, adata_selected, cfg)
     key = stable_hash(payload)
     cache_dir = cache_root(cfg) / "samples" / method_key / key
@@ -165,6 +175,7 @@ def build_sample_cache_paths(
 
 
 def _cache_annotation(paths: dict[str, Any], *, hit: bool, enabled: bool) -> dict[str, Any]:
+    """Build the metadata fragment attached to cached method outputs."""
     return {
         "enabled": bool(enabled),
         "hit": bool(hit),
@@ -183,6 +194,7 @@ def annotate_sample_cache(
     hit: bool,
     enabled: bool,
 ) -> MethodOutput:
+    """Attach sample-cache status metadata to a method output."""
     output.metadata = {
         **output.metadata,
         "sample_cache": _cache_annotation(paths, hit=hit, enabled=enabled),
@@ -196,7 +208,11 @@ def load_sample_cache(
     *,
     enabled: bool = True,
 ) -> MethodOutput | None:
-    """Load one cached successful method output, if all expected files exist."""
+    """Load one cached successful method output when metadata validates.
+
+    Returns ``None`` for cache misses, failed cached records, method-key
+    mismatches, cache-key mismatches, or malformed sample archives.
+    """
     samples_path = Path(paths["samples"])
     metadata_path = Path(paths["metadata"])
     if not samples_path.exists() or not metadata_path.exists():
@@ -234,7 +250,12 @@ def save_sample_cache(
     output: MethodOutput,
     paths: dict[str, Any],
 ) -> Path | None:
-    """Persist one successful method output; failed outputs are intentionally skipped."""
+    """Persist one successful method output.
+
+    Failed outputs and outputs without sample matrices are intentionally skipped.
+    Writes are staged in a temporary sibling directory before being renamed into
+    place.
+    """
     if output.status != "ok" or output.x is None:
         return None
 

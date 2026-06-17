@@ -1,4 +1,9 @@
-"""Shared experiment utility re-exports."""
+"""Compatibility re-exports for shared experiment utilities.
+
+Older scripts import helpers from ``experiments.src.utils``. New code should
+prefer importing from the narrower modules directly, but this file remains as a
+stable aggregation point for existing entry points.
+"""
 
 import logging
 

@@ -1,4 +1,10 @@
-"""Shared data-loading helpers for experiment scripts."""
+"""Shared data-loading helpers for experiment scripts.
+
+The functions here produce small, dense, normalized ``AnnData`` objects for
+prototype VAE and batch-control workflows. More specialized Figure 3 loading
+lives in ``experiments.src.figure3_quality.data`` because that benchmark keeps a
+matched raw-count copy for external count-based baselines.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +28,13 @@ def load_and_preprocess(
     min_cells=2,
     seed=42,
 ):
-    """Load an h5ad file, subsample cells, select HVGs, normalize, and log1p."""
+    """Load an h5ad file and return a dense normalized log1p subset.
+
+    Cells are filtered by ``min_genes``, genes by ``min_cells``, then exactly
+    ``n_cells`` rows are sampled without replacement before Seurat v3 HVG
+    selection. The returned ``AnnData.X`` is dense and already normalized to
+    total count ``1e4`` followed by ``log1p``.
+    """
     np.random.seed(seed)
     adata = sc.read_h5ad(path)
     adata.var_names_make_unique()
@@ -41,7 +53,11 @@ def load_and_preprocess(
 
 
 def load_pancreas(cfg):
-    """Load the scvelo pancreas dataset and preprocess it for VAE scripts."""
+    """Load the scVelo pancreas dataset and preprocess it for VAE scripts.
+
+    The configured source cell-type column is copied to ``obs["celltype"]`` so
+    downstream training helpers can rely on a consistent label key.
+    """
     import scvelo as scv
 
     log.info("Loading scvelo pancreas dataset...")
@@ -71,7 +87,7 @@ def load_pancreas(cfg):
 
 
 def fit_label_encoder(labels):
-    """Fit a ``LabelEncoder`` and return it with the class count."""
+    """Fit a ``LabelEncoder`` and return it with the number of classes."""
     encoder = LabelEncoder()
     encoder.fit(labels)
     return encoder, len(encoder.classes_)
@@ -84,7 +100,22 @@ def prepare_celltype_batch_data(
     celltype_key: str = "celltype",
     select_top_two_batches: bool = False,
 ):
-    """Load h5ad data and derive shared celltype/batch metadata."""
+    """Load data and derive shared cell-type and batch metadata.
+
+    Parameters
+    ----------
+    cfg
+        Hydra config with ``paths.data_path``, ``data.n_cells``,
+        ``data.n_genes``, and ``seed`` fields.
+    batch_key
+        Optional source observation column to copy into ``obs["batch"]``. When
+        omitted, ``cfg.data.batch_key`` is used with ``"batch"`` as fallback.
+    celltype_key
+        Observation column used to fit the cell-type encoder.
+    select_top_two_batches
+        When true, also return the two most frequent batch labels as reference
+        and target batches for batch-control scripts.
+    """
     adata = load_and_preprocess(
         cfg.paths.data_path,
         cfg.data.n_cells,

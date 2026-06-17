@@ -1,4 +1,10 @@
-"""Common experiment utilities shared by Hydra entry points."""
+"""Common experiment utilities shared by Hydra entry points.
+
+These helpers keep script code short by centralizing dense matrix conversion,
+git provenance capture, random seeding, and batched VAE encode/decode calls.
+They deliberately operate on generic ``AnnData``-like and tensor-like objects so
+older experiment scripts can reuse them without a deeper dependency layer.
+"""
 
 from __future__ import annotations
 
@@ -15,12 +21,22 @@ log = logging.getLogger(__name__)
 
 
 def as_dense(x: Any) -> np.ndarray:
-    """Return ``x`` as a dense NumPy array."""
+    """Return ``x`` as a dense NumPy array.
+
+    Sparse matrices are converted with ``toarray``; all other inputs are passed
+    through ``np.asarray``. Callers that mutate the result should copy it first
+    when the input may already be a dense array.
+    """
     return x.toarray() if hasattr(x, "toarray") else np.asarray(x)
 
 
 def save_git_info(output_dir: str | os.PathLike[str]) -> None:
-    """Save the current git hash and uncommitted diff into ``output_dir``."""
+    """Save git provenance files into an experiment output directory.
+
+    The function writes ``git_hash.txt`` and ``git_diff.patch`` when git is
+    available. It is best-effort by design so experiment scripts can still run
+    in exported or non-git workspaces.
+    """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -43,7 +59,7 @@ def save_git_info(output_dir: str | os.PathLike[str]) -> None:
 
 
 def set_random_seed(seed: int) -> None:
-    """Seed NumPy and Torch for experiment scripts."""
+    """Seed NumPy and Torch for reproducible experiment scripts."""
     np.random.seed(seed)
     torch.manual_seed(seed)
 
@@ -54,6 +70,7 @@ def _latent_from_posterior(
     logvar: torch.Tensor,
     latent_representation: str,
 ) -> torch.Tensor:
+    """Select the posterior representation used as the latent code."""
     representation = str(latent_representation).lower()
     if representation in {"sample", "posterior_sample", "reparameterized"}:
         return vae.reparameterize(mu, logvar)
@@ -72,7 +89,21 @@ def encode_matrix(
     latent_representation: str = "sample",
     batch_size: int | None = None,
 ) -> np.ndarray:
-    """Encode a matrix with a VAE and return latent rows as NumPy."""
+    """Encode an expression matrix with a VAE and return latent rows.
+
+    Parameters
+    ----------
+    vae
+        Model exposing ``encode`` and ``reparameterize`` methods.
+    x
+        Matrix-like object with rows as cells and columns as genes/features.
+    latent_representation
+        ``"sample"`` uses the reparameterized posterior sample; ``"mean"``
+        returns the posterior mean.
+    batch_size
+        Optional number of cells per encode batch. ``None`` or nonpositive
+        values encode the full matrix at once.
+    """
     device = next(vae.parameters()).device
     x_dense = as_dense(x)
     vae.eval()
@@ -102,7 +133,10 @@ def encode_adata(
     batch_size: int | None = None,
     latent_representation: str = "sample",
 ) -> np.ndarray:
-    """Encode all rows in ``adata.X`` with a VAE."""
+    """Encode all rows in ``adata.X`` with a VAE.
+
+    This is a thin convenience wrapper around :func:`encode_matrix`.
+    """
     return encode_matrix(
         vae,
         adata.X,
@@ -116,7 +150,13 @@ def decode_latents(
     latents: np.ndarray,
     batch_size: int = 1024,
 ) -> np.ndarray:
-    """Decode latent rows with a VAE in bounded batches."""
+    """Decode latent rows with a VAE in bounded batches.
+
+    Returns
+    -------
+    numpy.ndarray
+        Decoded matrix with one row per latent vector.
+    """
     device = next(vae.parameters()).device
     latents = np.asarray(latents)
     vae.eval()

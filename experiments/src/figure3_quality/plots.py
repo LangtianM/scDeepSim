@@ -1,4 +1,9 @@
-"""Plotting utilities for Figure 3 simulation quality outputs."""
+"""Plotting utilities for Figure 3 simulation quality outputs.
+
+Plot functions consume normalized log1p matrices and ``MethodOutput`` records
+after metrics have been computed. UMAP records are embedded in-place so the same
+coordinates can be reused across component and combined figures.
+"""
 
 from __future__ import annotations
 
@@ -21,7 +26,7 @@ def prepare_umap_records(
     outputs: list[MethodOutput],
     cfg: DictConfig,
 ) -> list[dict[str, Any]]:
-    """Subsample methods for UMAP plotting in paper order."""
+    """Subsample real and simulated methods for UMAP plotting in paper order."""
     max_cells = optional_int(cfg.eval.umap_max_cells_per_method)
     records_by_key: dict[str, dict[str, Any]] = {}
     x_sub, labels_sub = subsample_rows(
@@ -56,7 +61,11 @@ def prepare_umap_records(
 
 
 def compute_umap_embeddings(records: list[dict[str, Any]], cfg: DictConfig) -> None:
-    """Fit one shared UMAP embedding and attach split embeddings to records."""
+    """Fit one shared UMAP embedding and attach split embeddings to records.
+
+    The function mutates each record by adding an ``"embedding"`` array aligned
+    to that record's sampled rows.
+    """
     data = [np.asarray(record["x"]) for record in records]
     sizes = [x.shape[0] for x in data]
     combined = np.vstack(data)
@@ -75,6 +84,7 @@ def compute_umap_embeddings(records: list[dict[str, Any]], cfg: DictConfig) -> N
 
 
 def label_color_dict(records: list[dict[str, Any]], cmap: str) -> dict[str, Any]:
+    """Build a stable cell-type color mapping across all UMAP records."""
     labels = [
         np.asarray(record["labels"]).astype(str)
         for record in records
@@ -129,7 +139,7 @@ def plot_embedding_panel(
     colors: dict[str, Any],
     cfg: DictConfig,
 ) -> None:
-    """Plot one UMAP panel."""
+    """Plot one UMAP panel onto an existing axis."""
     color_by_celltype = bool(cfg.eval.get("umap_color_by_celltype", True))
     if labels is None or not color_by_celltype:
         ax.scatter(
@@ -161,6 +171,7 @@ def plot_embedding_panel(
 
 
 def set_shared_limits(axes: list[plt.Axes], records: list[dict[str, Any]]) -> None:
+    """Apply common UMAP axis limits to all provided axes."""
     embedding = np.vstack([record["embedding"] for record in records])
     x_min, y_min = embedding.min(axis=0)
     x_max, y_max = embedding.max(axis=0)
@@ -176,7 +187,7 @@ def plot_umap_comparison(
     cfg: DictConfig,
     save_path: Path,
 ) -> None:
-    """Save component UMAP comparison figure."""
+    """Save the component UMAP comparison figure."""
     n = len(records)
     n_cols = min(3, max(1, n))
     n_rows = int(np.ceil(n / n_cols))
@@ -210,6 +221,7 @@ def plot_umap_comparison(
 
 
 def ok_main_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
+    """Return successful non-real methods included in the main figure."""
     return metrics[
         (metrics["status"] == "ok")
         & (metrics["method_key"] != "real")
@@ -218,6 +230,7 @@ def ok_main_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_auc_bar(ax: plt.Axes, metrics: pd.DataFrame) -> None:
+    """Plot real-vs-simulated discriminability AUC bars."""
     data = ok_main_metrics(metrics)
     colors = [METHOD_COLORS.get(key, "#777777") for key in data["method_key"]]
     bars = ax.bar(data["method"], data["auc"], color=colors, edgecolor="black", linewidth=0.5)
@@ -250,6 +263,7 @@ def plot_auc_bar(ax: plt.Axes, metrics: pd.DataFrame) -> None:
 
 
 def plot_gene_stat_bars(ax: plt.Axes, metrics: pd.DataFrame) -> None:
+    """Plot gene mean and variance correlation bars."""
     data = ok_main_metrics(metrics)
     labels = ["Mean corr.", "Var. corr."]
     x = np.arange(len(labels))
@@ -274,6 +288,7 @@ def plot_gene_stat_bars(ax: plt.Axes, metrics: pd.DataFrame) -> None:
 
 
 def plot_cell_stat_bars(ax: plt.Axes, metrics: pd.DataFrame, n_genes: int) -> None:
+    """Plot zero fraction and genes-per-cell summaries."""
     data = metrics[
         (metrics["status"] == "ok")
         & (
@@ -308,6 +323,7 @@ def plot_cell_stat_bars(ax: plt.Axes, metrics: pd.DataFrame, n_genes: int) -> No
 
 
 def plot_quality_metrics_summary(metrics: pd.DataFrame, n_genes: int, save_path: Path) -> None:
+    """Save a three-panel summary of discriminability and data statistics."""
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
     plot_auc_bar(axes[0], metrics)
     plot_gene_stat_bars(axes[1], metrics)
@@ -385,7 +401,7 @@ def plot_figure3(
     cfg: DictConfig,
     save_path: Path,
 ) -> None:
-    """Assemble the main Figure 3 PNG."""
+    """Assemble the main Figure 3 PNG from UMAP and metric panels."""
     n = len(records)
     fig = plt.figure(figsize=(max(15, 3.0 * n), 8.8))
     outer = fig.add_gridspec(2, 1, height_ratios=[1.1, 1.0], hspace=0.35)

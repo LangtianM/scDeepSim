@@ -1,4 +1,9 @@
-"""Quality metrics for Figure 3 simulation outputs."""
+"""Quality metrics for Figure 3 simulation outputs.
+
+Metrics compare each normalized log1p simulated matrix against the real
+evaluation matrix. The table includes real-vs-simulated discriminability,
+gene-level mean/variance correlations, and simple cell-level sparsity summaries.
+"""
 
 from __future__ import annotations
 
@@ -51,6 +56,7 @@ def subsample_rows(
 
 
 def real_metric_row(x_real: np.ndarray) -> dict[str, Any]:
+    """Return the baseline metrics row representing the real evaluation data."""
     row = {
         "method_key": "real",
         "method": METHOD_DISPLAY_NAMES["real"],
@@ -74,7 +80,11 @@ def compute_discriminability(
     cfg: DictConfig,
     seed: int,
 ) -> tuple[float, float]:
-    """Compute real-vs-simulated discriminability."""
+    """Compute real-vs-simulated discriminability.
+
+    The classifier is selected by ``cfg.eval.discriminability_method`` and may
+    optionally run after PCA if ``cfg.eval.pca_components`` is set.
+    """
     max_cells = optional_int(cfg.eval.max_discriminability_cells)
     x_real_eval, _ = subsample_rows(x_real, max_cells, seed)
     x_sim_eval, _ = subsample_rows(x_sim, max_cells, seed + 1)
@@ -105,7 +115,11 @@ def metric_row_for_output(
     x_real: np.ndarray,
     cfg: DictConfig,
 ) -> dict[str, Any]:
-    """Build one metrics row for a successful or failed method output."""
+    """Build one metrics row for a successful or failed method output.
+
+    Failed outputs receive ``None`` for numeric metrics. Successful outputs must
+    be 2D matrices with the same number of genes as ``x_real``.
+    """
     base = {
         "method_key": output.key,
         "method": output.display_name,
@@ -153,7 +167,7 @@ def build_metrics_table(
     x_real: np.ndarray,
     cfg: DictConfig,
 ) -> pd.DataFrame:
-    """Create the metrics table, including a Real row."""
+    """Create the metrics table, including a real-data reference row."""
     rows = [real_metric_row(x_real)]
     rows.extend(metric_row_for_output(output, x_real, cfg) for output in outputs)
     return pd.DataFrame(rows)

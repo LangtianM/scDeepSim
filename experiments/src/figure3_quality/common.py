@@ -1,4 +1,10 @@
-"""Shared constants and utility helpers for Figure 3 quality experiments."""
+"""Shared constants and utility helpers for Figure 3 quality experiments.
+
+Figure 3 compares several simulators in a common normalized log1p expression
+space. This module defines method labels/colors, the normalized output
+container, cache path helpers, executable validation, and logged subprocess
+execution used by the package.
+"""
 
 from __future__ import annotations
 
@@ -68,7 +74,25 @@ REFERENCE_DEPENDENT = {
 
 @dataclass
 class MethodOutput:
-    """Container for one simulator output in normalized log1p space."""
+    """Container for one simulator output in normalized log1p space.
+
+    Attributes
+    ----------
+    key
+        Stable method key used in configs, cache paths, metrics, and plots.
+    x
+        Simulated expression matrix with shape ``(n_cells, n_genes)`` in
+        normalized log1p space. Failed methods set this to ``None``.
+    labels
+        Optional cell-type labels aligned to rows of ``x``.
+    status
+        ``"ok"`` or ``"failed"``.
+    include_in_main
+        Whether the method should appear in the primary Figure 3 panels.
+    reference_dependent
+        True for diagnostics or baselines that borrow information from real
+        cells at sampling time.
+    """
 
     key: str
     x: np.ndarray | None
@@ -82,11 +106,12 @@ class MethodOutput:
 
     @property
     def display_name(self) -> str:
+        """Return the paper-facing display name for this method."""
         return METHOD_DISPLAY_NAMES.get(self.key, self.key)
 
 
 def as_dense(x: Any) -> np.ndarray:
-    """Return a dense numpy array."""
+    """Return a dense NumPy array, preserving dense inputs when possible."""
     return x.toarray() if sp.issparse(x) else np.asarray(x)
 
 
@@ -130,18 +155,26 @@ def stable_hash(payload: Any, length: int = 16) -> str:
 
 
 def config_container(value: Any) -> Any:
+    """Convert OmegaConf containers to resolved plain Python containers."""
     if isinstance(value, (ListConfig, DictConfig)):
         return OmegaConf.to_container(value, resolve=True)
     return value
 
 
 def cache_root(cfg: DictConfig) -> Path:
+    """Return the configured Figure 3 cache root.
+
+    Relative paths are resolved from the repository root. When no cache
+    directory is configured, caches are placed under
+    ``experiments/baseline_cache/figure3_uncontrolled_quality``.
+    """
     cache_cfg = cfg.get("cache", {})
     configured = cache_cfg.get("dir") if cache_cfg else None
     return resolve_path(configured) or Path(root) / "experiments" / "baseline_cache" / "figure3_uncontrolled_quality"
 
 
 def cache_enabled(cfg: DictConfig, key: str) -> bool:
+    """Return whether a cache feature is globally and locally enabled."""
     cache_cfg = cfg.get("cache", {})
     if not cache_cfg:
         return False
@@ -149,6 +182,7 @@ def cache_enabled(cfg: DictConfig, key: str) -> bool:
 
 
 def force_retrain(cfg: DictConfig) -> bool:
+    """Return whether model checkpoint caches should be ignored."""
     cache_cfg = cfg.get("cache", {})
     return bool(cache_cfg.get("force_retrain", False)) if cache_cfg else False
 
@@ -172,6 +206,7 @@ def copy_tree_to_cache(source: Path, target: Path) -> Path:
 
 
 def preferred_torch_device() -> torch.device:
+    """Choose the best locally available Torch device for model runs."""
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         return torch.device("mps")
     if torch.cuda.is_available():
@@ -180,12 +215,14 @@ def preferred_torch_device() -> torch.device:
 
 
 def optional_int(value: Any, default: int | None = None) -> int | None:
+    """Convert optional config values to ``int`` while preserving ``None``."""
     if value is None:
         return default
     return int(value)
 
 
 def get_eval_n_samples(cfg: DictConfig, n_obs: int) -> int:
+    """Return the configured evaluation sample count, defaulting to ``n_obs``."""
     value = cfg.eval.n_samples
     if value is None:
         return int(n_obs)
@@ -227,6 +264,7 @@ def failed_method_output(
 
 
 def require_conda(method: str) -> str:
+    """Return the ``conda`` executable path or raise a method-specific error."""
     conda = shutil.which("conda")
     if conda is None:
         raise RuntimeError(f"conda not found; cannot run {method}.")
@@ -261,7 +299,11 @@ def run_logged_subprocess(
     env: dict[str, str] | None = None,
     label: str,
 ) -> Path:
-    """Run a command, capture stdout/stderr, and fail with a log pointer."""
+    """Run a command, capture stdout/stderr, and fail with a log pointer.
+
+    A log file is always written with command, working directory, stdout, and
+    stderr. Nonzero exit codes raise ``RuntimeError`` with the log path.
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=env)
     log_path.write_text(

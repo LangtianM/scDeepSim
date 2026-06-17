@@ -1,4 +1,10 @@
-"""Shared model-construction and training helpers for experiment scripts."""
+"""Shared model-construction and training helpers for experiment scripts.
+
+This module encodes the common Hydra config shape used by prototype VAE
+experiments. It builds supervised ``TruncatedNormalVAE`` instances, wires them
+to ``ScDataModule``, and chooses conservative Lightning defaults for
+script-level runs.
+"""
 
 from __future__ import annotations
 
@@ -13,7 +19,11 @@ from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
 
 def hydra_output_dir(default: str = ".") -> str:
-    """Return Hydra's run directory when available."""
+    """Return Hydra's run directory when available.
+
+    ``default`` is returned outside a Hydra runtime, which keeps notebooks and
+    direct function calls usable.
+    """
     try:
         return HydraConfig.get().runtime.output_dir
     except ValueError:
@@ -21,7 +31,7 @@ def hydra_output_dir(default: str = ".") -> str:
 
 
 def selected_adversarial_config(cfg) -> dict[str, Any] | None:
-    """Return a plain adversarial config dict, if the config has one."""
+    """Return a resolved adversarial config dict, if the config defines one."""
     adversarial = OmegaConf.select(cfg, "adversarial", default=None)
     if adversarial is None:
         return None
@@ -35,7 +45,11 @@ def build_truncated_normal_vae(
     *,
     adversarial_config=None,
 ) -> TruncatedNormalVAE:
-    """Build a ``TruncatedNormalVAE`` from the common experiment config shape."""
+    """Build a ``TruncatedNormalVAE`` from the common experiment config shape.
+
+    The input dimensionality is inferred from ``adata.X.shape[1]``; architecture
+    and optimization-related model hyperparameters are read from ``cfg.vae``.
+    """
     return TruncatedNormalVAE(
         n_genes=adata.X.shape[1],
         latent_dim=cfg.vae.latent_dim,
@@ -63,7 +77,20 @@ def train_supervised_vae(
     logger=True,
     adversarial_config=None,
 ) -> TruncatedNormalVAE:
-    """Train a VAE with the provided supervised heads and label mapping."""
+    """Train a VAE with provided supervised heads and label mapping.
+
+    Parameters
+    ----------
+    supervised_config
+        List of supervised head specifications consumed by
+        ``TruncatedNormalVAE``.
+    label_keys
+        ``ScDataModule`` label mapping from model head names to ``adata.obs``
+        columns.
+    default_root_dir
+        Optional Lightning output directory. Defaults to the active Hydra run
+        directory when available.
+    """
     vae = build_truncated_normal_vae(
         adata,
         cfg,
@@ -90,7 +117,7 @@ def train_supervised_vae(
 
 
 def celltype_supervised_config(n_celltypes, cfg):
-    """Build the standard celltype supervised-head config."""
+    """Build the standard single cell-type supervised-head config."""
     return [
         {
             "name": "celltype",
@@ -109,7 +136,7 @@ def celltype_batch_supervised_config(
     *,
     batch_weight=None,
 ):
-    """Build the standard celltype plus batch supervised-head config."""
+    """Build the standard cell-type plus batch supervised-head config."""
     return [
         {
             "name": "celltype",
@@ -144,7 +171,7 @@ def batch_supervised_config(n_batches, cfg):
 
 
 def train_celltype_vae(adata, n_celltypes, cfg):
-    """Train the common celltype-supervised trajectory VAE."""
+    """Train the common cell-type-supervised trajectory VAE."""
     return train_supervised_vae(
         adata,
         cfg,
@@ -162,7 +189,7 @@ def train_celltype_batch_vae(
     *,
     batch_weight=None,
 ):
-    """Train the common celltype-plus-batch supervised VAE."""
+    """Train the common cell-type-plus-batch supervised VAE."""
     return train_supervised_vae(
         adata,
         cfg,

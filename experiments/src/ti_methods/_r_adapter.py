@@ -1,4 +1,9 @@
-"""Helpers for optional R-backed TI method adapters."""
+"""Helpers for optional R-backed trajectory-inference adapters.
+
+The R adapters use a CSV handoff: Python prepares PCA coordinates, clusters,
+truth metadata, expression values, and root-cell hints; an experiment-local R
+script writes the standardized method output back to disk.
+"""
 
 from __future__ import annotations
 
@@ -17,10 +22,18 @@ from experiments.src.ti_metrics import skipped_method_output, standardize_method
 
 
 def _repo_root_from_here() -> Path:
+    """Return the repository root inferred from this adapter file path."""
     return Path(__file__).resolve().parents[3]
 
 
 def _write_common_inputs(adata, work_dir: Path, *, random_state: int = 0) -> dict[str, Path | str]:
+    """Write shared CSV inputs expected by R trajectory-inference scripts.
+
+    The function computes common Scanpy inputs on a copy of ``adata`` and writes
+    ``pca.csv``, ``clusters.csv``, ``metadata.csv``, and ``expression.csv`` into
+    ``work_dir``. The returned mapping also includes the root cell and its
+    cluster, derived from ``true_pseudotime``.
+    """
     work_dir.mkdir(parents=True, exist_ok=True)
     work = adata.copy()
     ensure_common_ti_inputs(work, random_state=random_state)
@@ -77,7 +90,12 @@ def run_r_adapter(
     conda_env: str = "lightning",
     keep_inputs: bool = False,
 ) -> pd.DataFrame:
-    """Run an R adapter script and normalize its output."""
+    """Run an R adapter script and normalize its output.
+
+    Missing R dependencies are represented as standardized skipped outputs
+    rather than hard failures. Set ``keep_inputs=True`` to preserve the adapter
+    CSV inputs for debugging failed R runs.
+    """
     if use_conda_run:
         conda = shutil.which("conda")
         if conda is None:

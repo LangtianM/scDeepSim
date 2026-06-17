@@ -1,4 +1,11 @@
-"""Method runners for Figure 3 uncontrolled simulation quality."""
+"""Method runners for Figure 3 uncontrolled simulation quality.
+
+This module contains the expensive boundaries of the Figure 3 benchmark:
+training/sampling scDeepSim, invoking R-backed count simulators, training scVI,
+and running or loading external scDiffusion outputs. Every public runner returns
+a ``MethodOutput`` whose matrix is normalized log1p expression aligned to the
+selected genes.
+"""
 
 from __future__ import annotations
 
@@ -54,12 +61,14 @@ log = logging.getLogger(__name__)
 
 
 def make_celltype_encoder(adata: ad.AnnData) -> LabelEncoder:
+    """Fit a cell-type encoder from ``adata.obs["celltype"]``."""
     encoder = LabelEncoder()
     encoder.fit(adata.obs["celltype"].astype(str))
     return encoder
 
 
 def make_supervised_config(cfg: DictConfig, n_celltypes: int) -> list[dict[str, Any]]:
+    """Build the scDeepSim supervised cell-type head config."""
     return [
         {
             "name": "celltype",
@@ -76,7 +85,11 @@ def build_scdeepsim_cache_paths(
     cfg: DictConfig,
     celltype_classes: np.ndarray,
 ) -> dict[str, Any]:
-    """Build stable cache paths for scDeepSim VAE and diffusion checkpoints."""
+    """Build stable cache paths for scDeepSim VAE and diffusion checkpoints.
+
+    Separate keys are used for the VAE and diffusion model so diffusion caches
+    naturally depend on the VAE key as well as diffusion hyperparameters.
+    """
     base_payload = {
         "data_path": path_fingerprint(cfg.paths.data_path),
         "selected_data": adata_selection_fingerprint(adata_norm),
@@ -115,7 +128,7 @@ def train_vae(
     cfg: DictConfig,
     output_dir: Path,
 ) -> TruncatedNormalVAE:
-    """Train supervised TN-VAE."""
+    """Train the supervised truncated-normal VAE used by scDeepSim."""
     vae = TruncatedNormalVAE(
         n_genes=adata.n_vars,
         latent_dim=int(cfg.vae.latent_dim),
@@ -156,7 +169,7 @@ def train_vae(
 
 
 def encode_to_latent(vae: TruncatedNormalVAE, x: np.ndarray, cfg: DictConfig) -> np.ndarray:
-    """Encode expression into latent vectors."""
+    """Encode expression into latent vectors using the configured statistic."""
     device = next(vae.parameters()).device
     vae.eval()
     with torch.no_grad():
@@ -192,7 +205,7 @@ def train_diffusion(
     cfg: DictConfig,
     output_dir: Path,
 ) -> LightningDiffusion:
-    """Train latent diffusion on VAE latents."""
+    """Train latent diffusion on VAE latents and cell-type labels."""
     diffusion = LightningDiffusion(
         input_dim=latent_adata.n_vars,
         num_classes=int(n_celltypes),
@@ -266,7 +279,14 @@ def run_scdeepsim(
     output_dir: Path,
     adata_eval_norm: ad.AnnData | None = None,
 ) -> tuple[list[MethodOutput], dict[str, Any]]:
-    """Train and sample scDeepSim; optionally include VAE reconstruction diagnostics."""
+    """Train and sample scDeepSim.
+
+    The VAE and diffusion checkpoints are reused when their cache keys match
+    and ``cfg.cache.reuse_scdeepsim`` is enabled. When
+    ``cfg.eval.compute_vae_reconstruction`` is true, an additional
+    ``vae_reconstruction`` diagnostic output is returned but excluded from the
+    main figure panels.
+    """
     start = time.time()
     eval_adata = adata_eval_norm if adata_eval_norm is not None else adata_norm
     x_train = as_dense(adata_norm.X).astype(np.float32)
@@ -404,7 +424,12 @@ def write_r_baseline_inputs(
     *,
     copula_genes: Any | None = None,
 ) -> tuple[Path, Path, Path, str | Path]:
-    """Write gene-by-cell counts, metadata, and gene names for R adapters."""
+    """Write gene-by-cell counts, metadata, and gene names for R adapters.
+
+    Returns paths to Matrix Market counts, cell metadata, gene metadata, and the
+    scDesign3 important-feature input. The important-feature value is either a
+    CSV path or the string ``"all"``.
+    """
     work_dir.mkdir(parents=True, exist_ok=True)
     counts = np.rint(np.clip(as_dense(adata_raw.X), 0, None)).astype(np.int64)
     counts_gene_cell = sp.coo_matrix(counts.T)
@@ -498,7 +523,11 @@ def zinbwave_renv_env() -> dict[str, str]:
 
 
 def run_scdesign3(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
-    """Run the R-backed scDesign3 baseline."""
+    """Run the R-backed scDesign3 baseline.
+
+    Inputs and outputs are written under ``baseline_runs/scdesign3`` inside the
+    run directory. Subprocess stdout/stderr are captured in ``scdesign3.log``.
+    """
     start = time.time()
     conda = require_conda("scDesign3")
     run_dir = output_dir / "baseline_runs" / "scdesign3"
@@ -572,7 +601,11 @@ def run_scdesign3(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> M
 
 
 def run_zinbwave(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
-    """Run the R-backed ZINB-WaVE baseline."""
+    """Run the R-backed ZINB-WaVE baseline.
+
+    The baseline is run from its configured ``renv`` project to avoid mixing R
+    packages with the Python conda environment.
+    """
     start = time.time()
     rscript = require_executable(cfg.zinbwave.rscript, "ZINB-WaVE")
     renv_project = zinbwave_renv_project(cfg)
@@ -656,7 +689,11 @@ def sample_from_scvi_prior(
     data: ad.AnnData,
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Sample from scVI prior while borrowing real library sizes."""
+    """Sample from the scVI prior while borrowing real library sizes.
+
+    Library sizes and covariates are sampled from real cells, making this
+    baseline reference-dependent.
+    """
     device = model.device
     n_latent = model.get_latent_representation().shape[1]
     z = torch.randn(n_samples, n_latent, device=device)
@@ -879,7 +916,12 @@ def write_scdiffusion_input(adata_raw: ad.AnnData, input_path: Path) -> Path:
 
 
 def maybe_run_scdiffusion_command(cfg: DictConfig, output_dir: Path) -> Path | None:
-    """Run an optional external scDiffusion command and return expected output."""
+    """Run an optional external scDiffusion command and return expected output.
+
+    The configured command is executed through ``conda run`` in the configured
+    work directory with ``PROJECT_ROOT`` and ``FIGURE3_OUTPUT_DIR`` set in the
+    environment.
+    """
     if len(cfg.scdiffusion.command) == 0:
         return resolve_path(cfg.scdiffusion.expected_output_path)
     source_path = resolve_path(cfg.scdiffusion.source_path)
@@ -936,10 +978,12 @@ def latest_numbered_checkpoint(directory: Path, pattern: str, number_prefix: str
 
 
 def scdiffusion_bool_arg(value: Any) -> str:
+    """Return lowercase boolean strings expected by upstream scDiffusion CLI."""
     return "true" if bool(value) else "false"
 
 
 def scdiffusion_list_arg(value: Any) -> str:
+    """Serialize integer sequences for upstream scDiffusion CLI arguments."""
     return json.dumps([int(x) for x in list(value)])
 
 
@@ -982,6 +1026,7 @@ def build_scdiffusion_env(
     bootstrap_dir: Path | None = None,
     device: str = "auto",
 ) -> dict[str, str]:
+    """Build the environment used for upstream scDiffusion subprocesses."""
     env = os.environ.copy()
     pythonpath_parts = []
     if bootstrap_dir is not None:
@@ -1005,7 +1050,12 @@ def run_scdiffusion_end_to_end(
     cfg: DictConfig,
     output_dir: Path,
 ) -> tuple[Path, dict[str, Any]]:
-    """Train upstream scDiffusion, sample latents, decode them, and return output."""
+    """Train upstream scDiffusion, sample latents, decode them, and return output.
+
+    This end-to-end mode writes selected input data, trains or reuses upstream
+    VAE and diffusion checkpoints, samples latent cells, decodes them, and
+    returns the decoded ``.npz`` path plus run metadata.
+    """
     source_path = resolve_path(cfg.scdiffusion.source_path)
     if source_path is None or not source_path.exists():
         raise RuntimeError(
@@ -1278,7 +1328,12 @@ def run_scdiffusion_end_to_end(
 
 
 def run_scdiffusion(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
-    """Load, run, or train/sample/decode an external scDiffusion baseline."""
+    """Load, run, or train/sample/decode an external scDiffusion baseline.
+
+    Output can come from a configured sample file, a configured external
+    command, a full end-to-end upstream run, or an expected output path. Raw
+    count outputs are normalized before metrics are computed.
+    """
     start = time.time()
     source_path = resolve_path(cfg.scdiffusion.source_path)
     metadata = git_metadata_for_path(source_path)
@@ -1340,6 +1395,7 @@ def run_single_baseline(
     cfg: DictConfig,
     output_dir: Path,
 ) -> MethodOutput:
+    """Dispatch one configured non-scDeepSim baseline runner."""
     if method_key == "scdesign3":
         return run_scdesign3(adata_raw, cfg, output_dir)
     if method_key == "zinbwave":

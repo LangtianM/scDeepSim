@@ -1,4 +1,4 @@
-"""Optional Slingshot R adapter."""
+"""Optional Slingshot R adapter for trajectory-inference benchmarks."""
 
 from __future__ import annotations
 
@@ -6,7 +6,11 @@ from ._r_adapter import run_r_adapter
 
 
 def run_slingshot(adata, *, output_dir, random_state: int = 0, **kwargs):
-    """Run Slingshot through the experiment-local R adapter."""
+    """Run Slingshot through the experiment-local R adapter.
+
+    Keyword options are forwarded as adapter controls: ``r_use_conda_run``,
+    ``r_conda_env``, and ``keep_adapter_inputs``.
+    """
     return run_r_adapter(
         adata,
         method="slingshot",

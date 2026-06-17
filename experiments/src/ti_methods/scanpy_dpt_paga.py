@@ -1,4 +1,9 @@
-"""Scanpy DPT/PAGA adapter for TI benchmarking."""
+"""Scanpy DPT/PAGA adapter for trajectory-inference benchmarking.
+
+The adapter computes common Scanpy features, roots DPT from the known earliest
+truth cell, estimates pseudotime, and uses Leiden/PAGA structure as a coarse
+lineage assignment for the standard benchmark output table.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ from experiments.src.ti_metrics import standardize_method_output
 
 
 def _normalize_pseudotime(values: np.ndarray) -> np.ndarray:
+    """Scale finite pseudotime values to the ``[0, 1]`` interval."""
     vals = np.asarray(values, dtype=float)
     finite = np.isfinite(vals)
     if not finite.any():

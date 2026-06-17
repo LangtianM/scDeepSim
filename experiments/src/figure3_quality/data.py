@@ -1,4 +1,10 @@
-"""Data loading, preprocessing, and fingerprinting for Figure 3."""
+"""Data loading, preprocessing, and fingerprinting for Figure 3.
+
+The Figure 3 benchmark evaluates every method on the same selected cells and
+genes. This module returns both raw-count and normalized log1p views of that
+selection and builds lightweight fingerprints used by the persistent sample
+cache.
+"""
 
 from __future__ import annotations
 
@@ -31,7 +37,7 @@ def path_fingerprint(path_like: Any) -> dict[str, Any]:
 
 
 def adata_selection_fingerprint(adata: ad.AnnData) -> dict[str, Any]:
-    """Fingerprint the selected cells/genes without hashing the full matrix."""
+    """Fingerprint selected cells and genes without hashing the full matrix."""
     return {
         "shape": [int(adata.n_obs), int(adata.n_vars)],
         "obs_names_hash": stable_hash(adata.obs_names.astype(str).tolist()),
@@ -40,7 +46,7 @@ def adata_selection_fingerprint(adata: ad.AnnData) -> dict[str, Any]:
 
 
 def subset_hvgs(adata: ad.AnnData, n_genes: int) -> ad.AnnData:
-    """Select HVGs, falling back to raw variance for tiny singular subsets."""
+    """Select HVGs, falling back to raw variance for singular small subsets."""
     try:
         sc.pp.highly_variable_genes(
             adata, flavor="seurat_v3", n_top_genes=n_genes
@@ -58,7 +64,11 @@ def subset_hvgs(adata: ad.AnnData, n_genes: int) -> ad.AnnData:
 
 
 def normalize_log1p_counts(counts: np.ndarray, target_sum: float = 1e4) -> np.ndarray:
-    """Normalize raw count matrix to counts-per-target-sum and log1p."""
+    """Normalize raw counts to counts-per-target-sum and ``log1p``.
+
+    Inputs are clipped to nonnegative values and rounded before normalization so
+    external simulator outputs are treated as count-like matrices.
+    """
     counts = np.rint(np.clip(as_dense(counts), 0, None)).astype(np.float32)
     sim_adata = ad.AnnData(X=counts)
     sc.pp.normalize_total(sim_adata, target_sum=target_sum)
@@ -67,7 +77,16 @@ def normalize_log1p_counts(counts: np.ndarray, target_sum: float = 1e4) -> np.nd
 
 
 def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
-    """Load counts, pick one shared cell/HVG subset, and normalize a copy."""
+    """Load counts, pick one shared cell/HVG subset, and normalize a copy.
+
+    Returns
+    -------
+    tuple[AnnData, AnnData]
+        ``(adata_norm, adata_raw)`` with matching observations and variables.
+        ``adata_norm.X`` is dense normalized log1p data; ``adata_raw.X`` is a
+        dense nonnegative raw-count matrix. Both objects expose standardized
+        ``obs["celltype"]`` and, when configured, ``obs["batch"]`` columns.
+    """
     rng = np.random.default_rng(int(cfg.seed))
     adata = sc.read_h5ad(cfg.paths.data_path)
     adata.var_names_make_unique()
@@ -122,7 +141,13 @@ def train_test_split_adata(
     adata_raw: ad.AnnData,
     cfg: DictConfig,
 ) -> tuple[ad.AnnData, ad.AnnData, ad.AnnData, ad.AnnData, dict[str, Any]]:
-    """Split matched normalized/raw AnnData objects into train and evaluation sets."""
+    """Split matched normalized/raw ``AnnData`` objects into train/eval sets.
+
+    When ``cfg.eval.use_train_test_split`` is false, train and evaluation
+    outputs both contain the full selected data. When splitting is enabled, the
+    function attempts a stratified split by ``obs["celltype"]`` and falls back
+    to an unstratified split if class counts are too small.
+    """
     if adata_norm.n_obs != adata_raw.n_obs or not np.array_equal(
         adata_norm.obs_names.to_numpy(), adata_raw.obs_names.to_numpy()
     ):
@@ -187,7 +212,12 @@ def train_test_split_adata(
 
 
 def load_sample_matrix(path: Path) -> np.ndarray:
-    """Load a sample matrix from npy, npz, csv, tsv, or h5ad."""
+    """Load a sample matrix from ``.npy``, ``.npz``, ``.csv``, ``.tsv``, or ``.h5ad``.
+
+    ``.npz`` archives prefer arrays named ``samples`` or ``cell_gen`` and then
+    fall back to the first 2D array. CSV/TSV inputs are read with the first
+    column as row index.
+    """
     if not path.exists():
         raise FileNotFoundError(path)
     suffix = path.suffix.lower()

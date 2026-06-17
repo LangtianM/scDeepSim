@@ -1,6 +1,9 @@
 """Batch integration and biological preservation metrics.
 
-All functions accept numpy arrays and return scalar values.
+All functions accept NumPy-like matrices with cells as rows and return scalar
+values. Batch metrics are intended to decrease when batch effects are removed,
+whereas biological preservation metrics should stay stable as control strength
+changes.
 """
 
 import numpy as np
@@ -95,9 +98,12 @@ def clisi(X, celltype_labels, k=30):
 
 
 def celltype_rf_accuracy(X, celltype_labels, test_size=0.2, seed=42):
-    """RF classification accuracy for cell types.
+    """Random-forest cell-type classification accuracy.
 
-    Returns (accuracy, balanced_accuracy).
+    Returns
+    -------
+    tuple[float, float]
+        ``(accuracy, balanced_accuracy)`` on a held-out split.
     """
     labels = LabelEncoder().fit_transform(np.asarray(celltype_labels))
     X_train, X_test, y_train, y_test = train_test_split(

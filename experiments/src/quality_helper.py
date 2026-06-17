@@ -1,4 +1,4 @@
-"""Test script for TruncatedNormalVAE simulation discriminability.
+"""Standalone diagnostic for TruncatedNormalVAE simulation discriminability.
 
 Trains the TruncatedNormalVAE on Tabula Muris data and evaluates
 discriminability of simulated vs. real cells using:
@@ -31,7 +31,7 @@ LOG_DIR = "lightning_logs/test_truncated_normal_vae/tn_vae"
 
 
 def load_and_preprocess(path, n_cells, n_genes, seed=42):
-    """Load Tabula Muris, subsample, select HVGs, normalize + log1p."""
+    """Load Tabula Muris, subsample cells, select HVGs, and normalize log1p."""
     np.random.seed(seed)
     adata = sc.read_h5ad(path)
     adata.var_names_make_unique()
@@ -53,7 +53,7 @@ def load_and_preprocess(path, n_cells, n_genes, seed=42):
 
 
 def train_or_load_vae(adata, ckpt_path, log_dir, max_epochs):
-    """Train a TruncatedNormalVAE or load from checkpoint."""
+    """Train a ``TruncatedNormalVAE`` or load it from a checkpoint path."""
     if os.path.exists(ckpt_path):
         print(f"Loading checkpoint from {ckpt_path}")
         vae = TruncatedNormalVAE.load_from_checkpoint(ckpt_path)
@@ -141,6 +141,7 @@ def evaluate_discriminability(vae, adata, n_neighbors=10):
 
 
 def main():
+    """Run the end-to-end diagnostic from the module constants."""
     print("=" * 60)
     print("TruncatedNormalVAE Simulation Discriminability Test")
     print("=" * 60)

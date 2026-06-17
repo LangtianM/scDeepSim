@@ -1,4 +1,9 @@
-"""Metrics for trajectory-inference benchmark outputs."""
+"""Metrics for trajectory-inference benchmark outputs.
+
+Adapters emit one standardized table per method. This module normalizes those
+tables and compares them with the simulator ground truth by joining on
+``cell_id``.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +27,7 @@ STANDARD_METHOD_COLUMNS = [
 
 
 def empty_method_output(method: str, metadata: dict[str, Any] | None = None) -> pd.DataFrame:
-    """Return a standardized empty adapter output."""
+    """Return a standardized empty adapter output with the expected columns."""
     meta = json.dumps(metadata or {}, sort_keys=True)
     return pd.DataFrame(
         columns=STANDARD_METHOD_COLUMNS,
@@ -31,7 +36,11 @@ def empty_method_output(method: str, metadata: dict[str, Any] | None = None) -> 
 
 
 def skipped_method_output(method: str, reason: str) -> pd.DataFrame:
-    """Return one standardized skipped-row marker for an unavailable adapter."""
+    """Return one standardized skipped-row marker for an unavailable adapter.
+
+    Skipped outputs still carry method and metadata information so downstream
+    summaries can distinguish missing dependencies from successful empty output.
+    """
     return pd.DataFrame(
         {
             "cell_id": [pd.NA],
@@ -50,7 +59,11 @@ def standardize_method_output(
     method: str,
     metadata: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
-    """Normalize an adapter output table to the benchmark schema."""
+    """Normalize an adapter output table to the benchmark schema.
+
+    Missing standard columns are added with ``pd.NA``. When ``metadata`` is
+    supplied, it replaces the output ``metadata_json`` value for all rows.
+    """
     out = df.copy()
     for col in STANDARD_METHOD_COLUMNS:
         if col not in out:
@@ -62,6 +75,7 @@ def standardize_method_output(
 
 
 def _safe_spearman(x: pd.Series, y: pd.Series) -> float:
+    """Return Spearman correlation, or ``nan`` for degenerate inputs."""
     mask = x.notna() & y.notna()
     if mask.sum() < 2:
         return np.nan
@@ -77,7 +91,11 @@ def evaluate_ti_output(
     *,
     method: str | None = None,
 ) -> dict[str, Any]:
-    """Evaluate one standardized TI method output against ground truth."""
+    """Evaluate one standardized TI method output against ground truth.
+
+    Metrics currently include global pseudotime Spearman correlation and
+    adjusted Rand index between true and inferred lineages.
+    """
     if method is None:
         method = str(method_df["method"].dropna().iloc[0]) if "method" in method_df and method_df["method"].notna().any() else "unknown"
 

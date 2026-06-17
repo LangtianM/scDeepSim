@@ -1,4 +1,9 @@
-"""Experiment orchestration for Figure 3 uncontrolled simulation quality."""
+"""Experiment orchestration for Figure 3 uncontrolled simulation quality.
+
+The runner loads a shared data subset, dispatches enabled simulators, reuses or
+writes sample caches, computes metrics, writes run metadata, and generates the
+paper-facing diagnostic figures inside a Hydra output directory.
+"""
 
 from __future__ import annotations
 
@@ -40,6 +45,7 @@ log = logging.getLogger(__name__)
 
 
 def validate_methods(methods: list[str]) -> None:
+    """Validate configured method keys before any expensive work starts."""
     valid = {"scdeepsim", "scdiffusion", "scvi_prior", "scdesign3", "zinbwave"}
     unknown = sorted(set(methods) - valid)
     if unknown:
@@ -73,7 +79,12 @@ def save_outputs(
     real_labels: np.ndarray,
     cfg: DictConfig,
 ) -> tuple[Path, Path, Path]:
-    """Save metrics, metadata, and optional sample arrays."""
+    """Save metrics, metadata, and optional sample arrays.
+
+    Files written under ``results_dir`` are ``metrics.csv``, ``metrics.json``,
+    ``baseline_metadata.json``, and, when ``cfg.eval.save_intermediates`` is
+    true, ``samples.npz`` containing real and successful simulated matrices.
+    """
     metrics_csv = results_dir / "metrics.csv"
     metrics_json = results_dir / "metrics.json"
     metadata_json = results_dir / "baseline_metadata.json"
@@ -95,6 +106,7 @@ def save_outputs(
 
 
 def expected_output_keys(method_key: str, cfg: DictConfig) -> list[str]:
+    """Return all cacheable output keys produced by a method runner."""
     if method_key == "scdeepsim":
         keys = ["scdeepsim"]
         if bool(cfg.eval.compute_vae_reconstruction):
@@ -167,7 +179,11 @@ def run_method_with_sample_cache(
     *,
     output_keys: list[str] | None = None,
 ) -> tuple[list[MethodOutput], bool]:
-    """Run a method unless its successful sample outputs are already cached."""
+    """Run a method unless its successful sample outputs are already cached.
+
+    Returns the method outputs plus a boolean indicating whether the outputs came
+    entirely from cache.
+    """
     cached = load_method_outputs_from_sample_cache(
         method_key,
         adata_for_cache,
@@ -192,7 +208,12 @@ def run_method_with_sample_cache(
 
 
 def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
-    """Run the full Figure 3 experiment into a Hydra output directory."""
+    """Run the full Figure 3 experiment into a Hydra output directory.
+
+    The returned path is ``output_dir / "results"``. Baseline failures are
+    recorded as failed ``MethodOutput`` rows only when
+    ``cfg.eval.continue_on_baseline_failure`` is true; otherwise they propagate.
+    """
     cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
     torch.manual_seed(int(cfg.seed))
     np.random.seed(int(cfg.seed))

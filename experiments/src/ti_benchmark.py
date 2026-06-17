@@ -1,4 +1,9 @@
-"""Shared utilities for pseudo-time TI benchmarking experiments."""
+"""Shared utilities for pseudotime trajectory-inference benchmarks.
+
+The benchmark helpers convert known generated trajectories into ``AnnData``
+objects plus ground-truth tables, then prepare common Scanpy features used by
+several trajectory-inference adapters.
+"""
 
 from __future__ import annotations
 
@@ -33,7 +38,20 @@ GROUND_TRUTH_COLUMNS = [
 
 @dataclass(frozen=True)
 class TIBenchmarkDataset:
-    """Generated TI benchmark dataset and its ground-truth metadata."""
+    """Generated trajectory-inference benchmark dataset.
+
+    Attributes
+    ----------
+    adata
+        Expression-space benchmark data. Ground-truth columns are copied into
+        ``adata.obs`` and latent vectors may be stored in ``adata.obsm``.
+    ground_truth
+        Data frame with the standard truth columns listed in
+        ``GROUND_TRUTH_COLUMNS``.
+    simulator_settings
+        JSON-serializable settings describing the generator that produced the
+        benchmark replicate.
+    """
 
     adata: ad.AnnData
     ground_truth: pd.DataFrame
@@ -115,7 +133,12 @@ def build_benchmark_anndata(
     var_names: list[str] | np.ndarray | None = None,
     latent: np.ndarray | None = None,
 ) -> TIBenchmarkDataset:
-    """Build an ``AnnData`` object with standard TI benchmark metadata."""
+    """Build an ``AnnData`` object with standard TI benchmark metadata.
+
+    ``ground_truth["cell_id"]`` becomes the observation index. When ``latent`` is
+    provided it is stored as ``adata.obsm["X_latent"]`` for methods that can use
+    generated latent coordinates directly.
+    """
     obs = ground_truth.copy()
     obs.index = obs["cell_id"].astype(str)
     if var_names is None:
@@ -142,7 +165,11 @@ def make_ti_benchmark_dataset(
     cell_id_prefix: str = "cell",
     decode_batch_size: int = 512,
 ) -> TIBenchmarkDataset:
-    """Flatten, decode, and package one generated TI benchmark replicate."""
+    """Flatten, decode, and package one generated TI benchmark replicate.
+
+    The VAE decoder converts generated latent rows into expression space before
+    :func:`build_benchmark_anndata` attaches truth metadata.
+    """
     latents, ground_truth = flatten_branch_trajectory(
         trajectory,
         tau=tau,
@@ -168,7 +195,12 @@ def ensure_common_ti_inputs(
     resolution: float = 0.5,
     random_state: int = 0,
 ) -> ad.AnnData:
-    """Compute shared PCA, neighbors, UMAP, and Leiden inputs in-place."""
+    """Compute shared PCA, neighbors, UMAP, and clustering inputs in-place.
+
+    The returned object is the same ``AnnData`` instance passed in. Leiden is
+    attempted first and Louvain is used as a fallback when Leiden dependencies
+    are unavailable.
+    """
     n_comps = max(1, min(int(n_pcs), adata.n_obs - 1, adata.n_vars - 1))
     if "X_pca" not in adata.obsm or adata.obsm["X_pca"].shape[1] < n_comps:
         sc.pp.pca(adata, n_comps=n_comps, random_state=random_state)
@@ -188,7 +220,7 @@ def ensure_common_ti_inputs(
 
 
 def root_cell_from_truth(adata: ad.AnnData) -> str:
-    """Return the cell id with the smallest true pseudo-time."""
+    """Return the cell id with the smallest true pseudotime."""
     if "true_pseudotime" not in adata.obs:
         raise ValueError("adata.obs must contain true_pseudotime")
     idx = int(np.argmin(adata.obs["true_pseudotime"].to_numpy(dtype=float)))
