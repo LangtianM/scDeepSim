@@ -1,0 +1,3 @@
+[submodule "experiments/external/scDiffusion"]
+	path = experiments/external/scDiffusion
+	url = experiments/external/scDiffusion-local.git

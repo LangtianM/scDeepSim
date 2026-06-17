@@ -9,6 +9,7 @@ tests/*
 *.pyc
 experiments/outputs/*
 experiments/external/*
+!experiments/external/scDiffusion/
 experiments/baseline_cache/
 experiments/baseline_scratch/
 experiments/renv/cache/
