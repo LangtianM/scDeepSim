@@ -32,6 +32,7 @@ import pandas as pd
 import scanpy as sc
 import torch
 from hydra.core.hydra_config import HydraConfig
+from matplotlib.lines import Line2D
 from omegaconf import DictConfig, OmegaConf
 from sklearn.decomposition import PCA
 from sklearn.metrics import r2_score
@@ -552,58 +553,132 @@ def plot_all_celltype_umap(
     real_batch = batch[real_mask]
     real_celltype = celltype[real_mask]
 
-    combo_df = pd.DataFrame({
-        "batch": real_batch,
-        "celltype": real_celltype,
-    })
-    combos = sorted(
-        combo_df.drop_duplicates().itertuples(index=False, name=None),
-        key=lambda x: (x[1], x[0]),
-    )
-    predicted_label = f"predicted {target_batch} {heldout_celltype}"
-    cmap = plt.get_cmap("hsv", len(combos) + 1)
-    colors = {
-        combo: cmap(i)
-        for i, combo in enumerate(combos)
+    celltypes = sorted(pd.unique(real_celltype))
+    base_colors = list(plt.get_cmap("tab20").colors)
+    color_map = {
+        celltype_name: base_colors[i % len(base_colors)]
+        for i, celltype_name in enumerate(celltypes)
     }
+    group_styles = {
+        reference_batch: {"marker": "o", "alpha": 0.5, "s": 11},
+        target_batch: {"marker": "^", "alpha": 0.5, "s": 11},
+    }
+    predicted_color = "#e45756"
+    predicted_alpha = 0.4
 
-    fig, ax = plt.subplots(figsize=(8.5, 7.2))
-    for combo in combos:
-        batch_name, celltype_name = combo
-        mask = (real_batch == batch_name) & (real_celltype == celltype_name)
-        ax.scatter(
-            coords_real[mask, 0],
-            coords_real[mask, 1],
-            s=7,
-            alpha=0.48,
-            color=colors[combo],
-            label=f"{batch_name} {celltype_name}",
-            linewidths=0,
-        )
+    fig = plt.figure(figsize=(9.6, 7.4), constrained_layout=True)
+    gs = fig.add_gridspec(1, 2, width_ratios=[5.6, 1.8], wspace=0.02)
+    ax = fig.add_subplot(gs[0, 0])
+    legend_ax = fig.add_subplot(gs[0, 1])
+    legend_ax.axis("off")
+
+    for batch_name in [reference_batch, target_batch]:
+        for celltype_name in celltypes:
+            mask = (real_batch == batch_name) & (real_celltype == celltype_name)
+            if not np.any(mask):
+                continue
+            style = group_styles[batch_name]
+            ax.scatter(
+                coords_real[mask, 0],
+                coords_real[mask, 1],
+                s=style["s"],
+                alpha=style["alpha"],
+                color=color_map[celltype_name],
+                marker=style["marker"],
+                linewidths=0,
+                rasterized=True,
+            )
     ax.scatter(
         coords_pred[:, 0],
         coords_pred[:, 1],
-        s=15,
-        alpha=0.85,
-        color="#111111",
+        s=24,
+        alpha=predicted_alpha,
+        color=predicted_color,
         marker="x",
-        linewidths=0.8,
-        label=predicted_label,
+        linewidths=1.0,
+        label=f"predicted {target_batch} {heldout_celltype}",
+        rasterized=True,
     )
     ax.set_title(
-        f"{reference_batch} -> {target_batch}: all cell types",
+        f"{reference_batch} -> {target_batch}: {heldout_celltype}",
+        fontsize=14,
+        pad=10,
     )
     ax.set_xticks([])
     ax.set_yticks([])
-    ax.legend(
-        frameon=True,
-        fontsize=6.5,
-        ncol=3,
+    ax.set_aspect("equal", adjustable="datalim")
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+
+    celltype_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor=color_map[celltype_name],
+            markeredgecolor="none",
+            markersize=6,
+            label=celltype_name,
+        )
+        for celltype_name in celltypes
+    ]
+    group_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor="#7f7f7f",
+            markeredgecolor="none",
+            markersize=6,
+            label=reference_batch,
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="^",
+            linestyle="",
+            markerfacecolor="#7f7f7f",
+            markeredgecolor="none",
+            markersize=7,
+            label=target_batch,
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="x",
+            linestyle="",
+            color=predicted_color,
+            alpha=predicted_alpha,
+            markeredgewidth=1.1,
+            markersize=7,
+            label=f"predicted {target_batch} {heldout_celltype}",
+        ),
+    ]
+    legend1 = legend_ax.legend(
+        handles=celltype_handles,
+        title="Cell type",
         loc="upper left",
-        bbox_to_anchor=(1.02, 1.0),
+        frameon=False,
+        fontsize=8,
+        title_fontsize=9,
         borderaxespad=0,
+        handletextpad=0.5,
+        labelspacing=0.45,
     )
-    plt.tight_layout()
+    legend_ax.add_artist(legend1)
+    legend_ax.legend(
+        handles=group_handles,
+        title="Dataset",
+        loc="lower left",
+        frameon=False,
+        fontsize=8,
+        title_fontsize=9,
+        borderaxespad=0,
+        handletextpad=0.5,
+        labelspacing=0.6,
+    )
     plt.savefig(save_path, dpi=250, bbox_inches="tight")
     plt.close()
 

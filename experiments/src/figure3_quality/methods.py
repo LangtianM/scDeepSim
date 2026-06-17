@@ -1011,11 +1011,15 @@ def write_scdiffusion_torch_bootstrap(bootstrap_dir: Path, device: str) -> Path 
         "\n"
         "_device = os.environ.get('SCDIFFUSION_TORCH_DEVICE', '').lower()\n"
         "if _device in {'cpu', 'cuda'}:\n"
-        "    import torch\n"
-        "    if hasattr(torch.backends, 'mps'):\n"
-        "        torch.backends.mps.is_available = lambda: False\n"
-        "    if _device == 'cpu':\n"
-        "        torch.cuda.is_available = lambda: False\n"
+        "    try:\n"
+        "        import torch\n"
+        "    except ModuleNotFoundError:\n"
+        "        torch = None\n"
+        "    if torch is not None:\n"
+        "        if hasattr(torch.backends, 'mps'):\n"
+        "            torch.backends.mps.is_available = lambda: False\n"
+        "        if _device == 'cpu':\n"
+        "            torch.cuda.is_available = lambda: False\n"
     )
     return bootstrap_dir
 
@@ -1043,6 +1047,31 @@ def build_scdiffusion_env(
     if device in {"auto", "mps"}:
         env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
     return env
+
+
+def validate_scdiffusion_state_dict_path(path: Path | None) -> Path | None:
+    """Validate an optional upstream SCimilarity checkpoint directory."""
+    if path is None:
+        return None
+    required = ("encoder.ckpt", "decoder.ckpt", "gene_order.tsv")
+    if not path.exists():
+        raise RuntimeError(
+            "scDiffusion SCimilarity state_dict_path does not exist: "
+            f"{path}. Download annotation_model_v1.tar.gz from "
+            "https://zenodo.org/records/8286452 and extract it there."
+        )
+    if not path.is_dir():
+        raise RuntimeError(
+            "scDiffusion SCimilarity state_dict_path must be a directory "
+            f"containing {', '.join(required)}; got {path}."
+        )
+    missing = [name for name in required if not (path / name).is_file()]
+    if missing:
+        raise RuntimeError(
+            "scDiffusion SCimilarity state_dict_path is incomplete: "
+            f"{path}. Missing required file(s): {', '.join(missing)}."
+        )
+    return path
 
 
 def run_scdiffusion_end_to_end(
@@ -1089,6 +1118,9 @@ def run_scdiffusion_end_to_end(
     hidden_dim = int(cfg.scdiffusion.vae.hidden_dim)
     filter_data = scdiffusion_bool_arg(cfg.scdiffusion.loader.filter_data)
     num_workers = str(int(cfg.scdiffusion.loader.num_workers))
+    state_dict_path = validate_scdiffusion_state_dict_path(
+        resolve_path(cfg.scdiffusion.vae.state_dict_path)
+    )
 
     vae_cache_hit = use_cache and Path(cache_paths["vae_ckpt"]).exists()
     if vae_cache_hit:
@@ -1129,7 +1161,6 @@ def run_scdiffusion_end_to_end(
             "--filter_data",
             filter_data,
         ]
-        state_dict_path = resolve_path(cfg.scdiffusion.vae.state_dict_path)
         if state_dict_path is not None:
             vae_cmd.extend(["--state_dict", str(state_dict_path)])
         run_logged_subprocess(

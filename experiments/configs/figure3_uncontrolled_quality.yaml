@@ -123,7 +123,7 @@ scdiffusion:
     seed: 0
     loss_ae: mse
     decoder_activation: ReLU
-    state_dict_path: null
+    state_dict_path: ${paths.root_dir}/checkpoints/scimilarity/annotation_model_v1
   diffusion:
     model_name: figure3_scdiffusion_diffusion
     lr: 1.0e-4

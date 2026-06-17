@@ -30,9 +30,16 @@ vae:
 
 supervision:
   celltype_weight: 5.0
-  celltype_latent_dims: 16
+  celltype_latent_dims: 8
   batch_weight: 5.0
-  batch_latent_dims: 16
+  batch_latent_dims: 8
+
+adversarial:
+  enabled: true
+  weight: 5.0
+  warmup_epochs: 20
+  head_hidden: 64
+  condition_embedding_dim: 8
 
 direction:
   method: whitening_recoloring
