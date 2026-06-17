@@ -848,6 +848,12 @@ def main(cfg: DictConfig) -> None:
     log.info("Real target eval cells: %d", adata_target_eval.n_obs)
     log.info("Direction reference cells: %d", adata_dir_ref.n_obs)
     log.info("Direction target cells: %d", adata_dir_target.n_obs)
+    log.info(
+        "Adversarial heads: enabled=%s weight=%s warmup_epochs=%s",
+        OmegaConf.select(cfg, "adversarial.enabled", default=False),
+        OmegaConf.select(cfg, "adversarial.weight", default=None),
+        OmegaConf.select(cfg, "adversarial.warmup_epochs", default=None),
+    )
 
     vae = train_celltype_batch_vae(
         adata_train,

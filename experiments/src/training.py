@@ -188,8 +188,11 @@ def train_celltype_batch_vae(
     cfg,
     *,
     batch_weight=None,
+    adversarial_config=None,
 ):
     """Train the common cell-type-plus-batch supervised VAE."""
+    if adversarial_config is None:
+        adversarial_config = selected_adversarial_config(cfg)
     return train_supervised_vae(
         adata,
         cfg,
@@ -204,6 +207,7 @@ def train_celltype_batch_vae(
             "batch": {"obs_key": "batch", "type": "categorical"},
         },
         log_every_n_steps=50,
+        adversarial_config=adversarial_config,
     )
 
 
