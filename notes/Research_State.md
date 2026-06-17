@@ -376,11 +376,39 @@ We visualized the trajectory of generated samples at different $\alpha$ values:
 
 UMAP visualization of batch interpolation and extrapolation along the Gaussian OT transport direction. Reference batch (inDrop3, triangles) and target batch (Smart-seq2, squares) cells are shown alongside generated cells at $\alpha \in \{0.0, 0.5, 1.0, 1.5\}$ (color-coded from dark purple to yellow). Generated cells shift continuously from the reference position ($\alpha = 0$) toward and beyond the target ($\alpha = 1.5$), with smooth spatial transitions across UMAP clusters.
 
-Held-out batch validation:
+**Held-out batch validation:**
 
 ![Held-out Batch Validation](../experiments/outputs/2026-05-18/18-03-41_heldout_batch_validation/results/umap_smartseq2.png)
 
 The VAE+Diffusion model fails to generate synthetic data that they have never seen before.
+
+**scGen Style Held-out Batch Validation:**
+
+This experiment follows a scGen-style held-out cell-type transfer setup. We
+selected a reference and target batch (`inDrop3 -> smartseq2`) and held out one
+cell type (`alpha`) from the target batch. The supervised VAE was trained on all
+cells except real `smartseq2 alpha` cells. A pooled latent batch transform was
+then estimated from all non-alpha cells shared between `inDrop3` and
+`smartseq2` using whitening-recoloring in the batch-supervised latent subspace
+(`alpha = 1`). Finally, the transform was applied to `inDrop3 alpha` cells,
+decoded, and evaluated against the held-out real `smartseq2 alpha` cells.
+
+In this run, the model predicted 671 transferred alpha cells and compared them
+with 619 held-out real target cells across 2,000 genes. Mean-expression
+agreement was high across all genes ($r = 0.983$, $R^2 = 0.966$) and remained
+high for the top 100 reference-vs-target DE genes ($r = 0.962$,
+$R^2 = 0.922$). Gene-wise standard deviation agreement was also strong
+($r = 0.932$, $R^2 = 0.856$).
+
+![scGen-style UMAP prediction](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/umap_prediction.png)
+
+![scGen-style UMAP all cell types](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/umap_all_celltypes.png)
+
+![Predicted vs. real mean, all genes](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/predicted_vs_real_mean_all_genes.png)
+
+![Predicted vs. real mean, top DE genes](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/predicted_vs_real_mean_top_de_genes.png)
+
+![Predicted vs. real standard deviation, all genes](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/predicted_vs_real_std_all_genes.png)
 
 ### Checking Assumptions of Gaussian OT
 
