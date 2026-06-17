@@ -15,8 +15,8 @@ cache:
   force_resimulate: false
 
 data:
-  n_cells: 10000
-  n_genes: 2500
+  n_cells: 20000
+  n_genes: 5000
   min_genes: 10
   min_cells: 2
   celltype_key: celltype
@@ -115,7 +115,7 @@ scdiffusion:
     num_workers: 0
     filter_data: false
   vae:
-    max_steps: 150000
+    max_steps: 50000
     max_minutes: 3000
     checkpoint_freq: 30000
     batch_size: 128
@@ -128,7 +128,7 @@ scdiffusion:
     model_name: figure3_scdiffusion_diffusion
     lr: 1.0e-4
     weight_decay: 1.0e-4
-    lr_anneal_steps: 600000
+    lr_anneal_steps: 200000
     batch_size: 128
     microbatch: -1
     ema_rate: "0.9999"
@@ -155,7 +155,7 @@ eval:
   # the held-out test set when use_train_test_split is true, otherwise all cells.
   n_samples: null
   use_train_test_split: true
-  test_size: 0.2
+  test_size: 0.5
   stratify_split: true
   continue_on_baseline_failure: true
   discriminability_method: rf
