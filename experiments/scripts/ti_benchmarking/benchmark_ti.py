@@ -60,7 +60,9 @@ from experiments.src.ti_benchmark import (
 )
 from experiments.src.ti_methods import ADAPTERS
 from experiments.src.ti_metrics import evaluate_ti_output, skipped_method_output
-from experiments.src.trajectory import encode_all, load_pancreas, train_vae
+from experiments.src.common import encode_adata
+from experiments.src.data import load_pancreas
+from experiments.src.training import train_celltype_vae
 from experiments.src.utils import save_git_info
 from scdeepsim.control import branch_trajectory_ot
 
@@ -361,8 +363,8 @@ def main(cfg: DictConfig) -> None:
         if state not in ct_le.classes_:
             raise ValueError(f"{name}={state!r} not in cell types {list(ct_le.classes_)}")
 
-    vae = train_vae(adata_real, len(ct_le.classes_), cfg)
-    z_all = encode_all(vae, adata_real)
+    vae = train_celltype_vae(adata_real, len(ct_le.classes_), cfg)
+    z_all = encode_adata(vae, adata_real)
 
     def _z_for(state):
         return z_all[celltype_labels == state]

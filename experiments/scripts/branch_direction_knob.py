@@ -54,8 +54,9 @@ from scipy.linalg import sqrtm
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 
-from experiments.src.common import as_dense, save_git_info
-from experiments.src.trajectory import encode_all, load_pancreas, train_vae
+from experiments.src.common import as_dense, encode_adata, save_git_info
+from experiments.src.data import load_pancreas
+from experiments.src.training import train_celltype_vae
 from scdeepsim.control import branch_from_direction
 
 log = logging.getLogger(__name__)
@@ -362,10 +363,10 @@ def main(cfg: DictConfig) -> None:
             f"{name}='{state}' not in {list(ct_le.classes_)}"
 
     log.info("[2/5] Training semi-supervised VAE...")
-    vae = train_vae(adata, n_celltypes, cfg)
+    vae = train_celltype_vae(adata, n_celltypes, cfg)
 
     log.info("[3/5] Encoding all cells...")
-    z_all = encode_all(vae, adata)
+    z_all = encode_adata(vae, adata)
     log.info(f"Latent shape: {z_all.shape}")
 
     # -- 2. Subspace and anchor directions --

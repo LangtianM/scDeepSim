@@ -38,9 +38,9 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 from scipy.stats import chi2
 
-from experiments.src.common import encode_all, save_git_info
+from experiments.src.common import encode_adata, save_git_info
 from experiments.src.data import prepare_celltype_batch_data
-from experiments.src.training import train_celltype_batch_vae as train_vae
+from experiments.src.training import train_celltype_batch_vae
 
 log = logging.getLogger(__name__)
 
@@ -408,10 +408,14 @@ def main(cfg: DictConfig) -> None:
     adata, ct_le, n_celltypes, batch_le, n_batches = prepare_data(cfg)
 
     log.info("[2/5] Training VAE...")
-    vae = train_vae(adata, n_celltypes, n_batches, cfg)
+    vae = train_celltype_batch_vae(adata, n_celltypes, n_batches, cfg)
 
     log.info("[3/5] Encoding latent representations...")
-    z_all = encode_all(vae, adata, cfg.analysis.latent_representation)
+    z_all = encode_adata(
+        vae,
+        adata,
+        latent_representation=cfg.analysis.latent_representation,
+    )
     subspace_slice = get_subspace_slice(vae, cfg)
     z_sub = z_all[:, subspace_slice]
     log.info(f"  Analysis subspace={cfg.analysis.subspace} dim={z_sub.shape[1]}")

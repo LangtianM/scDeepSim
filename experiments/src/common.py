@@ -111,21 +111,6 @@ def encode_adata(
     )
 
 
-def encode_all(
-    vae: torch.nn.Module,
-    adata: Any,
-    latent_representation: str = "sample",
-    batch_size: int | None = None,
-) -> np.ndarray:
-    """Compatibility alias for scripts that encode every cell."""
-    return encode_adata(
-        vae,
-        adata,
-        batch_size=batch_size,
-        latent_representation=latent_representation,
-    )
-
-
 def decode_latents(
     vae: torch.nn.Module,
     latents: np.ndarray,

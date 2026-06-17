@@ -43,8 +43,9 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 from sklearn.preprocessing import LabelEncoder
 
-from experiments.src.common import as_dense, save_git_info
-from experiments.src.trajectory import encode_all, load_pancreas, train_vae
+from experiments.src.common import as_dense, encode_adata, save_git_info
+from experiments.src.data import load_pancreas
+from experiments.src.training import train_celltype_vae
 from scdeepsim.control import trajectory_ot_interpolate
 from experiments.src.batch_metrics import batch_asw, ilisi
 
@@ -132,11 +133,11 @@ def main(cfg: DictConfig) -> None:
 
     # -- 2. train VAE --
     log.info("[2/5] Training semi-supervised VAE...")
-    vae = train_vae(adata, n_celltypes, cfg)
+    vae = train_celltype_vae(adata, n_celltypes, cfg)
 
     # -- 3. encode + pick endpoints --
     log.info("[3/5] Encoding all cells + selecting endpoint populations...")
-    z_all = encode_all(vae, adata)
+    z_all = encode_adata(vae, adata)
     log.info(f"Latent shape: {z_all.shape}")
 
     start_mask = celltype_labels == start_state

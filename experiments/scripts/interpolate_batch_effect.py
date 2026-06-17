@@ -42,11 +42,11 @@ from experiments.src.batch_control import apply_direction, compute_batch_directi
 from experiments.src.common import (
     as_dense,
     decode_latents,
-    encode_all,
+    encode_adata,
     save_git_info,
 )
 from experiments.src.data import prepare_celltype_batch_data
-from experiments.src.training import train_celltype_batch_vae as train_vae
+from experiments.src.training import train_celltype_batch_vae
 from scdeepsim.plot import compare_umap
 
 log = logging.getLogger(__name__)
@@ -247,11 +247,11 @@ def main(cfg: DictConfig) -> None:
 
     # -- 2. train VAE --
     log.info("[2/5] Training VAE...")
-    vae = train_vae(adata, n_celltypes, n_batches, cfg)
+    vae = train_celltype_batch_vae(adata, n_celltypes, n_batches, cfg)
 
     # -- 3. encode + direction --
     log.info("[3/5] Encoding data and computing batch direction...")
-    z_all = encode_all(vae, adata)
+    z_all = encode_adata(vae, adata)
     batch_slice = vae._sup_slices["batch"]
     log.info(f"  Batch subspace: dims {batch_slice.start}:{batch_slice.stop}")
 

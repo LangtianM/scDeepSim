@@ -107,8 +107,3 @@ def apply_direction(z, direction_info, alpha, batch_slice):
         alpha,
         batch_slice,
     )
-
-
-def apply_global_direction(z, direction_info, alpha, batch_slice):
-    """Compatibility alias for held-out batch validation."""
-    return apply_direction(z, direction_info, alpha, batch_slice)

@@ -38,7 +38,7 @@ from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelEncoder
 
 from experiments.src.batch_control import (
-    apply_global_direction,
+    apply_direction,
     compute_global_direction,
 )
 from experiments.src.batch_metrics import batch_asw, ilisi
@@ -234,12 +234,6 @@ def prepare_data(cfg):
     log.info("Reference batch: %s", reference_batch)
 
     return adata, heldout_batch, reference_batch, batch_counts, splits
-
-
-def train_vae(adata_train, cfg):
-    """Train the batch-supervised VAE used to define the batch subspace."""
-    n_batches = adata_train.obs["batch"].nunique()
-    return train_batch_vae(adata_train, n_batches, cfg)
 
 
 def train_diffusion(z_train, train_obs, cfg):
@@ -475,7 +469,11 @@ def main(cfg: DictConfig) -> None:
     adata_eval = _subset_by_indices(adata, splits["heldout_eval"])
 
     log.info("VAE/diffusion training cells: %d", adata_train.n_obs)
-    vae = train_vae(adata_train, cfg)
+    vae = train_batch_vae(
+        adata_train,
+        adata_train.obs["batch"].nunique(),
+        cfg,
+    )
 
     z_train = encode_adata(vae, adata_train, batch_size=cfg.generation.encode_batch_size)
     z_calib = encode_adata(vae, adata_calib, batch_size=cfg.generation.encode_batch_size)
@@ -525,7 +523,7 @@ def main(cfg: DictConfig) -> None:
             "Use 'diffusion' or 'vae_only'."
         )
 
-    z_generated_target = apply_global_direction(
+    z_generated_target = apply_direction(
         z_generated_ref,
         direction_info,
         cfg.generation.alpha,

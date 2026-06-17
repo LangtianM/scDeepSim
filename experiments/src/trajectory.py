@@ -4,14 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from experiments.src.common import encode_all
-from experiments.src.data import fit_label_encoder, load_pancreas
-from experiments.src.training import train_celltype_vae
-
-
-def train_vae(adata, n_celltypes, cfg):
-    """Train the shared celltype-supervised VAE used by trajectory scripts."""
-    return train_celltype_vae(adata, n_celltypes, cfg)
+from experiments.src.data import fit_label_encoder
 
 
 def celltype_labels_and_encoder(adata):

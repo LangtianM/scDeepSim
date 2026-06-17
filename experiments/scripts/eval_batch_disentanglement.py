@@ -42,7 +42,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
 from scdeepsim.quality import rf_discriminability
-from experiments.src.common import encode_all, save_git_info
+from experiments.src.common import encode_adata, save_git_info
 from experiments.src.data import prepare_celltype_batch_data
 from experiments.src.training import train_celltype_batch_vae
 
@@ -71,27 +71,12 @@ def prepare_data(cfg):
 
 
 # ---------------------------------------------------------------------------
-# VAE training
-# ---------------------------------------------------------------------------
-
-def train_vae(adata, n_celltypes, n_batches, batch_weight, cfg):
-    """Train a VAE with fixed celltype weight and variable batch weight."""
-    return train_celltype_batch_vae(
-        adata,
-        n_celltypes,
-        n_batches,
-        cfg,
-        batch_weight=batch_weight,
-    )
-
-
-# ---------------------------------------------------------------------------
 # Latent extraction
 # ---------------------------------------------------------------------------
 
 def encode_data(vae, adata):
     """Encode all cells, return full z and the batch/celltype/other slices."""
-    z = encode_all(vae, adata)
+    z = encode_adata(vae, adata)
     ct_slice = vae._sup_slices.get("celltype", slice(0, 0))
     batch_slice = vae._sup_slices.get("batch", slice(0, 0))
 
@@ -211,7 +196,13 @@ def run_single_weight(adata, n_celltypes, n_batches, batch_weight, cfg):
     log.info("=" * 70)
 
     log.info("[1/4] Training VAE...")
-    vae = train_vae(adata, n_celltypes, n_batches, batch_weight, cfg)
+    vae = train_celltype_batch_vae(
+        adata,
+        n_celltypes,
+        n_batches,
+        cfg,
+        batch_weight=batch_weight,
+    )
 
     log.info("[2/4] Encoding data...")
     latents = encode_data(vae, adata)

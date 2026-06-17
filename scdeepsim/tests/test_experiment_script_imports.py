@@ -35,7 +35,7 @@ def test_experiment_utils_facade_exports_moved_helpers():
     for name in [
         "as_dense",
         "decode_latents",
-        "encode_all",
+        "encode_adata",
         "load_and_preprocess",
         "load_pancreas",
         "save_git_info",

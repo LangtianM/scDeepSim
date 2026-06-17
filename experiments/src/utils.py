@@ -1,10 +1,9 @@
-"""Compatibility facade for shared experiment utilities."""
+"""Shared experiment utility re-exports."""
 
 import logging
 
 from experiments.src.batch_control import (
     apply_direction,
-    apply_global_direction,
     compute_batch_direction,
     compute_global_direction,
 )
@@ -12,7 +11,6 @@ from experiments.src.common import (
     as_dense,
     decode_latents,
     encode_adata,
-    encode_all,
     encode_matrix,
     save_git_info,
     set_random_seed,
