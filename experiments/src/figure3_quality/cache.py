@@ -110,7 +110,7 @@ def method_sample_config(method_key: str, cfg: DictConfig) -> dict[str, Any]:
             "expected_output_path": path_fingerprint(expected_path),
             "source": source_meta,
         }
-    if method_key == "scvi_prior":
+    if method_key in {"scvi_prior", "scvi_posterior"}:
         return {"scvi": _section(cfg, "scvi")}
     if method_key == "scdesign3":
         return {"scdesign3": _section(cfg, "scdesign3")}

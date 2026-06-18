@@ -14,9 +14,10 @@ cache:
   force_retrain: false
   force_resimulate: false
 
+# default: 10000 cells and 2500 genes after split. The same setting with scdiffusion-x paper
 data:
-  n_cells: 20000
-  n_genes: 5000
+  n_cells: 20000 
+  n_genes: 2500
   min_genes: 10
   min_cells: 2
   celltype_key: celltype
@@ -24,7 +25,7 @@ data:
 
 # Canonical method keys only. scDiffusion can use a precomputed sample_path,
 # a custom command, or the built-in end-to-end external runner below.
-methods: [scdeepsim, scdiffusion, scvi_prior, scdesign3, zinbwave]
+methods: [scdeepsim, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]
 
 vae:
   latent_dim: 128

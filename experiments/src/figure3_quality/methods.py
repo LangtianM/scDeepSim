@@ -722,6 +722,32 @@ def sample_from_scvi_prior(
     return counts, label_names
 
 
+def sample_from_scvi_posterior(
+    model: Any,
+    n_samples: int,
+    data: ad.AnnData,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Sample from the scVI posterior predictive API on training cells."""
+    obs_indices = rng.choice(data.n_obs, n_samples, replace=True)
+    counts = model.posterior_predictive_sample(
+        adata=data,
+        indices=obs_indices.tolist(),
+        n_samples=1,
+        silent=True,
+    )
+    counts = as_dense(counts)
+    if counts.ndim == 3:
+        if counts.shape[2] != 1:
+            raise ValueError(
+                "Expected one posterior predictive draw per cell, got "
+                f"shape {counts.shape}."
+            )
+        counts = counts[:, :, 0]
+    label_names = data.obs["celltype"].astype(str).to_numpy()[obs_indices]
+    return counts, label_names
+
+
 def build_scvi_cache_paths(adata_raw: ad.AnnData, cfg: DictConfig) -> dict[str, Any]:
     """Build stable cache paths for the scVI baseline model directory."""
     payload = {
@@ -740,9 +766,12 @@ def build_scvi_cache_paths(adata_raw: ad.AnnData, cfg: DictConfig) -> dict[str, 
     }
 
 
-def run_scvi_prior(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
-    """Train scVI and sample from its prior using real library sizes."""
-    start = time.time()
+def prepare_scvi_model(
+    adata_raw: ad.AnnData,
+    cfg: DictConfig,
+    output_dir: Path,
+) -> tuple[Any, ad.AnnData, dict[str, Any]]:
+    """Train or load the shared scVI model used by scVI baselines."""
     try:
         import scvi  # type: ignore
     except ImportError as exc:
@@ -756,51 +785,141 @@ def run_scvi_prior(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> 
         adata_scvi,
         categorical_covariate_keys=covariates,
     )
-    model = scvi.model.SCVI(
-        adata_scvi,
-        n_latent=int(cfg.scvi.n_latent),
-        n_hidden=int(cfg.scvi.n_hidden),
-        n_layers=int(cfg.scvi.n_layers),
-        gene_likelihood=str(cfg.scvi.gene_likelihood),
-    )
     cache_paths = build_scvi_cache_paths(adata_raw, cfg)
     use_cache = cache_enabled(cfg, "reuse_scvi") and not force_retrain(cfg)
     cache_hit = use_cache and Path(cache_paths["model_dir"]).exists()
     if cache_hit:
-        log.info("Loading cached scVI prior model: %s", cache_paths["model_dir"])
+        log.info("Loading cached scVI model: %s", cache_paths["model_dir"])
         model = scvi.model.SCVI.load(str(cache_paths["model_dir"]), adata=adata_scvi)
         copy_tree_to_cache(Path(cache_paths["model_dir"]), model_dir)
     else:
+        model = scvi.model.SCVI(
+            adata_scvi,
+            n_latent=int(cfg.scvi.n_latent),
+            n_hidden=int(cfg.scvi.n_hidden),
+            n_layers=int(cfg.scvi.n_layers),
+            gene_likelihood=str(cfg.scvi.gene_likelihood),
+        )
         model.train(max_epochs=int(cfg.scvi.max_epochs))
         model.save(str(model_dir), overwrite=True)
         if cache_enabled(cfg, "reuse_scvi"):
             copy_tree_to_cache(model_dir, Path(cache_paths["model_dir"]))
 
+    metadata = {
+        "model_dir": str(model_dir),
+        "max_epochs": int(cfg.scvi.max_epochs),
+        "n_latent": int(cfg.scvi.n_latent),
+        "n_hidden": int(cfg.scvi.n_hidden),
+        "n_layers": int(cfg.scvi.n_layers),
+        "gene_likelihood": str(cfg.scvi.gene_likelihood),
+        "use_celltype_covariate": bool(cfg.scvi.use_celltype_covariate),
+        "cache": {
+            "enabled": cache_enabled(cfg, "reuse_scvi"),
+            "force_retrain": force_retrain(cfg),
+            "hit": bool(cache_hit),
+            "key": str(cache_paths["key"]),
+            "model_dir": str(cache_paths["model_dir"]),
+        },
+    }
+    return model, adata_scvi, metadata
+
+
+def run_prepared_scvi_baseline(
+    method_key: str,
+    model: Any,
+    adata_scvi: ad.AnnData,
+    cfg: DictConfig,
+    model_metadata: dict[str, Any],
+    *,
+    model_runtime_seconds: float = 0.0,
+    shared_model_methods: list[str] | None = None,
+) -> MethodOutput:
+    """Sample one scVI baseline from an already prepared shared model."""
+    start = time.time()
     rng = np.random.default_rng(int(cfg.seed))
-    counts, labels = sample_from_scvi_prior(
-        model, get_eval_n_samples(cfg, adata_raw.n_obs), adata_scvi, rng
-    )
+    n_samples = get_eval_n_samples(cfg, adata_scvi.n_obs)
+    if method_key == "scvi_prior":
+        counts, labels = sample_from_scvi_prior(model, n_samples, adata_scvi, rng)
+        sampler = "prior"
+        sampler_metadata: dict[str, Any] = {}
+        reference_dependency = (
+            "borrows latent library sizes and covariates from real training cells"
+        )
+    elif method_key == "scvi_posterior":
+        counts, labels = sample_from_scvi_posterior(model, n_samples, adata_scvi, rng)
+        sampler = "posterior_predictive_sample"
+        sampler_metadata = {"posterior_predictive_n_samples": 1}
+        reference_dependency = (
+            "conditions on posterior predictive samples from real training cells"
+        )
+    else:
+        raise ValueError(f"Unknown scVI baseline method: {method_key}")
+
     x_sim = normalize_log1p_counts(counts)
+    sample_runtime = time.time() - start
     return MethodOutput(
-        key="scvi_prior",
+        key=method_key,
         x=x_sim,
         labels=labels,
-        runtime_seconds=time.time() - start,
+        runtime_seconds=float(model_runtime_seconds + sample_runtime),
         metadata={
-            "model_dir": str(model_dir),
-            "max_epochs": int(cfg.scvi.max_epochs),
-            "n_latent": int(cfg.scvi.n_latent),
-            "reference_dependency": "borrows latent library sizes and covariates from real cells",
-            "cache": {
-                "enabled": cache_enabled(cfg, "reuse_scvi"),
-                "force_retrain": force_retrain(cfg),
-                "hit": bool(cache_hit),
-                "key": str(cache_paths["key"]),
-                "model_dir": str(cache_paths["model_dir"]),
-            },
+            **model_metadata,
+            "sampler": sampler,
+            "n_samples": int(n_samples),
+            **sampler_metadata,
+            "reference_dependency": reference_dependency,
+            "model_prep_runtime_seconds": float(model_runtime_seconds),
+            "sample_runtime_seconds": float(sample_runtime),
+            "shared_model_methods": shared_model_methods or [method_key],
         },
         reference_dependent=True,
     )
+
+
+def run_scvi_baselines(
+    method_keys: list[str],
+    adata_raw: ad.AnnData,
+    cfg: DictConfig,
+    output_dir: Path,
+) -> list[MethodOutput]:
+    """Run requested scVI baselines from one shared trained/loaded model."""
+    method_keys = [str(method_key) for method_key in method_keys]
+    unknown = sorted(set(method_keys) - {"scvi_prior", "scvi_posterior"})
+    if unknown:
+        raise ValueError(f"Unknown scVI baseline method(s): {unknown}")
+    if not method_keys:
+        return []
+
+    model_start = time.time()
+    model, adata_scvi, model_metadata = prepare_scvi_model(adata_raw, cfg, output_dir)
+    model_runtime = time.time() - model_start
+    model_runtime_share = model_runtime / len(method_keys)
+    return [
+        run_prepared_scvi_baseline(
+            method_key,
+            model,
+            adata_scvi,
+            cfg,
+            model_metadata,
+            model_runtime_seconds=model_runtime_share,
+            shared_model_methods=method_keys,
+        )
+        for method_key in method_keys
+    ]
+
+
+def run_scvi_prior(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
+    """Train or load scVI and sample from its prior using real library sizes."""
+    return run_scvi_baselines(["scvi_prior"], adata_raw, cfg, output_dir)[0]
+
+
+def run_scvi_posterior(
+    adata_raw: ad.AnnData,
+    cfg: DictConfig,
+    output_dir: Path,
+) -> MethodOutput:
+    """Train or load scVI and sample via posterior_predictive_sample."""
+    return run_scvi_baselines(["scvi_posterior"], adata_raw, cfg, output_dir)[0]
 
 
 def git_metadata_for_path(path: Path | None) -> dict[str, Any]:
@@ -1433,6 +1552,8 @@ def run_single_baseline(
         return run_zinbwave(adata_raw, cfg, output_dir)
     if method_key == "scvi_prior":
         return run_scvi_prior(adata_raw, cfg, output_dir)
+    if method_key == "scvi_posterior":
+        return run_scvi_posterior(adata_raw, cfg, output_dir)
     if method_key == "scdiffusion":
         return run_scdiffusion(adata_raw, cfg, output_dir)
     raise ValueError(f"Unknown baseline method: {method_key}")

@@ -31,7 +31,7 @@ from .cache import (
 from .common import MethodOutput, as_dense, failed_method_output, json_default
 from .data import load_and_preprocess, train_test_split_adata
 from .metrics import build_metrics_table
-from .methods import run_scdeepsim, run_single_baseline
+from .methods import run_scdeepsim, run_scvi_baselines, run_single_baseline
 from .plots import (
     compute_umap_embeddings,
     plot_figure3,
@@ -43,10 +43,19 @@ from .plots import (
 
 log = logging.getLogger(__name__)
 
+SCVI_METHOD_KEYS = {"scvi_prior", "scvi_posterior"}
+
 
 def validate_methods(methods: list[str]) -> None:
     """Validate configured method keys before any expensive work starts."""
-    valid = {"scdeepsim", "scdiffusion", "scvi_prior", "scdesign3", "zinbwave"}
+    valid = {
+        "scdeepsim",
+        "scdiffusion",
+        "scvi_prior",
+        "scvi_posterior",
+        "scdesign3",
+        "zinbwave",
+    }
     unknown = sorted(set(methods) - valid)
     if unknown:
         raise ValueError(
@@ -207,6 +216,24 @@ def run_method_with_sample_cache(
     )
 
 
+def load_available_sample_cache_outputs(
+    method_keys: list[str],
+    adata_for_cache: Any,
+    cfg: DictConfig,
+) -> tuple[dict[str, MethodOutput], list[str]]:
+    """Load available one-output sample caches and return missing method keys."""
+    outputs_by_key: dict[str, MethodOutput] = {}
+    missing: list[str] = []
+    for method_key in method_keys:
+        cached = load_method_outputs_from_sample_cache(method_key, adata_for_cache, cfg)
+        if cached is None:
+            missing.append(method_key)
+            continue
+        log.info("Loaded %s simulated samples from cache.", method_key)
+        outputs_by_key[method_key] = cached[0]
+    return outputs_by_key, missing
+
+
 def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
     """Run the full Figure 3 experiment into a Hydra output directory.
 
@@ -285,8 +312,56 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
                 raise
             outputs.append(failed_method_output("scdeepsim", exc))
 
+    scvi_outputs_by_key: dict[str, MethodOutput] = {}
+    scvi_methods = [method for method in methods if method in SCVI_METHOD_KEYS]
+    if scvi_methods:
+        scvi_outputs_by_key, missing_scvi_methods = load_available_sample_cache_outputs(
+            scvi_methods,
+            adata_train_raw,
+            cfg,
+        )
+        if missing_scvi_methods:
+            start = time.time()
+            try:
+                log.info(
+                    "Running shared scVI baseline(s): %s",
+                    missing_scvi_methods,
+                )
+                generated_scvi_outputs = run_scvi_baselines(
+                    missing_scvi_methods,
+                    adata_train_raw,
+                    cfg,
+                    output_dir,
+                )
+                generated_scvi_outputs = save_method_outputs_to_sample_cache(
+                    generated_scvi_outputs,
+                    adata_train_raw,
+                    cfg,
+                    enabled=sample_cache_enabled(cfg),
+                )
+                scvi_outputs_by_key.update(
+                    {output.key: output for output in generated_scvi_outputs}
+                )
+            except Exception as exc:
+                runtime = time.time() - start
+                if not bool(cfg.eval.continue_on_baseline_failure):
+                    raise
+                log.exception(
+                    "scVI baseline(s) %s failed; recording failure and continuing.",
+                    missing_scvi_methods,
+                )
+                for method in missing_scvi_methods:
+                    scvi_outputs_by_key[method] = failed_method_output(
+                        method,
+                        exc,
+                        runtime_seconds=runtime,
+                    )
+
     for method in methods:
         if method == "scdeepsim":
+            continue
+        if method in SCVI_METHOD_KEYS:
+            outputs.append(scvi_outputs_by_key[method])
             continue
         start = time.time()
         try:

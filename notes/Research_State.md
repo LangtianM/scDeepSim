@@ -552,11 +552,11 @@ TI Methods Benchmarking Across Noise Scale $\sigma$.
 
 **Medium Priority**
 
-- [ ] Held-out batch validation experiment
+- [x] Held-out batch validation experiment
 
 - [x] Add scDesign3 to genuine simulation benchmark
 
-- [ ] Reframe scVI comparison (reconstruction quality only)
+- [x] Reframe scVI comparison (reconstruction quality only)
 
 - [ ] Synthetic Null?
 

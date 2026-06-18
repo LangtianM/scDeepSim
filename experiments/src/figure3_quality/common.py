@@ -35,6 +35,7 @@ METHOD_DISPLAY_NAMES = {
     "scdeepsim": "scDeepSim",
     "scdiffusion": "scDiffusion",
     "scvi_prior": "scVI prior",
+    "scvi_posterior": "scVI posterior",
     "scdesign3": "scDesign3",
     "zinbwave": "ZINB-WaVE",
     "vae_reconstruction": "VAE reconstruction",
@@ -46,6 +47,7 @@ MAIN_METHOD_ORDER = [
     "scdeepsim",
     "scdiffusion",
     "scvi_prior",
+    "scvi_posterior",
     "scdesign3",
     "zinbwave",
 ]
@@ -55,6 +57,7 @@ METHOD_COLORS = {
     "scdeepsim": "#0072b2",
     "scdiffusion": "#cc79a7",
     "scvi_prior": "#009e73",
+    "scvi_posterior": "#56b4e9",
     "scdesign3": "#d55e00",
     "zinbwave": "#e69f00",
     "vae_reconstruction": "#6a3d9a",
@@ -63,6 +66,7 @@ METHOD_COLORS = {
 
 REFERENCE_DEPENDENT = {
     "scvi_prior": True,
+    "scvi_posterior": True,
     "scdiffusion": False,
     "scdeepsim": False,
     "scdesign3": False,
@@ -112,7 +116,11 @@ class MethodOutput:
 
 def as_dense(x: Any) -> np.ndarray:
     """Return a dense NumPy array, preserving dense inputs when possible."""
-    return x.toarray() if sp.issparse(x) else np.asarray(x)
+    if sp.issparse(x):
+        return x.toarray()
+    if hasattr(x, "todense") and not isinstance(x, np.ndarray):
+        return np.asarray(x.todense())
+    return np.asarray(x)
 
 
 def json_default(value: Any) -> Any:
