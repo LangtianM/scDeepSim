@@ -63,6 +63,7 @@ if (ncol(counts) != nrow(metadata)) {
 if (use_celltype && !celltype_key %in% colnames(metadata)) {
   stop(sprintf("celltype key '%s' not found in metadata", celltype_key))
 }
+all_genes <- genes
 
 cell_count_sums <- Matrix::colSums(counts)
 keep_cells <- cell_count_sums > 0
@@ -134,7 +135,14 @@ model <- zinbwave::zinbFit(
 )
 
 sim <- zinbwave::zinbSim(model, seed = seed)
-sim_counts <- sim$counts
+sim_counts <- Matrix::Matrix(sim$counts, sparse = TRUE)
+if (nrow(sim_counts) != nrow(counts)) {
+  stop(sprintf(
+    "ZINB-WaVE returned %d fitted genes, expected %d",
+    nrow(sim_counts),
+    nrow(counts)
+  ))
+}
 if (is.null(rownames(sim_counts))) {
   rownames(sim_counts) <- rownames(counts)
 }
@@ -142,7 +150,20 @@ if (is.null(colnames(sim_counts))) {
   colnames(sim_counts) <- paste0("zinbwave_cell_", seq_len(ncol(sim_counts)))
 }
 
-Matrix::writeMM(Matrix::Matrix(sim_counts, sparse = TRUE), output_counts_path)
+if (!all(keep_genes)) {
+  full_sim_counts <- Matrix::Matrix(
+    0,
+    nrow = nrow(all_genes),
+    ncol = ncol(sim_counts),
+    sparse = TRUE
+  )
+  full_sim_counts[keep_genes, ] <- sim_counts
+  rownames(full_sim_counts) <- make.unique(as.character(all_genes$gene_id))
+  colnames(full_sim_counts) <- colnames(sim_counts)
+  sim_counts <- full_sim_counts
+}
+
+Matrix::writeMM(sim_counts, output_counts_path)
 
 metadata_out <- metadata
 metadata_out$cell_id <- colnames(sim_counts)
