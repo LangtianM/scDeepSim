@@ -28,7 +28,13 @@ from .cache import (
     sample_cache_enabled,
     save_sample_cache,
 )
-from .common import MethodOutput, as_dense, failed_method_output, json_default
+from .common import (
+    MethodOutput,
+    as_dense,
+    failed_method_output,
+    include_vae_reconstruction_in_figures,
+    json_default,
+)
 from .data import load_and_preprocess, train_test_split_adata
 from .metrics import build_metrics_table
 from .methods import run_scdeepsim, run_scvi_baselines, run_single_baseline
@@ -124,6 +130,18 @@ def expected_output_keys(method_key: str, cfg: DictConfig) -> list[str]:
     return [method_key]
 
 
+def apply_configured_output_flags(
+    outputs: list[MethodOutput],
+    cfg: DictConfig,
+) -> list[MethodOutput]:
+    """Apply run-level display flags that do not affect cached sample matrices."""
+    include_vae_reconstruction = include_vae_reconstruction_in_figures(cfg)
+    for output in outputs:
+        if output.key == "vae_reconstruction":
+            output.include_in_main = include_vae_reconstruction
+    return outputs
+
+
 def load_method_outputs_from_sample_cache(
     method_key: str,
     adata_for_cache: Any,
@@ -150,7 +168,7 @@ def load_method_outputs_from_sample_cache(
         if cached is None:
             return None
         outputs.append(cached)
-    return outputs
+    return apply_configured_output_flags(outputs, cfg)
 
 
 def save_method_outputs_to_sample_cache(
@@ -162,7 +180,7 @@ def save_method_outputs_to_sample_cache(
 ) -> list[MethodOutput]:
     """Save successful outputs and attach cache metadata to returned records."""
     annotated: list[MethodOutput] = []
-    for output in outputs:
+    for output in apply_configured_output_flags(outputs, cfg):
         paths = build_sample_cache_paths(output.key, adata_for_cache, cfg)
         if enabled:
             try:

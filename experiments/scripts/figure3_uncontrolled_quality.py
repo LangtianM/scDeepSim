@@ -5,6 +5,8 @@ Usage:
     conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py \
         data.n_cells=256 data.n_genes=64 vae.epochs=1 diffusion.epochs=1 \
         diffusion.sampling_steps=10 methods=[scdeepsim]
+    conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py \
+        methods=[scdeepsim] eval.include_vae_reconstruction_in_figures=true
 """
 
 from __future__ import annotations

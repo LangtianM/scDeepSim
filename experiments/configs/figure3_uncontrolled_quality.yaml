@@ -39,7 +39,7 @@ vae:
   sup_head_hidden: 64
   supervision_weight: 5.0
   supervised_latent_dims: 32
-  epochs: 100
+  epochs: 200
   batch_size: 256
   latent_statistic: posterior_sample
   lr: 1.0e-3
@@ -165,7 +165,9 @@ eval:
   rf_max_depth: null
   pca_components: null
   max_discriminability_cells: null
+  # compute_* saves/scores the diagnostic; include_* also shows it in figures.
   compute_vae_reconstruction: true
+  include_vae_reconstruction_in_figures: false
   save_intermediates: true
   umap_n_neighbors: 15
   umap_min_dist: 0.1

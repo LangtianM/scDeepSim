@@ -42,6 +42,7 @@ from .common import (
     copy_tree_to_cache,
     force_retrain,
     get_eval_n_samples,
+    include_vae_reconstruction_in_figures,
     preferred_torch_device,
     require_conda,
     require_executable,
@@ -284,8 +285,8 @@ def run_scdeepsim(
     The VAE and diffusion checkpoints are reused when their cache keys match
     and ``cfg.cache.reuse_scdeepsim`` is enabled. When
     ``cfg.eval.compute_vae_reconstruction`` is true, an additional
-    ``vae_reconstruction`` diagnostic output is returned but excluded from the
-    main figure panels.
+    ``vae_reconstruction`` diagnostic output is returned. Its figure inclusion
+    is controlled by ``cfg.eval.include_vae_reconstruction_in_figures``.
     """
     start = time.time()
     eval_adata = adata_eval_norm if adata_eval_norm is not None else adata_norm
@@ -391,7 +392,7 @@ def run_scdeepsim(
                     "diagnostic": "posterior encode/decode reconstruction",
                     "reference": "eval",
                 },
-                include_in_main=False,
+                include_in_main=include_vae_reconstruction_in_figures(cfg),
                 reference_dependent=True,
             )
         )

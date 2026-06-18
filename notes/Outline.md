@@ -61,7 +61,9 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Interpretation: VAE+Diffusion gives more realistic data than baselines.
 - Status: Available. Current result uses only 5000 genes and 1000 cells considering the limited scalability of zinbwave and scDesign3. We can try designing a more comprehensive and fair comparison so that the pros and cons of different methods are more clear.
 
-![Sim Quality](../experiments/outputs/2026-06-07/00-54-40_figure3_uncontrolled_quality/results/figure3_uncontrolled_quality.png)
+![Sim Quality 2](../experiments/outputs/2026-06-18/13-38-56_figure3_uncontrolled_quality/results/figure3_uncontrolled_quality.png)
+
+*Experiment settings: Embryo atlas HVG data with 20,000 selected cells and 2,500 genes, split 50/50 into 10,000 train and 10,000 evaluation cells with stratification by cell type.*
 
 *UMAP and summary metrics comparing real cells with baseline simulators. More realistic simulations have lower real-vs-simulated RF AUC and gene-wise statistics closer to the diagonal.*
 

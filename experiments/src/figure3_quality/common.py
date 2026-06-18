@@ -45,6 +45,7 @@ METHOD_DISPLAY_NAMES = {
 MAIN_METHOD_ORDER = [
     "real",
     "scdeepsim",
+    "vae_reconstruction",
     "scdiffusion",
     "scvi_prior",
     "scvi_posterior",
@@ -248,6 +249,12 @@ def method_order(method_keys: list[str], include_real: bool = True) -> list[str]
             ordered.append(key)
     ordered.extend(key for key in method_keys if key not in ordered)
     return ordered
+
+
+def include_vae_reconstruction_in_figures(cfg: DictConfig) -> bool:
+    """Return whether VAE reconstruction diagnostics should appear in figures."""
+    eval_cfg = cfg.get("eval", {})
+    return bool(eval_cfg.get("include_vae_reconstruction_in_figures", False))
 
 
 def failed_method_output(
