@@ -30,12 +30,14 @@ from .cache import (
 )
 from .common import (
     MethodOutput,
+    REFERENCE_DEPENDENT,
     as_dense,
     failed_method_output,
     include_vae_reconstruction_in_figures,
     json_default,
+    resolve_path,
 )
-from .data import load_and_preprocess, train_test_split_adata
+from .data import load_and_preprocess, load_sample_matrix, train_test_split_adata
 from .metrics import build_metrics_table
 from .methods import run_scdeepsim, run_scvi_baselines, run_single_baseline
 from .plots import (
@@ -49,6 +51,7 @@ from .plots import (
 
 log = logging.getLogger(__name__)
 
+SCDEEPSIM_METHOD_KEYS = {"scdeepsim", "vae_reconstruction"}
 SCVI_METHOD_KEYS = {"scvi_prior", "scvi_posterior"}
 
 
@@ -56,6 +59,7 @@ def validate_methods(methods: list[str]) -> None:
     """Validate configured method keys before any expensive work starts."""
     valid = {
         "scdeepsim",
+        "vae_reconstruction",
         "scdiffusion",
         "scvi_prior",
         "scvi_posterior",
@@ -122,23 +126,102 @@ def save_outputs(
 
 def expected_output_keys(method_key: str, cfg: DictConfig) -> list[str]:
     """Return all cacheable output keys produced by a method runner."""
-    if method_key == "scdeepsim":
-        keys = ["scdeepsim"]
-        if bool(cfg.eval.compute_vae_reconstruction):
-            keys.append("vae_reconstruction")
-        return keys
     return [method_key]
+
+
+def explicit_sample_source(
+    method_key: str,
+    cfg: DictConfig,
+) -> tuple[Path, str] | None:
+    """Return a configured sample path and archive key for one method."""
+    cache_cfg = cfg.get("cache", {})
+    sample_paths = cache_cfg.get("sample_paths", {}) if cache_cfg else {}
+    configured = sample_paths.get(method_key, None) if sample_paths else None
+    if configured is None and cache_cfg:
+        configured = cache_cfg.get("sample_archive", None)
+    path = resolve_path(configured)
+    if path is None:
+        return None
+    array_key = method_key
+    value = str(configured)
+    if "::" in value:
+        path_value, archive_key = value.rsplit("::", 1)
+        path = resolve_path(path_value)
+        array_key = archive_key or method_key
+    if path is None:
+        return None
+    return path, array_key
+
+
+def load_explicit_sample_output(
+    method_key: str,
+    cfg: DictConfig,
+) -> MethodOutput | None:
+    """Load one method output from a configured sample file or NPZ archive."""
+    source = explicit_sample_source(method_key, cfg)
+    if source is None:
+        return None
+    path, array_key = source
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+    labels = None
+    if path.suffix.lower() == ".npz":
+        with np.load(path) as archive:
+            if array_key not in archive.files:
+                raise ValueError(
+                    f"Sample archive {path} does not contain array {array_key!r}."
+                )
+            x = np.asarray(archive[array_key]).astype(np.float32)
+            label_key = f"{array_key}_labels"
+            if label_key in archive.files:
+                labels = np.asarray(archive[label_key]).astype(str)
+    else:
+        x = load_sample_matrix(path).astype(np.float32)
+
+    return MethodOutput(
+        key=method_key,
+        x=x,
+        labels=labels,
+        runtime_seconds=0.0,
+        metadata={
+            "explicit_sample": {
+                "path": str(path),
+                "array_key": array_key,
+                "output_space": "normalized_log1p",
+            }
+        },
+        reference_dependent=REFERENCE_DEPENDENT.get(method_key, False),
+    )
+
+
+def scdeepsim_output_keys_for_methods(methods: list[str], cfg: DictConfig) -> list[str]:
+    """Return scDeepSim-family outputs requested by methods or legacy flags."""
+    keys = []
+    method_set = set(methods)
+    if "scdeepsim" in method_set:
+        keys.append("scdeepsim")
+    if "vae_reconstruction" in method_set or (
+        "scdeepsim" in method_set and include_vae_reconstruction_in_figures(cfg)
+    ):
+        keys.append("vae_reconstruction")
+    return keys
 
 
 def apply_configured_output_flags(
     outputs: list[MethodOutput],
     cfg: DictConfig,
+    *,
+    explicit_method_keys: set[str] | None = None,
 ) -> list[MethodOutput]:
     """Apply run-level display flags that do not affect cached sample matrices."""
+    explicit_method_keys = explicit_method_keys or set()
     include_vae_reconstruction = include_vae_reconstruction_in_figures(cfg)
     for output in outputs:
         if output.key == "vae_reconstruction":
-            output.include_in_main = include_vae_reconstruction
+            output.include_in_main = (
+                output.key in explicit_method_keys or include_vae_reconstruction
+            )
     return outputs
 
 
@@ -148,12 +231,18 @@ def load_method_outputs_from_sample_cache(
     cfg: DictConfig,
     *,
     output_keys: list[str] | None = None,
+    explicit_method_keys: set[str] | None = None,
 ) -> list[MethodOutput] | None:
     """Return cached outputs only when every expected output key is available."""
-    if not sample_cache_enabled(cfg):
-        return None
     outputs: list[MethodOutput] = []
+    use_sample_cache = sample_cache_enabled(cfg)
     for output_key in output_keys or expected_output_keys(method_key, cfg):
+        explicit = load_explicit_sample_output(output_key, cfg)
+        if explicit is not None:
+            outputs.append(explicit)
+            continue
+        if not use_sample_cache:
+            return None
         paths = build_sample_cache_paths(output_key, adata_for_cache, cfg)
         try:
             cached = load_sample_cache(output_key, paths, enabled=True)
@@ -168,7 +257,11 @@ def load_method_outputs_from_sample_cache(
         if cached is None:
             return None
         outputs.append(cached)
-    return apply_configured_output_flags(outputs, cfg)
+    return apply_configured_output_flags(
+        outputs,
+        cfg,
+        explicit_method_keys=explicit_method_keys,
+    )
 
 
 def save_method_outputs_to_sample_cache(
@@ -177,10 +270,15 @@ def save_method_outputs_to_sample_cache(
     cfg: DictConfig,
     *,
     enabled: bool,
+    explicit_method_keys: set[str] | None = None,
 ) -> list[MethodOutput]:
     """Save successful outputs and attach cache metadata to returned records."""
     annotated: list[MethodOutput] = []
-    for output in apply_configured_output_flags(outputs, cfg):
+    for output in apply_configured_output_flags(
+        outputs,
+        cfg,
+        explicit_method_keys=explicit_method_keys,
+    ):
         paths = build_sample_cache_paths(output.key, adata_for_cache, cfg)
         if enabled:
             try:
@@ -205,6 +303,7 @@ def run_method_with_sample_cache(
     cfg: DictConfig,
     *,
     output_keys: list[str] | None = None,
+    explicit_method_keys: set[str] | None = None,
 ) -> tuple[list[MethodOutput], bool]:
     """Run a method unless its successful sample outputs are already cached.
 
@@ -216,9 +315,13 @@ def run_method_with_sample_cache(
         adata_for_cache,
         cfg,
         output_keys=output_keys,
+        explicit_method_keys=explicit_method_keys,
     )
     if cached is not None:
-        log.info("Loaded %s simulated samples from cache.", method_key)
+        log.info(
+            "Loaded %s simulated samples from cache or explicit sample source.",
+            method_key,
+        )
         return cached, True
 
     outputs = runner()
@@ -229,6 +332,7 @@ def run_method_with_sample_cache(
             adata_for_cache,
             cfg,
             enabled=enabled,
+            explicit_method_keys=explicit_method_keys,
         ),
         False,
     )
@@ -238,16 +342,26 @@ def load_available_sample_cache_outputs(
     method_keys: list[str],
     adata_for_cache: Any,
     cfg: DictConfig,
+    *,
+    explicit_method_keys: set[str] | None = None,
 ) -> tuple[dict[str, MethodOutput], list[str]]:
     """Load available one-output sample caches and return missing method keys."""
     outputs_by_key: dict[str, MethodOutput] = {}
     missing: list[str] = []
     for method_key in method_keys:
-        cached = load_method_outputs_from_sample_cache(method_key, adata_for_cache, cfg)
+        cached = load_method_outputs_from_sample_cache(
+            method_key,
+            adata_for_cache,
+            cfg,
+            explicit_method_keys=explicit_method_keys,
+        )
         if cached is None:
             missing.append(method_key)
             continue
-        log.info("Loaded %s simulated samples from cache.", method_key)
+        log.info(
+            "Loaded %s simulated samples from cache or explicit sample source.",
+            method_key,
+        )
         outputs_by_key[method_key] = cached[0]
     return outputs_by_key, missing
 
@@ -270,6 +384,16 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
 
     methods = [str(method) for method in list(cfg.methods)]
     validate_methods(methods)
+    explicit_method_keys = set(methods)
+    output_methods: list[str] = []
+    for method in methods:
+        output_methods.append(method)
+        if (
+            method == "scdeepsim"
+            and "vae_reconstruction" not in explicit_method_keys
+            and include_vae_reconstruction_in_figures(cfg)
+        ):
+            output_methods.append("vae_reconstruction")
     log.info("Figure 3 methods: %s", methods)
     log.info("Output directory: %s", output_dir)
 
@@ -294,41 +418,83 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
     outputs: list[MethodOutput] = []
     scdeepsim_extra: dict[str, Any] = {}
 
-    if "scdeepsim" in methods:
-        try:
-            def run_scdeepsim_outputs() -> list[MethodOutput]:
-                nonlocal scdeepsim_extra
-                scdeepsim_outputs, scdeepsim_extra = run_scdeepsim(
-                    adata_train_norm, cfg, output_dir, adata_eval_norm=adata_eval_norm
-                )
-                if scdeepsim_outputs:
-                    scdeepsim_outputs[0].metadata = {
-                        **scdeepsim_outputs[0].metadata,
-                        "scdeepsim_extra": scdeepsim_extra,
-                    }
-                return scdeepsim_outputs
-
-            scdeepsim_outputs, cache_hit = run_method_with_sample_cache(
-                "scdeepsim",
-                run_scdeepsim_outputs,
+    scdeepsim_outputs_by_key: dict[str, MethodOutput] = {}
+    scdeepsim_output_keys = scdeepsim_output_keys_for_methods(methods, cfg)
+    if scdeepsim_output_keys:
+        scdeepsim_outputs_by_key, missing_scdeepsim_outputs = (
+            load_available_sample_cache_outputs(
+                scdeepsim_output_keys,
                 adata_train_norm,
                 cfg,
-                output_keys=expected_output_keys("scdeepsim", cfg),
+                explicit_method_keys=explicit_method_keys,
             )
-            if cache_hit and scdeepsim_outputs:
-                scdeepsim_extra = scdeepsim_outputs[0].metadata.get(
-                    "scdeepsim_extra",
-                    {
-                        "sample_cache": scdeepsim_outputs[0].metadata.get(
-                            "sample_cache", {}
-                        )
-                    },
+        )
+        if "scdeepsim" in scdeepsim_outputs_by_key:
+            scdeepsim_output = scdeepsim_outputs_by_key["scdeepsim"]
+            scdeepsim_extra = scdeepsim_output.metadata.get(
+                "scdeepsim_extra",
+                {
+                    "sample_cache": scdeepsim_output.metadata.get(
+                        "sample_cache", {}
+                    )
+                },
+            )
+        if missing_scdeepsim_outputs:
+            start = time.time()
+            try:
+                log.info(
+                    "Running shared scDeepSim output(s): %s",
+                    missing_scdeepsim_outputs,
                 )
-            outputs.extend(scdeepsim_outputs)
-        except Exception as exc:
-            if not bool(cfg.eval.continue_on_baseline_failure):
-                raise
-            outputs.append(failed_method_output("scdeepsim", exc))
+                run_cfg = OmegaConf.create(OmegaConf.to_container(cfg, resolve=True))
+                run_cfg.eval.compute_vae_reconstruction = (
+                    "vae_reconstruction" in missing_scdeepsim_outputs
+                )
+                run_cfg.eval.include_vae_reconstruction_in_figures = (
+                    "vae_reconstruction" in explicit_method_keys
+                    or include_vae_reconstruction_in_figures(cfg)
+                )
+                generated_scdeepsim_outputs, scdeepsim_extra = run_scdeepsim(
+                    adata_train_norm,
+                    run_cfg,
+                    output_dir,
+                    adata_eval_norm=adata_eval_norm,
+                )
+                for output in generated_scdeepsim_outputs:
+                    if output.key == "scdeepsim":
+                        output.metadata = {
+                            **output.metadata,
+                            "scdeepsim_extra": scdeepsim_extra,
+                        }
+                generated_scdeepsim_outputs = [
+                    output
+                    for output in generated_scdeepsim_outputs
+                    if output.key in set(missing_scdeepsim_outputs)
+                ]
+                generated_scdeepsim_outputs = save_method_outputs_to_sample_cache(
+                    generated_scdeepsim_outputs,
+                    adata_train_norm,
+                    cfg,
+                    enabled=sample_cache_enabled(cfg),
+                    explicit_method_keys=explicit_method_keys,
+                )
+                scdeepsim_outputs_by_key.update(
+                    {output.key: output for output in generated_scdeepsim_outputs}
+                )
+            except Exception as exc:
+                runtime = time.time() - start
+                if not bool(cfg.eval.continue_on_baseline_failure):
+                    raise
+                log.exception(
+                    "scDeepSim output(s) %s failed; recording failure and continuing.",
+                    missing_scdeepsim_outputs,
+                )
+                for method in missing_scdeepsim_outputs:
+                    scdeepsim_outputs_by_key[method] = failed_method_output(
+                        method,
+                        exc,
+                        runtime_seconds=runtime,
+                    )
 
     scvi_outputs_by_key: dict[str, MethodOutput] = {}
     scvi_methods = [method for method in methods if method in SCVI_METHOD_KEYS]
@@ -356,6 +522,7 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
                     adata_train_raw,
                     cfg,
                     enabled=sample_cache_enabled(cfg),
+                    explicit_method_keys=explicit_method_keys,
                 )
                 scvi_outputs_by_key.update(
                     {output.key: output for output in generated_scvi_outputs}
@@ -375,8 +542,9 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
                         runtime_seconds=runtime,
                     )
 
-    for method in methods:
-        if method == "scdeepsim":
+    for method in output_methods:
+        if method in SCDEEPSIM_METHOD_KEYS:
+            outputs.append(scdeepsim_outputs_by_key[method])
             continue
         if method in SCVI_METHOD_KEYS:
             outputs.append(scvi_outputs_by_key[method])
@@ -393,6 +561,7 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
                 run_baseline_outputs,
                 adata_train_raw,
                 cfg,
+                explicit_method_keys=explicit_method_keys,
             )
             outputs.extend(baseline_outputs)
         except Exception as exc:

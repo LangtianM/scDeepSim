@@ -13,6 +13,30 @@ cache:
   reuse_scvi: true
   force_retrain: false
   force_resimulate: false
+  # Optional normalized-log1p sample source used before hash-keyed sample caches.
+  # This is useful when code/config changes invalidate hash cache keys but an
+  # earlier run already saved compatible samples in results/samples.npz.
+  # For an .npz archive, arrays are read by method key, with optional labels from
+  # "${method_key}_labels"; e.g. scdeepsim uses "scdeepsim" and
+  # "scdeepsim_labels".
+  #
+  # Example:
+  # sample_archive: ${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz
+  #
+  # CLI example:
+  # cache.sample_archive=${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz
+  sample_archive: null
+  # Optional per-method overrides. These take precedence over sample_archive.
+  # Values can be:
+  # - a path to a method-specific matrix file (.npy, .npz, .csv, .tsv, .h5ad)
+  # - "archive.npz::array_key" to read a named 2D array from an .npz archive
+  #
+  # Examples:
+  # sample_paths:
+  #   scdeepsim: ${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz::scdeepsim
+  #   vae_reconstruction: ${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz::vae_reconstruction
+  #   scdiffusion: ${paths.root_dir}/external_samples/scdiffusion_samples.npy
+  sample_paths: {}
 
 # default: 10000 cells and 2500 genes after split. The same setting with scdiffusion-x paper
 data:

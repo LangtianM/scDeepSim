@@ -6,7 +6,13 @@ Usage:
         data.n_cells=256 data.n_genes=64 vae.epochs=1 diffusion.epochs=1 \
         diffusion.sampling_steps=10 methods=[scdeepsim]
     conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py \
-        methods=[scdeepsim] eval.include_vae_reconstruction_in_figures=true
+        'methods=[scdeepsim,scdiffusion,scvi_prior,scdesign3]' \
+        'cache.sample_archive=${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz' \
+        'hydra.run.dir=${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure3_uncontrolled_quality_denovo'
+    conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py \
+        'methods=[vae_reconstruction,scvi_posterior,zinbwave]' \
+        'cache.sample_archive=${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz' \
+        'hydra.run.dir=${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure3_uncontrolled_quality_reconstruction'
 """
 
 from __future__ import annotations

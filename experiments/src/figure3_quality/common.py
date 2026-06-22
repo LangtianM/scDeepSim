@@ -38,7 +38,7 @@ METHOD_DISPLAY_NAMES = {
     "scvi_posterior": "scVI posterior",
     "scdesign3": "scDesign3",
     "zinbwave": "ZINB-WaVE",
-    "vae_reconstruction": "VAE reconstruction",
+    "vae_reconstruction": "scDeepSim VAE reconstruction",
     "latent_scdeepsim": "Latent scDeepSim",
 }
 
