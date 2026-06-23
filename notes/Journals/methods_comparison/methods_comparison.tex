@@ -2,9 +2,8 @@
 
 \usepackage[margin=0.85in]{geometry}
 \usepackage{booktabs}
-\usepackage{multirow}
 \usepackage{array}
-\usepackage{tabularx}
+\usepackage{amssymb}
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage[numbers,sort&compress]{natbib}
@@ -16,7 +15,10 @@
   urlcolor=blue!50!black
 }
 
-\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcommand{\yes}{\checkmark}
+\newcommand{\partialyes}{\(\triangle\)}
 \setlength{\emergencystretch}{2em}
 
 \title{Concise Comparison of Single-Cell Simulation Methods}
@@ -27,88 +29,53 @@
 
 \begin{table}[htbp]
 \centering
-\footnotesize
-\setlength{\tabcolsep}{3pt}
-\renewcommand{\arraystretch}{1.18}
+\scriptsize
+\setlength{\tabcolsep}{2.6pt}
+\renewcommand{\arraystretch}{1.2}
 \label{tab:method-comparison}
-\begin{tabularx}{\textwidth}{@{}p{0.17\textwidth}Y Y Y@{}}
+\begin{tabular}{@{}P{0.30\textwidth}*{5}{C{0.128\textwidth}}@{}}
 \toprule
-\textbf{Method} & \textbf{Main idea} & \textbf{Controls} & \textbf{Difference from scDeepSim} \\
+\textbf{Method} &
+\textbf{\begin{tabular}[c]{@{}c@{}}De novo\\simulation\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Flexible\\learning\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Continuous\\control\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}OOD\\manipulation\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Disentangled\\factor control\end{tabular}} \\
 \midrule
-Splatter
-&
-Parametric Gamma-Poisson simulator for count data.
-&
-Library size, groups, differential expression, and batch effects.
-&
-\multirow[c]{5}{=}{\centering Transparent and controllable, but less capable of learning complex real-data manifolds.}
-\\
+Splatter~\citep{zappia2017splatter} & \yes & & \yes & \yes & \yes \\
 \addlinespace
-dyngen 
-&
-Mechanistic trajectory and gene-regulatory simulator.
-&
-Lineage topology, pseudotime, and regulatory programs.
-&
-\\
+dyngen~\citep{cannoodt2021dyngen} & \yes &  & \yes & \yes & \yes \\
 \addlinespace
-scDesign3 
-&
-Statistical simulator using marginal models plus dependence modelling.
-&
-Gene correlations, differential expression, cell states, and batch effects.
-&
-\\
-\midrule
-scGAN / cscGAN 
-&
-GAN or conditional GAN for expression generation.
-&
-Discrete cell-type or cluster-conditional augmentation.
-&
-Early deep learning simulator, but limited in simulating out-of-distribution conditions.
-\\
-\midrule
-scVI
-&
-VAE-based representation learning and batch correction.
-&
-Batch corrected embeddings and posterior sampling.
-&
-\multirow[c]{2}[10]{=}{\centering Requires matching real cells for generation and does not learn a disentangled latent space for interpretable control.}
-\\
+scDesign3~\citep{song2024scdesign3} & \yes & & \yes & \yes & \yes \\
 \addlinespace
-scGEN
-&
-VAE-based latent vector perturbation for generating unobserved samples.
-&
-Perturbation vector transfer for conditional generation.  
-&
-\\
-\midrule
-scDiffusion / scLDM 
-&
-Latent diffusion generation for single-cell expression.
-&
-Generates cells from cell types observed during training.
-&
-Lacks disentangled subspaces and out-of-distribution interpolation and extrapolation.
-\\
-\midrule
-\textbf{scDeepSim}
-&
-TN-VAE in log-normalised space plus latent diffusion and supervised latent disentanglement.
-&
-Cell type, batch effect strength, pseudotime, branch discrepancy, branching point, and noise.
-&
-Combines realistic data generation with explicit, continuous, and interpretable controls.
-\\
+ZINB-WaVE~\citep{risso2018zinbwave} &  & \partialyes & \partialyes & \partialyes &  \\
+\addlinespace
+scGAN / cscGAN~\citep{marouf2020scgan} & \yes & \yes & & & \\
+\addlinespace
+scVI~\citep{lopez2018scvi} & \partialyes & \yes & \partialyes & \partialyes & \partialyes \\
+\addlinespace
+scGEN~\citep{lotfollahi2019scgen} & \partialyes & \yes & \partialyes & \yes &  \\
+\addlinespace
+scDiffusion / scLDM~\citep{luo2024scdiffusion,palla2025scldm} & \yes & \yes &  & & \\
+\addlinespace
+\textbf{scDeepSim} & \yes & \yes & \yes & \yes & \yes \\
 \bottomrule
-\end{tabularx}
+\end{tabular}
+\caption{Capabilities of single-cell simulation and generative modelling methods. \yes{} indicates direct support, \partialyes{} indicates partial or indirect support, and blank cells indicate capabilities that are unsupported or not central to the method.}
 \end{table}
+
+\noindent\textbf{Property definitions.}
+\begin{description}
+  \item[De novo simulation.] Generates new samples from a learned distribution without requiring a matched observed sample.
+  \item[Flexible learning.] Uses a flexible learned generative model to capture complex multivariate structure in reference single-cell data.
+  \item[Continuous control] Provides numeric controls for effect magnitude, progression, noise, or signal strength.
+  \item[OOD manipulation.] Moves samples into interpolated or extrapolated regimes not directly observed in the reference data, such as stronger-than-observed batch effects, shifted developmental states, or new factor combinations.
+  \item[Disentangled factor control] Changes one factor while preserving the effect of others.
+\end{description}
 
 \newpage
 
 \bibliographystyle{plainnat}
+\bibliography{references}
 
 \end{document}
