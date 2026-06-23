@@ -85,7 +85,13 @@ def compute_bio_preservation(x_shifted, ct_labels, k):
 # Plotting
 # ---------------------------------------------------------------------------
 
-def plot_dose_response(all_metrics, save_path, ref_bio=None, target_bio=None):
+def plot_dose_response(
+    all_metrics,
+    save_path,
+    ref_bio=None,
+    target_bio=None,
+    axis_limits=None,
+):
     alphas = [m["alpha"] for m in all_metrics]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
@@ -137,17 +143,27 @@ def plot_dose_response(all_metrics, save_path, ref_bio=None, target_bio=None):
     ax2.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=9)
     ax2.grid(True, alpha=0.3, ls="--")
 
-    # -- unify iLISI / cLISI y-axes: both start at 1 with the same upper bound --
-    all_ilisi = [m["ilisi"] for m in all_metrics]
-    all_clisi = [m["clisi"] for m in all_metrics]
-    lisi_vals = all_ilisi + all_clisi
-    if ref_bio is not None:
-        lisi_vals.append(ref_bio["clisi"])
-    if target_bio is not None:
-        lisi_vals.append(target_bio["clisi"])
-    lisi_upper = max(lisi_vals) * 1.1
-    ax1b.set_ylim(1, lisi_upper)
-    ax2b.set_ylim(1, lisi_upper)
+    if axis_limits is None:
+        # -- unify iLISI / cLISI y-axes: both start at 1 with the same upper bound --
+        all_ilisi = [m["ilisi"] for m in all_metrics]
+        all_clisi = [m["clisi"] for m in all_metrics]
+        lisi_vals = all_ilisi + all_clisi
+        if ref_bio is not None:
+            lisi_vals.append(ref_bio["clisi"])
+        if target_bio is not None:
+            lisi_vals.append(target_bio["clisi"])
+        lisi_upper = max(lisi_vals) * 1.1
+        ax1b.set_ylim(1, lisi_upper)
+        ax2b.set_ylim(1, lisi_upper)
+    else:
+        if "batch_asw" in axis_limits:
+            ax1.set_ylim(*axis_limits["batch_asw"])
+        if "ilisi" in axis_limits:
+            ax1b.set_ylim(*axis_limits["ilisi"])
+        if "bio_score" in axis_limits:
+            ax2.set_ylim(*axis_limits["bio_score"])
+        if "clisi" in axis_limits:
+            ax2b.set_ylim(*axis_limits["clisi"])
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)

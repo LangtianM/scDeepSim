@@ -1,0 +1,72 @@
+seed: 42
+
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+
+data:
+  n_cells: 5000
+  n_genes: 2000
+  min_genes: 10
+  min_cells: 2
+  counts_layer: counts
+
+datasets:
+  scib_pancreas:
+    data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
+    celltype_key: celltype
+    batch_key: tech
+  hvg_embryoatlas:
+    data_path: ${paths.root_dir}/data/HVG_embryoatlas.h5ad
+    celltype_key: celltype
+    batch_key: sequencing.batch
+
+run:
+  datasets: [scib_pancreas, hvg_embryoatlas]
+  model_settings: [plain_zitn_vae, classifier_heads, classifier_plus_adversarial]
+
+vae:
+  latent_dim: 128
+  enc_hidden: [512, 256]
+  dec_hidden: [256, 512]
+  input_dropout: 0.1
+  beta: 5.0
+  beta_warmup_epochs: 10
+  zero_inflated: true
+  sup_head_hidden: 64
+  max_epochs: 100
+  batch_size: 256
+
+supervision:
+  celltype_weight: 5.0
+  celltype_latent_dims: 8
+  batch_weight: 5.0
+  batch_latent_dims: 8
+
+adversarial:
+  enabled: true
+  weight: 10.0
+  warmup_epochs: 0
+  head_hidden: 128
+  condition_embedding_dim: 8
+
+generation:
+  direction_method: whitening_recoloring
+  covariance_ridge: 1.0e-6
+  latent_representation: sample
+  encode_batch_size: 1024
+  decode_batch_size: 1024
+
+split:
+  reference_batch: null
+  target_batch: null
+
+evaluation:
+  alpha_values: [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
+  lisi_k: 30
+
+figure:
+  dpi: 300
+
+hydra:
+  run:
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_supervised_head_ablation
