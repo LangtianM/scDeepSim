@@ -33,32 +33,31 @@
 \setlength{\tabcolsep}{2.6pt}
 \renewcommand{\arraystretch}{1.2}
 \label{tab:method-comparison}
-\begin{tabular}{@{}P{0.30\textwidth}*{5}{C{0.128\textwidth}}@{}}
+\begin{tabular}{@{}P{0.32\textwidth}*{4}{C{0.155\textwidth}}@{}}
 \toprule
 \textbf{Method} &
 \textbf{\begin{tabular}[c]{@{}c@{}}De novo\\simulation\end{tabular}} &
-\textbf{\begin{tabular}[c]{@{}c@{}}Flexible\\learning\end{tabular}} &
-\textbf{\begin{tabular}[c]{@{}c@{}}Continuous\\control\end{tabular}} &
-\textbf{\begin{tabular}[c]{@{}c@{}}OOD\\manipulation\end{tabular}} &
-\textbf{\begin{tabular}[c]{@{}c@{}}Disentangled\\factor control\end{tabular}} \\
+\textbf{\begin{tabular}[c]{@{}c@{}}Latent\\representation\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Interpretable\\control\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Extrapolative\\control\end{tabular}} \\
 \midrule
-Splatter~\citep{zappia2017splatter} & \yes & & \yes & \yes & \yes \\
+Splatter~\citep{zappia2017splatter} & \yes & & \yes & \yes \\
 \addlinespace
-dyngen~\citep{cannoodt2021dyngen} & \yes &  & \yes & \yes & \yes \\
+dyngen~\citep{cannoodt2021dyngen} & \yes &  & \yes & \yes \\
 \addlinespace
-scDesign3~\citep{song2024scdesign3} & \yes & & \yes & \yes & \yes \\
+scDesign3~\citep{song2024scdesign3} & \yes & & \yes & \yes \\
 \addlinespace
-ZINB-WaVE~\citep{risso2018general} &  & \ & \ & \ &  \\
+ZINB-WaVE~\citep{risso2018general} &  & \yes & \yes &  \\
 \addlinespace
-scGAN / cscGAN~\citep{marouf2020realistic} & \yes & \yes & & & \\
+scGAN / cscGAN~\citep{marouf2020realistic} & \yes &  & & \\
 \addlinespace
-scVI~\citep{lopez2018deep} & \ & \yes & & & \yes \\
+scVI~\citep{lopez2018deep} &  & \yes & & \\
 \addlinespace
-scGEN~\citep{lotfollahi2019scgen} & \ & \yes & \ & \yes &  \\
+scGEN~\citep{lotfollahi2019scgen} &  & \yes &  & \yes \\
 \addlinespace
-scDiffusion / scLDM~\citep{luo2024scdiffusion,palla2025scalable} & \yes & \yes &  & & \\
+scDiffusion / scLDM~\citep{luo2024scdiffusion,palla2025scalable} & \yes & \yes &  & \\
 \addlinespace
-\textbf{scDeepSim} & \yes & \yes & \yes & \yes & \yes \\
+\textbf{scDeepSim} & \yes & \yes & \yes & \yes \\
 \bottomrule
 \end{tabular}
 \caption{Capabilities of single-cell simulation and generative modelling methods.}
@@ -66,11 +65,10 @@ scDiffusion / scLDM~\citep{luo2024scdiffusion,palla2025scalable} & \yes & \yes &
 
 \noindent\textbf{Property definitions.}
 \begin{description}
-  \item[De novo simulation.] Generates new samples from a learned distribution without requiring a matched observed sample.
-  \item[Flexible learning.] Uses a flexible learned generative model to capture complex multivariate structure in reference single-cell data.
-  \item[Continuous control] Provides numeric controls for effect magnitude, progression, noise, or signal strength.
-  \item[OOD manipulation.] Moves samples into interpolated or extrapolated regimes not directly observed in the reference data, such as stronger-than-observed batch effects, shifted developmental states, or new factor combinations.
-  \item[Disentangled factor control.] Changes one factor while preserving the effect of others, such as introducing batch effect without intervening biological signals.
+  \item[De novo simulation.] Generates synthetic cells from a learned distribution without requiring a matched observed cell as input at generation time.
+  \item[Latent representation.] Learns low-dimensional latent variables that represent major single-cell variations and can be used for downstream generation, or signal extraction.
+  \item[Interpretable control.] Exposes control knobs with direct biological or technical meaning, such as batch effect, pseudo-time, or noise level.
+  \item[Extrapolative control.] Generates or transforms samples under effect strengths or factor combinations that are not directly observed in training data, including stronger-than-observed batch effect and shifted developmental trajectories.
 \end{description}
 
 \newpage
