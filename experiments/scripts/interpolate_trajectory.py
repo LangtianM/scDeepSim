@@ -1,11 +1,11 @@
-"""Trajectory interpolation via Gaussian OT on the scvelo pancreas dataset.
+"""Trajectory interpolation via configurable affine maps on scvelo pancreas.
 
-Implements the "Optimal Transport Interpolation Between Known States" approach:
+Implements affine interpolation between known states:
   1. Load the pancreas endocrine differentiation dataset from scvelo
   2. Train a semi-supervised VAE with cell-type supervision
-  3. Encode cells; compute the Gaussian OT map between a start state
+  3. Encode cells; compute an affine map between a start state
      (e.g. Ductal progenitors) and an end state (e.g. Beta cells)
-  4. Generate interpolated cells via McCann displacement interpolation
+  4. Generate interpolated cells via sample-linear interpolation
      at a range of alpha values, yielding ground-truth pseudo-time
   5. Decode and visualise the trajectory
 
@@ -318,7 +318,7 @@ def main(cfg: DictConfig) -> None:
     os.makedirs(results_dir, exist_ok=True)
 
     log.info("=" * 70)
-    log.info("Trajectory Interpolation via Gaussian OT")
+    log.info("Trajectory interpolation via affine latent interpolation")
     log.info("=" * 70)
 
     # -- 1. Load data --
@@ -360,8 +360,12 @@ def main(cfg: DictConfig) -> None:
     log.info(f"Start distribution: {z_start.shape}")
     log.info(f"End distribution:   {z_end.shape}")
 
-    # -- 4. OT interpolation --
-    log.info("[4/5] Computing Gaussian OT map and generating interpolated samples...")
+    # -- 4. Affine interpolation --
+    affine_method = str(cfg.generation.affine_method)
+    log.info(
+        "[4/5] Computing %s affine map and generating interpolated samples...",
+        affine_method,
+    )
     alphas = list(cfg.generation.alpha_values)
     n_samples = cfg.generation.n_samples_per_alpha
 
@@ -369,6 +373,7 @@ def main(cfg: DictConfig) -> None:
         z_start, z_end, alphas,
         n_samples_per_alpha=n_samples,
         seed=cfg.seed,
+        method=affine_method,
     )
 
     ot_params = result["ot_params"]
@@ -424,6 +429,7 @@ def main(cfg: DictConfig) -> None:
         "n_total_cells": int(adata.n_obs),
         "n_genes": int(adata.n_vars),
         "latent_dim": int(cfg.vae.latent_dim),
+        "affine_method": affine_method,
         "alphas": alphas,
         "n_samples_per_alpha": n_samples,
         "mu_shift_norm": float(np.linalg.norm(

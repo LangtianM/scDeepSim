@@ -213,7 +213,11 @@ def main(cfg: DictConfig) -> None:
     t_values = np.linspace(0, 1, cfg.generation.t_values_count).tolist()
     n_per_t = cfg.generation.n_samples_per_t
 
-    log.info("[4/5] Generating trajectories for different tau...")
+    affine_method = str(cfg.generation.affine_method)
+    log.info(
+        "[4/5] Generating trajectories for different tau with affine_method=%s...",
+        affine_method,
+    )
     all_tau_data = {}
     vae.eval()
     vae_device = next(vae.parameters()).device
@@ -226,6 +230,7 @@ def main(cfg: DictConfig) -> None:
             tau=tau,
             n_samples_per_t=n_per_t,
             seed=cfg.seed,
+            method=affine_method,
         )
 
         # decode
@@ -252,6 +257,7 @@ def main(cfg: DictConfig) -> None:
         "taus": taus,
         "t_values_count": len(t_values),
         "n_samples_per_t": n_per_t,
+        "affine_method": affine_method,
     }
     with open(os.path.join(results_dir, "metadata.json"), "w") as f:
         json.dump(metadata, f, indent=2)

@@ -1,7 +1,7 @@
 """Dose-response evaluation of controllable pseudo-time (VAE only).
 
-Sweeps alpha values along a full-latent Gaussian OT geodesic between a start
-cell type (e.g. Ductal) and an end cell type (e.g. Beta) on the scvelo
+Sweeps alpha values along a configurable full-latent affine path between a
+start cell type (e.g. Ductal) and an end cell type (e.g. Beta) on the scvelo
 pancreas dataset. For each alpha, decodes the interpolated latents and
 measures how far the synthesised population has moved from the real start
 population using two group-separation metrics:
@@ -156,7 +156,8 @@ def main(cfg: DictConfig) -> None:
     n_per_alpha = int(n_per_alpha)
 
     # -- 4. alpha sweep --
-    log.info("[4/5] Running alpha sweep...")
+    affine_method = str(cfg.generation.affine_method)
+    log.info("[4/5] Running alpha sweep with affine_method=%s...", affine_method)
     vae.eval()
     vae_device = next(vae.parameters()).device
     k = int(cfg.evaluation.lisi_k)
@@ -173,6 +174,7 @@ def main(cfg: DictConfig) -> None:
             n_samples_per_alpha=n_per_alpha,
             seed=cfg.seed,
             subspace_slice=None,
+            method=affine_method,
         )
         z_shifted = out["samples"][alpha]
 
@@ -204,6 +206,7 @@ def main(cfg: DictConfig) -> None:
         "n_samples_per_alpha": n_per_alpha,
         "n_genes": int(adata.X.shape[1]),
         "latent_dim": int(z_all.shape[1]),
+        "affine_method": affine_method,
         "lisi_k": k,
         "alpha_sweep": all_metrics,
     }

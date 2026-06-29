@@ -30,6 +30,7 @@ knob:
   use_celltype_subspace: false # restrict OT to the supervised block
 
 generation:
+  affine_method: whitening_recoloring
   alpha_values: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0]
   n_samples_per_alpha: 200
 

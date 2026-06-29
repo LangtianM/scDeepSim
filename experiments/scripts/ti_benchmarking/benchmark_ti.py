@@ -374,6 +374,8 @@ def main(cfg: DictConfig) -> None:
     X_B_base = _z_for(cfg.data.terminal_state_1)
     X_C_base = _z_for(cfg.data.terminal_state_2)
     t_values = np.linspace(0.0, 1.0, int(cfg.generation.t_values_count)).tolist()
+    affine_method = str(cfg.generation.affine_method)
+    log.info("Affine interpolation method: %s", affine_method)
 
     all_metric_rows = []
     methods = [str(m) for m in cfg.benchmark.methods]
@@ -406,6 +408,7 @@ def main(cfg: DictConfig) -> None:
                 "discrepancy": discrepancy,
                 "t_values_count": int(cfg.generation.t_values_count),
                 "n_samples_per_t": int(cfg.generation.n_samples_per_t),
+                "affine_method": affine_method,
                 "seed": seed,
                 "replicate": rep,
                 "sweep_axis": setting["sweep_axis"],
@@ -421,6 +424,7 @@ def main(cfg: DictConfig) -> None:
                 n_samples_per_t=int(cfg.generation.n_samples_per_t),
                 noise_scales=noise_scale,
                 seed=seed,
+                method=affine_method,
             )
             dataset = make_ti_benchmark_dataset(
                 trajectory,

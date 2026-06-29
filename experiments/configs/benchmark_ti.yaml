@@ -25,6 +25,7 @@ supervision:
   celltype_latent_dims: 16
 
 generation:
+  affine_method: whitening_recoloring
   t_values_count: 21
   n_samples_per_t: 100
   decode_batch_size: 512

@@ -417,7 +417,11 @@ def main(cfg: DictConfig) -> None:
     latent_dim = z_all.shape[1]
 
     # -- 3. Sweep w --
-    log.info("[4/5] Sweeping slerp weights...")
+    affine_method = str(cfg.generation.affine_method)
+    log.info(
+        "[4/5] Sweeping slerp weights with affine_method=%s...",
+        affine_method,
+    )
     vae.eval()
     vae_device = next(vae.parameters()).device
 
@@ -440,6 +444,7 @@ def main(cfg: DictConfig) -> None:
             subspace_slice=sub_slice,
             n_samples_per_alpha=n_per,
             seed=cfg.seed,
+            method=affine_method,
         )
         res2 = branch_from_direction(
             X_A, u2, r, alphas,
@@ -447,6 +452,7 @@ def main(cfg: DictConfig) -> None:
             subspace_slice=sub_slice,
             n_samples_per_alpha=n_per,
             seed=cfg.seed + 1,
+            method=affine_method,
         )
 
         # Decode
@@ -521,6 +527,7 @@ def main(cfg: DictConfig) -> None:
         "r": float(r),
         "r_obs_1": r_obs_1,
         "r_obs_2": r_obs_2,
+        "affine_method": affine_method,
         "cos_anchor": cos_anchor,
         "u1": u1.tolist(),
         "u_anchor2": u_anchor2.tolist(),

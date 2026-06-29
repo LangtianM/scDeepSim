@@ -171,7 +171,13 @@ $$
 P_{\text{start}} \approx (\mu_0, \Sigma_0), \quad P_{\text{end}} \approx (\mu_1, \Sigma_1).
 $$
 
-The batch subspace is excluded so that the interpolation captures biological variation only. We then choose one of the affine maps above, typically the Gaussian OT / Bures-Wasserstein choice of $B$ when covariance structure should change along the path, and evaluate:
+The batch subspace is excluded so that the interpolation captures biological variation only. The latest pseudo-time reruns use the whitening-recoloring affine map,
+
+$$
+B = \Sigma_1^{1/2}\Sigma_0^{-1/2},
+$$
+
+which whitens the start-state covariance and recolors it to the target-state covariance. Gaussian OT / Bures-Wasserstein remains available as an alternative affine map. Given the chosen $B$, evaluate:
 
 $$
 z_s(\alpha) = (1 - \alpha)z_s + \alpha T_B(z_s), \qquad \alpha \in [0, 1].
@@ -440,9 +446,9 @@ Then $\theta_1 \leq \theta_2 \leq \dots \leq \theta_k$ are the principle angles.
 
 ### Pseudo-time Interpolation
 
-Trajectory interpolation between Ductal cells and Beta cells visualization. This linear example is a sanity check for the generated ordering, not the primary TI benchmark.
+Trajectory interpolation between Ductal cells and Beta cells visualization. This linear example is a sanity check for the generated ordering, not the primary TI benchmark. The June 29, 2026 rerun uses whitening-recoloring affine interpolation.
 
-![Trajectory Interpolation Preliminary Results](../experiments/outputs/2026-04-14/22-14-26_trajectory_interpolation/results/trajectory_umap.png)
+![Trajectory Interpolation Preliminary Results](../experiments/outputs/2026-06-29/18-07-55_trajectory_interpolation/results/trajectory_umap.png)
 
 Manipulating discrepancy between two branches. These qualitative examples motivate the benchmark setting: branch difficulty can be varied, and TI methods should be evaluated by their ordering and topology recovery across these regimes.
 
@@ -460,11 +466,13 @@ After:
 
 Branching point control:
 
-![Branching Point Control](../experiments/outputs/2026-04-28/20-46-33_branch_point_tau/results/tau_comparison_umap.png)
+![Branching Point Control](../experiments/outputs/2026-06-29/18-09-46_branch_point_tau/results/tau_comparison_umap.png)
 
 Pseudo-time dose-response check:
 
-![Dose-Response Evaluation Pseudo-time](../experiments/outputs/2026-04-21/17-19-02_pseudotime_dose_response/results/pt_dose_response_curve.png)
+![Dose-Response Evaluation Pseudo-time](../experiments/outputs/2026-06-29/18-05-49_pseudotime_dose_response/results/pt_dose_response_curve.png)
+
+With whitening-recoloring, the dose-response is monotone: ASW increases from -0.000071 at $\alpha=0$ to 0.2383 at $\alpha=1$, while LISI decreases from 1.9202 to 1.0000.
 
 ### TI Methods Benchmarking
 
@@ -515,17 +523,23 @@ This adapter boundary keeps method-specific dependencies isolated while making e
 
 #### Results
 
-TI Methods Benchmarking Across Branch Endpoint Discrepancy. 
+Updated June 29, 2026 reruns use whitening-recoloring affine interpolation (`generation.affine_method=whitening_recoloring`) with 3 replicates per setting, 2,000 genes, 21 pseudo-time grid values, and 100 cells per grid value.
 
-![TI Benchmarking Across Branch Endpoint Discrepancy](../experiments/outputs/2026-05-17/18-05-53_ti_benchmark/results/ti_metric_curves.png)
+TI Methods Benchmarking Across Branch Endpoint Discrepancy. DPT/PAGA improves strongly as discrepancy increases: mean global Spearman rises from 0.480 at discrepancy 0.2 to 0.874 at 1.4, and lineage ARI rises from 0.002 to 0.158. Monocle3 improves at high discrepancy but keeps near-zero lineage ARI; Slingshot is strongest only at the lowest discrepancy values and is more variable.
+
+![TI Benchmarking Across Branch Endpoint Discrepancy](../experiments/outputs/2026-06-29/18-19-49_ti_benchmark/results/ti_metric_curves.png)
 
 TI Methods Benchmarking Across Branch Point Position $\tau$.
 
-![TI Benchmarking Across Branch Point Position](../experiments/outputs/2026-05-17/17-57-12_ti_benchmark/results/ti_metric_curves.png)
+DPT/PAGA is the most stable through $\tau=0.5$, with mean Spearman 0.806, 0.852, and 0.853 at $\tau=0$, 0.25, and 0.5. At $\tau=0.75$, Slingshot slightly leads in ordering (0.751 vs. 0.749 for DPT/PAGA) but has poor lineage ARI. Topology recovery remains much harder than ordering recovery.
+
+![TI Benchmarking Across Branch Point Position](../experiments/outputs/2026-06-29/18-45-36_ti_benchmark/results/ti_metric_curves.png)
 
 TI Methods Benchmarking Across Noise Scale $\sigma$.
 
-![TI Benchmarking Across Noise Scale](../experiments/outputs/2026-05-17/23-51-15_ti_benchmark/results/ti_metric_curves.png)
+DPT/PAGA is best through moderate noise, with mean Spearman 0.806, 0.817, and 0.725 at $\sigma=0$, 0.5, and 1.0. At $\sigma=1.5$, Monocle3 is highest (0.534), and at $\sigma=2.0$ all methods are weak and high-variance: Slingshot, DPT/PAGA, and Monocle3 average 0.239, 0.189, and 0.146, respectively.
+
+![TI Benchmarking Across Noise Scale](../experiments/outputs/2026-06-29/18-59-30_ti_benchmark/results/ti_metric_curves.png)
 
 ---
 
