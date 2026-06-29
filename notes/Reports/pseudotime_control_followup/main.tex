@@ -1,0 +1,123 @@
+\documentclass[10pt]{article}
+
+\usepackage[letterpaper,margin=0.58in]{geometry}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+
+\captionsetup{font=footnotesize,labelfont=bf}
+\setlength{\parskip}{0.28em}
+\setlength{\parindent}{0pt}
+\setlength{\textfloatsep}{0.45em}
+\setlength{\floatsep}{0.35em}
+\setlength{\intextsep}{0.35em}
+\setlist{nosep,leftmargin=1.2em}
+
+\title{\vspace{-2.2em}Pseudo-time Control and Trajectory-Inference Benchmarking}
+\author{Langtian Ma}
+\date{\vspace{-1.0em}\today}
+
+\begin{document}
+\maketitle
+\vspace{-2.0em}
+
+\section*{Context}
+
+This note follows the previous simulator summary by updating the pseudo-time control component. The base model remains the same: a disentangled VAE maps log-normalized expression into latent space, and a latent diffusion model samples new latents before VAE decoding. The updated runs use whitening-recoloring affine interpolation to generate trajectories with known ground-truth pseudo-time and topology, then use those generated datasets to benchmark trajectory-inference (TI) methods.
+
+\section*{Pseudo-time Interpolation}
+
+Let \(z=(z_{\mathrm{bio}}, z_{\mathrm{tech}})\), where \(z_{\mathrm{bio}}\) contains biological and residual latent dimensions and \(z_{\mathrm{tech}}\) contains technical blocks such as batch. Given start and end state latents with empirical moments \((\mu_0,\Sigma_0)\) and \((\mu_1,\Sigma_1)\), we define an affine endpoint map in the biological subspace,
+\[
+T(z)=\mu_1+B(z-\mu_0),
+\qquad
+B=\Sigma_1^{1/2}\Sigma_0^{-1/2},
+\]
+and generate a pseudo-time path by sample-linear interpolation,
+\[
+z_{\mathrm{bio}}(\alpha)=(1-\alpha)z_{\mathrm{bio}}+\alpha T(z_{\mathrm{bio}}),
+\qquad \alpha\in[0,1].
+\]
+The full latent vector \(\tilde z_\alpha=(z_{\mathrm{bio}}(\alpha),z_{\mathrm{tech}})\) is decoded to expression space, and the known control value \(\alpha\) is recorded as ground-truth pseudo-time. The same control API also supports the Gaussian OT/Bures affine map, but all updated trajectory and TI experiments reported here use whitening-recoloring.
+
+Branching trajectories are built by composing affine paths between observed states. In the pancreas setting used here, \(A=\) Ductal, \(W=\) Ngn3-high endocrine progenitor, and the two terminal states are Beta and Alpha. For branch point \(\tau\), the trunk \(A\rightarrow W\) is assigned \(t=\tau\alpha\), and each daughter path \(W\rightarrow B\) or \(W\rightarrow C\) is assigned \(t=\tau+(1-\tau)\alpha\). This gives each generated cell a known \texttt{true\_pseudotime}, \texttt{true\_lineage}, and \texttt{true\_branch\_point}.
+
+Three knobs control trajectory difficulty:
+\begin{itemize}
+  \item \textbf{Endpoint discrepancy}: scale each terminal mean displacement away from \(W\), preserving terminal covariance. Larger discrepancy produces more separated branches.
+  \item \textbf{Branch-point position \(\tau\)}: move the split from an early root split toward a late split with a longer shared trunk.
+  \item \textbf{Noise scale \(\sigma\)}: add isotropic latent noise to lower the branch signal-to-noise ratio.
+\end{itemize}
+
+\textbf{Interpolation results.} The linear Ductal-to-Beta experiment is a sanity check: generated cells follow a smooth ordering between known endpoint states (Figure~\ref{fig:pt-control}a). A dose-response check over \(\alpha\in[0,1]\) shows increasing separation between generated pseudo-time groups: ASW rises from approximately \(0.000\) to \(0.238\), while LISI falls from \(1.92\) to \(1.00\) (Figure~\ref{fig:pt-control}b). For branching, changing \(\tau\) visibly moves the split along the common pseudo-time axis: larger \(\tau\) creates a longer trunk and shorter branches (Figure~\ref{fig:pt-control}c).
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[t]{0.42\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/trajectory_umap.png}
+    \caption{Linear path}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.42\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/pt_dose_response_curve.png}
+    \caption{Pseudo-time dose response}
+  \end{subfigure}
+  \vspace{0.1em}
+
+  \begin{subfigure}[t]{0.72\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/tau_comparison_umap.png}
+    \caption{Branch point \(\tau\)}
+  \end{subfigure}
+  \caption{Pseudo-time control outputs. The top-left panel checks that affine interpolation produces a smooth Ductal-to-Beta ordering. The top-right panel quantifies increasing pseudo-time separation as \(\alpha\) moves from start to endpoint. The bottom panel shows controllable branch-point placement in a Ductal-to-Ngn3-high-EP-to-Alpha/Beta bifurcation.}
+  \label{fig:pt-control}
+\end{figure}
+
+\section*{TI Methods Benchmarking}
+
+The benchmark exports each generated expression matrix with standardized ground-truth metadata and simulator settings. Method adapters then write a common per-cell output table with \texttt{method}, \texttt{inferred\_pseudotime}, \texttt{inferred\_lineage}, and method metadata. This isolates dependencies: Scanpy DPT/PAGA runs in Python, while Slingshot and Monocle3 are called through experiment-level R adapters.
+
+The updated benchmark uses 2,000 genes, 21 pseudo-time grid values, 100 cells per grid value, and 3 replicates per difficulty setting. All methods use common preprocessing where possible: PCA with 30 components, a 15-neighbor graph, and Leiden/Louvain clustering at resolution 0.5. Evaluation uses global Spearman correlation between inferred and true pseudo-time for ordering recovery, and adjusted Rand index (ARI) between inferred and true lineages for branch/topology recovery.
+
+\textbf{Endpoint discrepancy sweep.} Increasing terminal discrepancy from \(0.2\) to \(1.4\) makes ordering easier for graph-based DPT/PAGA: mean global Spearman rises from \(0.480\) to \(0.874\), and lineage ARI rises from \(0.002\) to \(0.158\). Monocle3 also improves at high discrepancy (\(0.569\) to \(0.817\) Spearman) but still has near-zero lineage ARI. Slingshot is strongest at the lowest discrepancy values (\(0.584\) at \(0.2\), \(0.521\) at \(0.4\)) and more variable at higher discrepancy.
+
+\textbf{Branch-point sweep.} Scanpy DPT/PAGA is the most stable through intermediate branch points, with mean Spearman \(0.806\), \(0.852\), and \(0.853\) at \(\tau=0\), \(0.25\), and \(0.5\). At a late split (\(\tau=0.75\)), Slingshot slightly leads in ordering (\(0.751\) versus \(0.749\) for DPT/PAGA) but has poor lineage ARI. Topology recovery remains harder than ordering: DPT/PAGA gives the best ARI through \(\tau=0.5\) (\(0.057\) to \(0.160\)), while Monocle3 and Slingshot are less reliable.
+
+\textbf{Noise sweep.} Noise gives the cleanest stress test. DPT/PAGA is best through moderate noise, with mean Spearman \(0.806\), \(0.817\), and \(0.725\) at \(\sigma=0\), \(0.5\), and \(1.0\). At \(\sigma=1.5\), Monocle3 is highest (\(0.534\)) while DPT/PAGA drops to \(0.469\). At \(\sigma=2.0\), all methods are weak and high-variance: Slingshot, DPT/PAGA, and Monocle3 average \(0.239\), \(0.189\), and \(0.146\), respectively. This confirms that the simulator generates a controlled difficulty ladder where method performance degrades with lower signal-to-noise ratio.
+
+\begin{figure}[t]
+  \centering
+  \begin{subfigure}[t]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/ti_discrepancy_curves.png}
+    \caption{Endpoint discrepancy}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/ti_tau_curves.png}
+    \caption{Branch point \(\tau\)}
+  \end{subfigure}
+  \hfill
+  \begin{subfigure}[t]{0.32\linewidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/ti_noise_curves.png}
+    \caption{Noise scale \(\sigma\)}
+  \end{subfigure}
+  \caption{TI benchmark results across three difficulty axes. Each panel reports global pseudo-time Spearman correlation and lineage ARI for Scanpy DPT/PAGA, Slingshot, and Monocle3. Ordering recovery separates methods and responds to difficulty; lineage recovery remains substantially harder.}
+  \label{fig:ti-benchmark}
+\end{figure}
+
+\section*{Takeaways}
+\enlargethispage{2\baselineskip}
+
+Pseudo-time control is now more than a visualization device: it defines generated datasets with known ordering, lineage, branch point, and difficulty settings. The first benchmark indicates that recovering a monotone pseudo-time coordinate is easier than recovering branching topology. Scanpy DPT/PAGA is the most stable method in these runs, Slingshot is more variable, and Monocle3 can recover ordering but does not currently produce reliable lineage labels under the adapter/evaluation setup. The next improvement should add richer topology metrics, especially branch-point localization and categorical outcomes such as correct bifurcation, unresolved linear path, or wrong branch structure.
+
+\end{document}
