@@ -239,47 +239,64 @@ Empirical OT between finite samples and cell-type-stratified affine maps remain 
 ```text
 experiments/scripts/eval_simulation_quality_scdesign3.py
 experiments/configs/eval_simulation_quality_scdesign3.yaml
+experiments/scripts/figure3_uncontrolled_quality.py
+experiments/configs/figure3_uncontrolled_quality.yaml
 ```
 
-We compare simulation quality using UMAP visualisation, per-gene expression statistics, and an RF-based discriminability test (real vs. simulated). The current experiment uses the Tabula Muris input from the original VAE+Diffusion script, with a default subsample of 5000 cells and 1000 HVGs. The run is Hydra-managed and records git metadata under the output directory.
+We compare simulation quality using UMAP visualisation, per-gene expression statistics, and an RF-based discriminability test (real vs. simulated). The earlier scDesign3-only experiment used the Tabula Muris input from the original VAE+Diffusion script, with a default subsample of 5000 cells and 1000 HVGs. The current Figure 3 comparison is configured in `experiments/configs/figure3_uncontrolled_quality.yaml` and uses `data/HVG_embryoatlas.h5ad`, 20,000 selected cells, 2,500 HVGs, a 50/50 stratified train/test split, and RF discriminability on normalised log1p expression. Hydra stores the resolved config and CLI overrides in each output directory under `.hydra/`.
 
-**Genuine simulation methods:**
+**De novo simulation methods:**
 
-- **VAE+Diffusion (ours):** Latents are sampled from the diffusion model and decoded by the VAE. No original observation is required at generation time. This is the proposed end-to-end generative pipeline.
-- **scDesign3:** A classical statistical baseline from the R package `scDesign3`. It fits marginal negative-binomial models conditioned on cell type and a Gaussian copula over genes, then generates new count data that are normalised and log-transformed before comparison. The copula gene subset is configurable; this run used all 1000 genes.
+- **scDeepSim(ours):** Latents are sampled from the diffusion model and decoded by the VAE. No original observation is required at generation time. This is the proposed end-to-end generative pipeline.
+- **scDesign3:** A classical statistical baseline from the R package `scDesign3`. It fits marginal negative-binomial models conditioned on cell type and a Gaussian copula over genes, then generates new count data that are normalised and log-transformed before comparison. The current Figure 3 run fits the copula on the top 1000 variance genes while keeping all 2500 selected genes in the output.
+- **scDiffusion:** An external VAE+diffusion baseline. In the Figure 3 run, the upstream scDiffusion VAE is trained on the selected raw-count subset, a diffusion model is trained in the upstream latent space, sampled latents are decoded, and the resulting normalised log1p expression matrix is compared against the held-out real cells.
+- **scVI prior sampling:** manually sample $z \sim \mathcal{N}(0, I)$ and $x \sim p(x|z)$ use scVI. But it still requires externally supplied library size from real cells. (see `sample_from_prior` in `benchmark_simulation.py`, which draws `latent_library` from real observations). This dependency on real-cell library sizes means it is not fully generative.
 
 **Reconstruction methods (not genuine simulation):**
 
 - **VAE reconstruction** ($\text{Decoder}(\text{Encoder}(x))$): Serves as an upper-bound baseline for the best quality our model can achieve by construction.
 - **scVI posterior sampling** (`posterior_predictive_sample`): Produces $\text{Decoder}(\text{Encoder}(x))$ with the original cell's library size. This is reconstruction, not genuine simulation. We can compare this against our VAE reconstruction as a **reconstruction quality** benchmark.
-- **scVI prior sampling:** Although it samples $z$ from the prior $\mathcal{N}(0, I)$, it still requires externally supplied library sizes from real cells (see `sample_from_prior` in `benchmark_simulation.py`, which draws `latent_library` from real observations). This dependency on real-cell library sizes means it is not fully generative. See the discussion on library size above.
+- **ZINB-WaVE:** A count-space statistical simulator fitted with `zinbwave::zinbFit` and sampled with `zinbwave::zinbSim`. In this run it uses the observed cell-type design matrix, two latent factors (`K=2`), common dispersion, and zero inflation, so it is best interpreted as a metadata-conditioned count baseline rather than an end-to-end latent generative model.
 
-![Umap Comparison](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/umap_comparison.png)
+<!-- ![Umap Comparison](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/umap_comparison.png)
 
-The UMAP comparison includes real data, VAE reconstruction, VAE+Diffusion, and scDesign3 in a shared embedding. VAE reconstruction remains closest to the real data by construction. VAE+Diffusion preserves much of the cell-type topology but accumulates end-to-end generation error. scDesign3 preserves broad cell-type composition but remains easier to distinguish from real data in gene space.
+The UMAP comparison includes real data, VAE reconstruction, VAE+Diffusion, and scDesign3 in a shared embedding. VAE reconstruction remains closest to the real data by construction. VAE+Diffusion preserves much of the cell-type topology but accumulates end-to-end generation error. scDesign3 preserves broad cell-type composition but remains easier to distinguish from real data in gene space. -->
 
-![Gene Expression Scatter](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/gene_expression_scatter.png)
+<!-- ![Gene Expression Scatter](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/gene_expression_scatter.png)
 
-The per-gene mean and variance correlations are high for both genuine simulators. VAE+Diffusion achieved mean correlation 0.995 and variance correlation 0.991. scDesign3 achieved mean correlation 0.996 and variance correlation 0.981. Thus marginal gene statistics alone are not sufficient to establish realism; discriminability remains necessary.
+The per-gene mean and variance correlations are high for both genuine simulators. VAE+Diffusion achieved mean correlation 0.995 and variance correlation 0.991. scDesign3 achieved mean correlation 0.996 and variance correlation 0.981. Thus marginal gene statistics alone are not sufficient to establish realism; discriminability remains necessary. -->
 
-![Quality Metrics Summary](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/quality_metrics_summary.png)
+<!-- ![Quality Metrics Summary](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/quality_metrics_summary.png) -->
 
 We assess discriminability via an RF classifier trained to distinguish real from simulated data. **A lower AUC (closer to 0.5) indicates better simulation quality** — the simulated data is harder to distinguish from real data.
 
-The current run produced:
+<!-- The current run produced:
 
 - **Latent AUC 0.660 / accuracy 0.612:** Discriminability of diffusion-sampled latents vs. real encoded latents (latent space).
 - **VAE reconstruction AUC 0.744 / accuracy 0.679:** Reconstruction upper-bound reference in gene space.
 - **VAE+Diffusion AUC 0.944 / accuracy 0.870:** End-to-end genuine simulation in gene space.
-- **scDesign3 AUC 0.988 / accuracy 0.951:** Classical simulation baseline in gene space.
+- **scDesign3 AUC 0.988 / accuracy 0.951:** Classical simulation baseline in gene space. -->
 
-In a fair gene-space comparison, VAE+Diffusion is less distinguishable from real data than scDesign3 on this subsample, despite both methods matching gene-level means and variances closely. The remaining gap between latent-space quality and gene-space quality still suggests that decoding/gene-space fidelity is a major bottleneck.
+<!-- In a fair gene-space comparison, VAE+Diffusion is less distinguishable from real data than scDesign3 on this subsample, despite both methods matching gene-level means and variances closely. The remaining gap between latent-space quality and gene-space quality still suggests that decoding/gene-space fidelity is a major bottleneck. -->
 
-**Todo:**
+**De novo simulation methods comparison**
+
+![Genuine Simulation Quality](../experiments/outputs/2026-06-22/22-49-08_figure3_uncontrolled_quality_denovo/results/figure3_uncontrolled_quality.png)
+
+Caption: De novo simulation comparison on `data/HVG_embryoatlas.h5ad` using 20,000 cells, 2,500 HVGs, a 50/50 stratified train/test split, and RF real-vs-simulated discriminability.
+
+**Reconstruction Methods Comparison**
+
+![Reconstruction Quality](../experiments/outputs/2026-06-22/23-05-00_figure3_uncontrolled_quality_reconstruction/results/figure3_uncontrolled_quality.png)
+
+Caption: Reconstruction/reference-conditioned comparison on the same `HVG_embryoatlas.h5ad` split and evaluation settings.
+
+
+<!-- **Todo:**
 
 - [x] Add scDesign3 (R package) as a genuine simulation benchmark.
-- [ ] Reframe scVI comparison: compare scVI posterior against our VAE reconstruction (reconstruction quality), and note that scVI prior sampling is not fully generative due to library size dependence.
-- [ ] Ablation: systematic comparison of TN-VAE (log-normalised space) vs. ZINB-VAE (raw count space) to formally validate the choice of working in log-normalised space. See the library size discussion above.
+- [x] Reframe scVI comparison: compare scVI posterior against our VAE reconstruction (reconstruction quality), and note that scVI prior sampling is not fully generative due to library size dependence. -->
+<!-- - [ ] Ablation: systematic comparison of TN-VAE (log-normalised space) vs. ZINB-VAE (raw count space) to formally validate the choice of working in log-normalised space. See the library size discussion above. -->
 
 ---
 
@@ -297,7 +314,7 @@ We also conducted a batch disentanglement evaluation on the scIBPancreas dataset
 
 ![heatmap](../experiments/outputs/2026-06-05/18-05-13_figure2_latent_disentanglement/results/figure2_latent_disentanglement.png)
 
-**Next step:** Replicate this evaluation with batch labels to verify that the batch subspace is similarly disentangled before attempting batch effect control experiments.
+Caption: Latent disentanglement heatmap on `data/HVG_embryoatlas.h5ad` using 2,000 HVGs. Cell type and sequencing-batch labels are supervised into separate 32-dimensional latent subspaces, and RF predictability is evaluated with an 80/20 train/test split.
 
 ---
 
@@ -351,6 +368,8 @@ We run the experiment `experiments/scripts/eval_batch_dose_response.py` for the 
 ![Dose-Response Evaluation Gaussian OT](../experiments/multirun/2026-04-07/22-21-54/1/results/dose_response_curves.png)
 
 Dose-response evaluation of batch-strength manipulation using Gaussian OT transport direction. Data are generated by moving cells from the reference batch toward the target batch along the Gaussian OT transport direction, with the interpolation coefficient $\alpha$ controlling the magnitude of the shift ($\alpha = 0$: no shift; $\alpha = 1$: full transport to the target batch; $\alpha > 1$: extrapolation beyond the target). Left: Batch ASW (solid green, left axis) increases monotonically and LISI (dashed red, right axis) decreases monotonically with $\alpha$, confirming that the degree of batch separation grows continuously as cells are displaced further toward the target batch. Right: Cell-type ASW (purple), cell-type RF balanced accuracy (blue), and cLISI (orange) remain stable across all $\alpha$ values and are consistent with the reference batch baselines, indicating that biological signal is preserved throughout the interpolation.
+
+
 
 #### Validating Realism of the Introduced Batch Effects
 
@@ -553,7 +572,7 @@ DPT/PAGA is best through moderate noise, with mean Spearman 0.806, 0.817, and 0.
 ## Summary of Open Tasks
 
 **High Priority**
-
+- [ ] Replace legacy mean-shift/Gaussian-OT experiments with whitening-recoloring interpolation method.
 - [x] Implement $\alpha$-parameterised batch direction shift in generation pipeline (batch subspace only)
 - [x] Run batch disentanglement evaluation (replicate cell-type disentanglement experiment with batch labels) — Conducted on embryo atlas dataset
 - [x] Implement Gaussian OT direction finding (compare against mean-shift)
