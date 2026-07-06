@@ -26,8 +26,9 @@ root = pyrootutils.setup_root(
     __file__, indicator=".git", pythonpath=True, dotenv=True
 )
 
-import os
 import logging
+import json
+import os
 import numpy as np
 import anndata as ad
 import scanpy as sc
@@ -46,7 +47,13 @@ from experiments.src.common import (
     save_git_info,
 )
 from experiments.src.data import prepare_celltype_batch_data
-from experiments.src.training import train_celltype_batch_vae
+from experiments.src.training import (
+    resolve_control_slice,
+    selected_batch_control_model_setting,
+    selected_control_scope,
+    slice_to_metadata,
+    train_batch_control_vae,
+)
 from scdeepsim.plot import compare_umap
 
 log = logging.getLogger(__name__)
@@ -238,13 +245,24 @@ def main(cfg: DictConfig) -> None:
 
     # -- 2. train VAE --
     log.info("[2/5] Training VAE...")
-    vae = train_celltype_batch_vae(adata, n_celltypes, n_batches, cfg)
+    vae = train_batch_control_vae(
+        adata,
+        n_celltypes,
+        n_batches,
+        cfg,
+        default_root_dir=output_dir,
+    )
 
     # -- 3. encode + direction --
     log.info("[3/5] Encoding data and computing batch direction...")
     z_all = encode_adata(vae, adata)
-    batch_slice = vae._sup_slices["batch"]
-    log.info(f"  Batch subspace: dims {batch_slice.start}:{batch_slice.stop}")
+    batch_slice = resolve_control_slice(vae, cfg)
+    log.info(
+        "  Control scope: %s  dims %s:%s",
+        selected_control_scope(cfg),
+        batch_slice.start,
+        batch_slice.stop,
+    )
 
     batch_labels = np.asarray(adata.obs["batch"])
     dir_info = compute_batch_direction(
@@ -315,6 +333,35 @@ def main(cfg: DictConfig) -> None:
     compare_umap_path = os.path.join(results_dir, "compare_umap_batch_interpolation.png")
     compare_umap(cu_data, cu_labels, cu_titles, save_path=compare_umap_path)
     log.info(f"compare_umap saved to {compare_umap_path}")
+
+    direction_summary = {
+        key: float(value)
+        for key, value in dir_info.items()
+        if isinstance(value, (int, float, np.floating))
+    }
+    if "direction" in dir_info:
+        direction_summary["direction_norm"] = float(
+            np.linalg.norm(dir_info["direction"])
+        )
+    metadata = {
+        "model_setting": selected_batch_control_model_setting(cfg),
+        "control_scope": selected_control_scope(cfg),
+        "control_slice": slice_to_metadata(batch_slice),
+        "reference_batch": str(ref_batch),
+        "target_batch": str(target_batch),
+        "direction_method": str(cfg.generation.direction_method),
+        "alpha_values": [float(alpha) for alpha in cfg.generation.alpha_values],
+        "direction_summary": direction_summary,
+        "outputs": {
+            "umap_path": umap_path,
+            "pca_path": pca_path,
+            "compare_umap_path": compare_umap_path,
+        },
+    }
+    metadata_path = os.path.join(results_dir, "metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    log.info(f"Metadata saved to {metadata_path}")
 
     log.info("")
     log.info("=" * 70)

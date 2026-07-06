@@ -18,6 +18,10 @@ from scdeepsim.dataset import ScDataModule
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
 
+BATCH_CONTROL_MODEL_SETTINGS = {"plain_zitn_vae", "classifier_heads"}
+BATCH_CONTROL_SCOPES = {"batch_subspace", "full_latent"}
+
+
 def hydra_output_dir(default: str = ".") -> str:
     """Return Hydra's run directory when available.
 
@@ -209,6 +213,155 @@ def train_celltype_batch_vae(
         log_every_n_steps=50,
         adversarial_config=adversarial_config,
     )
+
+
+def train_plain_zitn_vae(
+    adata,
+    cfg,
+    *,
+    default_root_dir: str | None = None,
+    log_every_n_steps: int = 50,
+    enable_checkpointing: bool = False,
+    logger=True,
+) -> TruncatedNormalVAE:
+    """Train an unsupervised ZITN VAE with no supervised/adversarial heads."""
+    vae = build_truncated_normal_vae(
+        adata,
+        cfg,
+        supervised_config=[],
+        adversarial_config={"enabled": False},
+    )
+    # Reuse the standard labelled data module for consistent splitting and
+    # batching. The plain VAE has no supervised/adversarial heads, so these
+    # label dicts are loaded but ignored by the model loss.
+    data_module = ScDataModule(
+        adata,
+        label_keys={
+            "celltype": {"obs_key": "celltype", "type": "categorical"},
+            "batch": {"obs_key": "batch", "type": "categorical"},
+        },
+        batch_size=cfg.vae.batch_size,
+    )
+    trainer = pl.Trainer(
+        max_epochs=cfg.vae.max_epochs,
+        accelerator="auto",
+        devices="auto",
+        log_every_n_steps=log_every_n_steps,
+        enable_checkpointing=enable_checkpointing,
+        logger=logger,
+        default_root_dir=default_root_dir or hydra_output_dir(),
+        gradient_clip_val=vae.gradient_clip_val,
+    )
+    trainer.fit(vae, data_module)
+    return vae
+
+
+def selected_batch_control_model_setting(cfg) -> str:
+    """Return the configured batch-control model setting."""
+    setting = str(
+        OmegaConf.select(cfg, "model.setting", default="classifier_heads")
+    )
+    if setting not in BATCH_CONTROL_MODEL_SETTINGS:
+        supported = ", ".join(sorted(BATCH_CONTROL_MODEL_SETTINGS))
+        raise ValueError(
+            f"Unknown model.setting={setting!r}. Use one of: {supported}"
+        )
+    return setting
+
+
+def build_batch_control_vae(
+    adata,
+    n_celltypes,
+    n_batches,
+    cfg,
+) -> TruncatedNormalVAE:
+    """Build the VAE variant requested by the batch-control config."""
+    setting = selected_batch_control_model_setting(cfg)
+    if setting == "plain_zitn_vae":
+        return build_truncated_normal_vae(
+            adata,
+            cfg,
+            supervised_config=[],
+            adversarial_config={"enabled": False},
+        )
+    return build_truncated_normal_vae(
+        adata,
+        cfg,
+        supervised_config=celltype_batch_supervised_config(
+            n_celltypes,
+            n_batches,
+            cfg,
+        ),
+        adversarial_config=selected_adversarial_config(cfg),
+    )
+
+
+def train_batch_control_vae(
+    adata,
+    n_celltypes,
+    n_batches,
+    cfg,
+    *,
+    default_root_dir: str | None = None,
+) -> TruncatedNormalVAE:
+    """Train the VAE variant requested by the batch-control config."""
+    setting = selected_batch_control_model_setting(cfg)
+    if setting == "plain_zitn_vae":
+        return train_plain_zitn_vae(
+            adata,
+            cfg,
+            default_root_dir=default_root_dir,
+        )
+    return train_celltype_batch_vae(
+        adata,
+        n_celltypes,
+        n_batches,
+        cfg,
+        adversarial_config=None,
+    )
+
+
+def selected_control_scope(cfg) -> str:
+    """Return the configured latent control scope."""
+    scope = str(
+        OmegaConf.select(cfg, "generation.control_scope", default="batch_subspace")
+    )
+    if scope not in BATCH_CONTROL_SCOPES:
+        supported = ", ".join(sorted(BATCH_CONTROL_SCOPES))
+        raise ValueError(
+            f"Unknown generation.control_scope={scope!r}. "
+            f"Use one of: {supported}"
+        )
+    return scope
+
+
+def resolve_control_slice(vae, cfg) -> slice:
+    """Return the latent slice controlled by a batch-control experiment."""
+    scope = selected_control_scope(cfg)
+    setting = selected_batch_control_model_setting(cfg)
+    if scope == "full_latent":
+        return slice(0, int(vae.hparams.latent_dim))
+
+    if setting == "plain_zitn_vae":
+        raise ValueError(
+            "plain_zitn_vae has no supervised batch subspace. "
+            "Use generation.control_scope=full_latent."
+        )
+    if "batch" not in vae._sup_slices:
+        raise ValueError(
+            "generation.control_scope=batch_subspace requires a VAE with a "
+            "supervised 'batch' latent slice."
+        )
+    return vae._sup_slices["batch"]
+
+
+def slice_to_metadata(slc: slice) -> dict[str, int | None]:
+    """Return a JSON-friendly representation of a latent slice."""
+    return {
+        "start": None if slc.start is None else int(slc.start),
+        "stop": None if slc.stop is None else int(slc.stop),
+        "step": None if slc.step is None else int(slc.step),
+    }
 
 
 def train_batch_vae(adata, n_batches, cfg):

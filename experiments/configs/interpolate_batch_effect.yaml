@@ -21,6 +21,9 @@ vae:
   max_epochs: 100
   batch_size: 256
 
+model:
+  setting: classifier_heads
+
 supervision:
   celltype_weight: 5.0
   celltype_latent_dims: 16
@@ -30,6 +33,7 @@ supervision:
 generation:
   alpha_values: [0.0, 0.5, 1.0, 1.5]
   direction_method: gaussian_ot
+  control_scope: batch_subspace
 
 hydra:
   run:
