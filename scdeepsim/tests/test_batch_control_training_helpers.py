@@ -37,6 +37,13 @@ def _cfg(setting="classifier_heads", control_scope="batch_subspace"):
                 "batch_latent_dims": 1,
             },
             "generation": {"control_scope": control_scope},
+            "adversarial": {
+                "enabled": True,
+                "weight": 1.0,
+                "warmup_epochs": 0,
+                "head_hidden": 4,
+                "condition_embedding_dim": 2,
+            },
         }
     )
 
@@ -77,6 +84,30 @@ def test_classifier_batch_subspace_uses_supervised_batch_slice():
         n_batches=2,
         cfg=cfg,
     )
+
+    slc = resolve_control_slice(vae, cfg)
+
+    assert slc == slice(2, 3)
+    assert vae._adv_enabled is False
+
+
+def test_classifier_plus_adversarial_enables_adversarial_heads():
+    cfg = _cfg(
+        setting="classifier_plus_adversarial",
+        control_scope="batch_subspace",
+    )
+    vae = build_batch_control_vae(
+        DummyAdata(),
+        n_celltypes=3,
+        n_batches=2,
+        cfg=cfg,
+    )
+
+    assert vae._adv_enabled is True
+    assert set(vae.adv_heads) == {
+        "celltype_given_batch",
+        "batch_given_celltype",
+    }
 
     slc = resolve_control_slice(vae, cfg)
 

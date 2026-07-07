@@ -581,6 +581,7 @@ DPT/PAGA is best through moderate noise, with mean Spearman 0.806, 0.817, and 0.
 - [x] Evaluate pseudo-time trajectory manipulation?
 - [x] Evluate branching point manipulation.
 - [x] Consolidate the way to benchmarking TI methods with our simulator
+- [-] Ablation study: Do we really need the supervision heads + adversarial heads setting? Considering keeping only one of them.
 - [ ] Scalability test: run across multiple data sizes?
 
 **Medium Priority**
@@ -590,6 +591,8 @@ DPT/PAGA is best through moderate noise, with mean Spearman 0.806, 0.817, and 0.
 - [x] Add scDesign3 to genuine simulation benchmark
 
 - [x] Reframe scVI comparison (reconstruction quality only)
+
+- [ ] Interpolation strategy: In the slice we want to control, or all subspaces excluding the one we want to preserve?
 
 - [ ] Synthetic Null?
 

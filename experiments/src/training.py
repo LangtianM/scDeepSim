@@ -18,7 +18,11 @@ from scdeepsim.dataset import ScDataModule
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
 
-BATCH_CONTROL_MODEL_SETTINGS = {"plain_zitn_vae", "classifier_heads"}
+BATCH_CONTROL_MODEL_SETTINGS = {
+    "plain_zitn_vae",
+    "classifier_heads",
+    "classifier_plus_adversarial",
+}
 BATCH_CONTROL_SCOPES = {"batch_subspace", "full_latent"}
 
 
@@ -269,6 +273,14 @@ def selected_batch_control_model_setting(cfg) -> str:
     return setting
 
 
+def batch_control_adversarial_config(cfg) -> dict[str, Any] | None:
+    """Return adversarial config implied by the batch-control model setting."""
+    setting = selected_batch_control_model_setting(cfg)
+    if setting == "classifier_plus_adversarial":
+        return selected_adversarial_config(cfg)
+    return {"enabled": False}
+
+
 def build_batch_control_vae(
     adata,
     n_celltypes,
@@ -292,7 +304,7 @@ def build_batch_control_vae(
             n_batches,
             cfg,
         ),
-        adversarial_config=selected_adversarial_config(cfg),
+        adversarial_config=batch_control_adversarial_config(cfg),
     )
 
 
@@ -317,7 +329,7 @@ def train_batch_control_vae(
         n_celltypes,
         n_batches,
         cfg,
-        adversarial_config=None,
+        adversarial_config=batch_control_adversarial_config(cfg),
     )
 
 

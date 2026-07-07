@@ -37,6 +37,8 @@ import hydra
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
+os.environ.setdefault("PROJECT_ROOT", str(root))
+
 from experiments.src.batch_control import (
     apply_direction,
     compute_batch_direction,
@@ -316,6 +318,7 @@ def main(cfg: DictConfig) -> None:
         )
     metadata = {
         "model_setting": selected_batch_control_model_setting(cfg),
+        "adversarial_enabled": bool(getattr(vae, "_adv_enabled", False)),
         "control_scope": selected_control_scope(cfg),
         "control_slice": slice_to_metadata(batch_slice),
         "reference_batch": str(ref_batch),

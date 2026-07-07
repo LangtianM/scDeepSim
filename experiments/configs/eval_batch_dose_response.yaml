@@ -30,6 +30,13 @@ supervision:
   batch_weight: 5.0
   batch_latent_dims: 16
 
+adversarial:
+  enabled: true
+  weight: 10.0
+  warmup_epochs: 0
+  head_hidden: 128
+  condition_embedding_dim: 8
+
 generation:
   direction_method: mean_shift
   control_scope: batch_subspace
@@ -40,4 +47,7 @@ evaluation:
 
 hydra:
   run:
-    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_batch_dose_response
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_supervised_head_ablation
+  sweep:
+    dir: ${paths.root_dir}/experiments/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_supervised_head_ablation
+    subdir: ${hydra.job.num}
