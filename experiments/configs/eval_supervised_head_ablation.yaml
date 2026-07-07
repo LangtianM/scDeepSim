@@ -4,7 +4,7 @@ paths:
   root_dir: ${oc.env:PROJECT_ROOT}
 
 data:
-  n_cells: 5000
+  n_cells: 10000
   n_genes: 2000
   min_genes: 10
   min_cells: 2
@@ -70,3 +70,6 @@ figure:
 hydra:
   run:
     dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_supervised_head_ablation
+  sweep:
+    dir: ${paths.root_dir}/experiments/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_supervised_head_ablation
+    subdir: ${hydra.job.num}
