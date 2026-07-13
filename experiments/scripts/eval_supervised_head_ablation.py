@@ -7,6 +7,7 @@ plain ZITN VAE, classifier-head VAE, and classifier + adversarial-head VAE.
 Usage:
     conda run -n lightning python experiments/scripts/eval_supervised_head_ablation.py
     conda run -n lightning python experiments/scripts/eval_supervised_head_ablation.py run.datasets=[scib_pancreas] run.model_settings=[classifier_heads] vae.max_epochs=1
+    conda run -n lightning python experiments/scripts/eval_supervised_head_ablation.py generation.control_scope=non_celltype_latent
 """
 
 import pyrootutils
@@ -61,6 +62,13 @@ MODEL_DISPLAY_NAMES = {
     "plain_zitn_vae": "Plain ZITN VAE",
     "classifier_heads": "VAE + classifier heads",
     "classifier_plus_adversarial": "VAE + classifier heads + adversarial heads",
+}
+
+CONTROL_SCOPES = {
+    "batch_subspace",
+    "full_latent",
+    "non_celltype_latent",
+    "exclude_celltype",
 }
 
 
@@ -224,12 +232,57 @@ def build_vae_for_setting(adata, n_celltypes, n_batches, cfg, setting_key):
     )
 
 
-def batch_slice_for_setting(vae, setting_key):
-    """Return the latent slice used for batch interpolation."""
+def selected_control_scope(cfg):
+    """Return the configured latent dimensions to perturb."""
+    scope = str(
+        OmegaConf.select(cfg, "generation.control_scope", default="batch_subspace")
+    )
+    if scope not in CONTROL_SCOPES:
+        supported = ", ".join(sorted(CONTROL_SCOPES))
+        raise ValueError(
+            f"Unknown generation.control_scope={scope!r}. "
+            f"Use one of: {supported}"
+        )
+    if scope == "exclude_celltype":
+        return "non_celltype_latent"
+    return scope
+
+
+def _contiguous_indexer(indices):
+    """Return a compact slice when integer indices form one contiguous block."""
+    indices = np.asarray(indices, dtype=int)
+    if indices.size == 0:
+        raise ValueError("Control indexer cannot be empty.")
+    if np.all(np.diff(indices) == 1):
+        return slice(int(indices[0]), int(indices[-1]) + 1)
+    return indices
+
+
+def resolve_control_indexer(vae, setting_key, cfg):
+    """Return the latent dimensions controlled by one ablation setting."""
     setting_key = validate_model_setting(setting_key)
+    latent_dim = int(vae.hparams.latent_dim)
+    scope = selected_control_scope(cfg)
+
+    if scope == "full_latent":
+        return slice(0, latent_dim)
+
+    if scope == "batch_subspace":
+        if setting_key == "plain_zitn_vae":
+            return slice(0, latent_dim)
+        return vae._sup_slices["batch"]
+
     if setting_key == "plain_zitn_vae":
-        return slice(0, int(vae.hparams.latent_dim))
-    return vae._sup_slices["batch"]
+        return slice(0, latent_dim)
+    if "celltype" not in vae._sup_slices:
+        raise ValueError(
+            "generation.control_scope=non_celltype_latent requires a VAE with "
+            "a supervised 'celltype' latent slice."
+        )
+
+    mask = np.ones(latent_dim, dtype=bool)
+    mask[np.arange(latent_dim)[vae._sup_slices["celltype"]]] = False
+    return _contiguous_indexer(np.flatnonzero(mask))
 
 
 def slice_to_metadata(slc):
@@ -239,6 +292,40 @@ def slice_to_metadata(slc):
         "stop": None if slc.stop is None else int(slc.stop),
         "step": None if slc.step is None else int(slc.step),
     }
+
+
+def _indexer_indices(indexer, latent_dim):
+    """Return explicit integer indices selected by a slice or index array."""
+    if isinstance(indexer, slice):
+        return np.arange(latent_dim)[indexer]
+    return np.asarray(indexer, dtype=int)
+
+
+def _index_runs(indices):
+    """Compress sorted integer indices into half-open ranges."""
+    indices = np.asarray(indices, dtype=int)
+    if indices.size == 0:
+        return []
+    breaks = np.where(np.diff(indices) != 1)[0] + 1
+    runs = np.split(indices, breaks)
+    return [
+        {"start": int(run[0]), "stop": int(run[-1]) + 1}
+        for run in runs
+        if run.size
+    ]
+
+
+def indexer_to_metadata(indexer, latent_dim):
+    """JSON-friendly representation of a latent slice or index array."""
+    indices = _indexer_indices(indexer, latent_dim)
+    metadata = {
+        "kind": "slice" if isinstance(indexer, slice) else "indices",
+        "n_dims": int(indices.size),
+        "ranges": _index_runs(indices),
+    }
+    if isinstance(indexer, slice):
+        metadata.update(slice_to_metadata(indexer))
+    return metadata
 
 
 def train_vae_for_setting(
@@ -305,7 +392,7 @@ def resolve_reference_target_batches(adata, cfg):
     return ref_batch, target_batch
 
 
-def run_alpha_sweep(vae, adata, batch_slice, ref_batch, target_batch, cfg):
+def run_alpha_sweep(vae, adata, control_indexer, ref_batch, target_batch, cfg):
     """Encode, transform, decode, and score all configured alpha values."""
     z_all = encode_adata(
         vae,
@@ -320,7 +407,7 @@ def run_alpha_sweep(vae, adata, batch_slice, ref_batch, target_batch, cfg):
         z_all,
         batch_labels=batch_labels,
         cell_types=celltype_labels,
-        batch_slice=batch_slice,
+        batch_slice=control_indexer,
         ref_batch=ref_batch,
         target_batch=target_batch,
         method=cfg.generation.direction_method,
@@ -340,7 +427,7 @@ def run_alpha_sweep(vae, adata, batch_slice, ref_batch, target_batch, cfg):
     for alpha in list(cfg.evaluation.alpha_values):
         alpha = float(alpha)
         log.info("  alpha=%s", alpha)
-        z_shifted = apply_direction(z_ref, direction_info, alpha, batch_slice)
+        z_shifted = apply_direction(z_ref, direction_info, alpha, control_indexer)
         x_shifted = decode_latents(
             vae,
             z_shifted,
@@ -543,17 +630,22 @@ def run_single_setting(dataset_key, setting_key, adata, cfg, output_dir):
         setting_key,
         model_dir,
     )
-    batch_slice = batch_slice_for_setting(vae, setting_key)
+    control_scope = selected_control_scope(cfg)
+    control_indexer = resolve_control_indexer(vae, setting_key, cfg)
+    control_metadata = indexer_to_metadata(
+        control_indexer,
+        int(vae.hparams.latent_dim),
+    )
     log.info(
-        "Batch interpolation slice: %s:%s",
-        batch_slice.start,
-        batch_slice.stop,
+        "Control scope: %s; controlled dims: %s",
+        control_scope,
+        control_metadata["ranges"],
     )
 
     all_metrics, ref_bio, target_bio, direction_info = run_alpha_sweep(
         vae,
         adata,
-        batch_slice,
+        control_indexer,
         ref_batch,
         target_batch,
         cfg,
@@ -569,7 +661,14 @@ def run_single_setting(dataset_key, setting_key, adata, cfg, output_dir):
         "n_batches": int(n_batches),
         "reference_batch": ref_batch,
         "target_batch": target_batch,
-        "batch_slice": slice_to_metadata(batch_slice),
+        "control_scope": control_scope,
+        "control_indexer": control_metadata,
+        "control_slice": control_metadata,
+        "batch_slice": control_metadata,
+        "supervised_slices": {
+            name: slice_to_metadata(slc)
+            for name, slc in getattr(vae, "_sup_slices", {}).items()
+        },
         "direction_method": str(cfg.generation.direction_method),
         "covariance_ridge": float(cfg.generation.covariance_ridge),
         "direction_summary": {

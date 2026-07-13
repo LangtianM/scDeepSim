@@ -50,6 +50,7 @@ adversarial:
   condition_embedding_dim: 8
 
 generation:
+  control_scope: batch_subspace
   direction_method: whitening_recoloring
   covariance_ridge: 1.0e-6
   latent_representation: sample
