@@ -1,10 +1,10 @@
-# Controllable Deep Generative Simulation for Single-Cell Data
+# scDeepSim Figure Outline
 
 ## Central Claim
 
 The trade-off between simulation quality and controllability is not fundamental. A deep generative simulator can learn realistic single-cell data distributions while exposing interpretable control over technical and biological signals, including batch effects and developmental trajectories.
 
-## Main Figures
+## Figure Outline
 
 ### Figure 1. Method Overview
 
