@@ -50,9 +50,18 @@ def lisi(X, labels, k=30):
     label_map = {l: i for i, l in enumerate(unique_labels)}
     int_labels = np.array([label_map[l] for l in labels])
 
-    nn = NearestNeighbors(n_neighbors=k + 1, algorithm="auto")
+    if X.ndim != 2 or X.shape[0] != labels.shape[0]:
+        raise ValueError("X and labels must contain the same number of cells.")
+    if not isinstance(k, (int, np.integer)) or k <= 0:
+        raise ValueError("k must be a positive integer.")
+    if k >= X.shape[0]:
+        raise ValueError("k must be smaller than the number of cells.")
+
+    nn = NearestNeighbors(n_neighbors=k, algorithm="auto")
     nn.fit(X)
-    neighbours = nn.kneighbors(X, return_distance=False)[:, 1:]  # exclude self
+    # Querying with X=None makes sklearn exclude each training row from its
+    # own neighbors, including when duplicated coordinates make distance ties.
+    neighbours = nn.kneighbors(X=None, return_distance=False)
 
     lisi_values = np.empty(len(X))
     for i in range(len(X)):
@@ -113,3 +122,65 @@ def celltype_rf_accuracy(X, celltype_labels, test_size=0.2, seed=42):
     clf.fit(X_train, y_train)
     y_pred = clf.predict(X_test)
     return float(accuracy_score(y_test, y_pred)), float(balanced_accuracy_score(y_test, y_pred))
+
+
+# ---------------------------------------------------------------------------
+# Controlled batch-integration benchmark metrics
+# ---------------------------------------------------------------------------
+
+def batch_asw_within_celltype(X, batch_labels, celltype_labels):
+    """Compute absolute batch ASW stratified equally across cell types.
+
+    Silhouette values are computed separately inside each cell type so the
+    score measures technical separation without allowing biological clusters
+    to dominate. Each observed cell type contributes equal weight. Lower is
+    better and the result lies in ``[0, 1]``.
+    """
+    X = np.asarray(X, dtype=np.float64)
+    batch_labels = np.asarray(batch_labels)
+    celltype_labels = np.asarray(celltype_labels)
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional cell-by-feature matrix.")
+    if X.shape[0] == 0:
+        raise ValueError("At least one cell is required.")
+    if batch_labels.ndim != 1 or celltype_labels.ndim != 1:
+        raise ValueError("batch_labels and celltype_labels must be one-dimensional.")
+    if not (X.shape[0] == batch_labels.shape[0] == celltype_labels.shape[0]):
+        raise ValueError("X and both label arrays must have matching lengths.")
+    if not np.isfinite(X).all():
+        raise ValueError("X must contain only finite values.")
+
+    per_celltype = []
+    for celltype in np.unique(celltype_labels):
+        mask = celltype_labels == celltype
+        X_group = X[mask]
+        group_batches = LabelEncoder().fit_transform(batch_labels[mask])
+        n_batches = np.unique(group_batches).size
+        if n_batches < 2 or X_group.shape[0] <= n_batches:
+            raise ValueError(
+                f"Cell type {celltype!r} must contain at least two batches "
+                "and more cells than batch labels."
+            )
+        scores = silhouette_samples(X_group, group_batches)
+        per_celltype.append(float(np.mean(np.abs(scores))))
+    return float(np.mean(per_celltype))
+
+
+def compute_batch_integration_metrics(
+    X,
+    batch_labels,
+    celltype_labels,
+    lisi_k=30,
+):
+    """Return the four raw metrics used by the integration benchmark."""
+    metrics = {
+        "batch_asw": batch_asw_within_celltype(
+            X,
+            batch_labels,
+            celltype_labels,
+        ),
+        "ilisi": ilisi(X, batch_labels, k=lisi_k),
+        "celltype_asw": celltype_asw(X, celltype_labels),
+        "clisi": clisi(X, celltype_labels, k=lisi_k),
+    }
+    return {name: float(value) for name, value in metrics.items()}

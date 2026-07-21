@@ -65,6 +65,30 @@ External baselines may create script-local run directories under
 directory. Cache directories are configured through `cfg.cache.dir`; by default
 they live under `experiments/baseline_cache/figure3_uncontrolled_quality`.
 
+## Batch-Integration Benchmark Dependencies
+
+`benchmark_batch_integration.py` uses Scanpy's ComBat adapter directly. Harmony
+and Scanorama are optional, experiment-only dependencies and are deliberately
+not part of the core `scdeepsim` package requirements. Install versions that
+match the Scanpy 1.11 adapter behavior in the `lightning` environment:
+
+```bash
+conda activate lightning
+python -m pip install harmonypy==0.0.10 scanorama==1.7.4
+```
+
+The Harmony pin is important: Scanpy 1.11 expects the legacy `harmonypy`
+corrected-matrix orientation. Each adapter reports a structured failure instead
+of stopping the remaining benchmark tasks when an optional dependency is
+unavailable.
+
+Run the full benchmark or its reduced acceptance path with:
+
+```bash
+python experiments/scripts/benchmark_batch_integration.py
+python experiments/scripts/benchmark_batch_integration.py smoke_test.enabled=true
+```
+
 ## Trajectory-Inference Benchmarking
 
 The TI helpers convert generated latent trajectories into benchmark `AnnData`

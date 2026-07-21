@@ -1,0 +1,122 @@
+seed: 42
+
+paths:
+  root_dir: ${oc.env:PROJECT_ROOT}
+  data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
+
+data:
+  n_cells: null
+  n_genes: 2000
+  min_genes: 10
+  min_cells: 2
+  counts_layer: counts
+  target_sum: 10000.0
+  celltype_key: celltype
+  batch_key: tech
+  benchmark_celltypes:
+    - acinar
+    - activated_stellate
+    - alpha
+    - beta
+    - delta
+    - ductal
+
+model:
+  setting: classifier_plus_adversarial
+
+vae:
+  latent_dim: 128
+  enc_hidden: [512, 256]
+  dec_hidden: [256, 512]
+  input_dropout: 0.1
+  beta: 5.0
+  beta_warmup_epochs: 10
+  zero_inflated: true
+  sup_head_hidden: 64
+  max_epochs: 100
+  batch_size: 256
+
+supervision:
+  celltype_weight: 5.0
+  celltype_latent_dims: 8
+  batch_weight: 5.0
+  batch_latent_dims: 8
+
+adversarial:
+  enabled: true
+  weight: 10.0
+  warmup_epochs: 0
+  head_hidden: 128
+  condition_embedding_dim: 8
+
+diffusion:
+  objective: pred_v
+  hidden_dims: [512, 256, 256, 128]
+  beta_schedule: cosine
+  dropout: 0.05
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  use_ema: true
+  ema_decay: 0.999
+  guidance_dropout: 0.1
+  guidance_scale: 1.5
+  timesteps: 1000
+  sampling_steps: 1000
+  max_epochs: 200
+  batch_size: 256
+
+generation:
+  sample_seeds: [42, 43, 44]
+  direction_seed: 42
+  source_batch: inDrop3
+  target_batch: smartseq2
+  cells_per_type_per_batch: 500
+  alpha_values: [0.0, 0.5, 1.0, 1.5, 2.0]
+  covariance_ridge: 1.0e-6
+  control_scope: batch_subspace
+  latent_representation: sample
+  encode_batch_size: 1024
+  decode_batch_size: 1024
+
+integration:
+  methods: [unintegrated, combat, harmony, scanorama]
+  n_components: 30
+  continue_on_failure: true
+
+evaluation:
+  lisi_k: 30
+
+cache:
+  enabled: true
+  reuse: true
+  force_recompute: false
+  dir: ${paths.root_dir}/experiments/batch_integration_cache
+
+training:
+  logger: true
+  log_every_n_steps: 50
+  enable_progress_bar: true
+  enable_model_summary: true
+
+figure:
+  dpi: 300
+
+# Set smoke_test.enabled=true for the acceptance smoke path. These values are
+# applied by the script so every reduced choice remains recorded in the
+# resolved config.
+smoke_test:
+  enabled: false
+  n_cells: 2000
+  n_genes: 100
+  celltypes: [acinar, alpha]
+  cells_per_type: 20
+  sample_seeds: [42]
+  alpha_values: [0.0, 1.0]
+  vae_epochs: 1
+  diffusion_epochs: 1
+  diffusion_steps: 4
+  methods: [unintegrated, combat]
+
+hydra:
+  run:
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_benchmark_batch_integration

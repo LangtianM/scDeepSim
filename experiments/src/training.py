@@ -8,13 +8,18 @@ script-level runs.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytorch_lightning as pl
+import torch
 from hydra.core.hydra_config import HydraConfig
 from omegaconf import OmegaConf
 
 from scdeepsim.dataset import ScDataModule
+from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
 
@@ -84,6 +89,7 @@ def train_supervised_vae(
     enable_checkpointing: bool = False,
     logger=True,
     adversarial_config=None,
+    checkpoint_path: str | Path | None = None,
 ) -> TruncatedNormalVAE:
     """Train a VAE with provided supervised heads and label mapping.
 
@@ -121,6 +127,10 @@ def train_supervised_vae(
         gradient_clip_val=vae.gradient_clip_val,
     )
     trainer.fit(vae, data_module)
+    if checkpoint_path is not None:
+        checkpoint_path = Path(checkpoint_path)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        trainer.save_checkpoint(str(checkpoint_path))
     return vae
 
 
@@ -385,3 +395,136 @@ def train_batch_vae(adata, n_batches, cfg):
         label_keys={"batch": {"obs_key": "batch", "type": "categorical"}},
         log_every_n_steps=50,
     )
+
+
+def train_joint_conditioned_diffusion(
+    latent_adata,
+    cfg,
+    condition_cardinalities: Mapping[str, int],
+    *,
+    condition_obs_keys: Mapping[str, str] | None = None,
+    default_root_dir: str | None = None,
+    checkpoint_path: str | Path | None = None,
+) -> LightningDiffusion:
+    """Train latent diffusion with multiple categorical conditions.
+
+    ``condition_cardinalities`` order defines the concatenated one-hot layout.
+    Training uses the empirical row frequencies in ``latent_adata``; no
+    class-balancing sampler is enabled.
+    """
+    cardinalities = {
+        str(name): int(cardinality)
+        for name, cardinality in condition_cardinalities.items()
+    }
+    obs_keys = dict(condition_obs_keys or {name: name for name in cardinalities})
+    if set(obs_keys) != set(cardinalities):
+        raise ValueError(
+            "condition_obs_keys must define exactly the configured conditions."
+        )
+    missing_columns = [key for key in obs_keys.values() if key not in latent_adata.obs]
+    if missing_columns:
+        raise ValueError(
+            f"Missing encoded condition columns in latent AnnData: {missing_columns}"
+        )
+
+    diffusion = LightningDiffusion(
+        input_dim=int(latent_adata.n_vars),
+        condition_cardinalities=cardinalities,
+        hidden_dims=list(cfg.diffusion.hidden_dims),
+        dropout=float(cfg.diffusion.dropout),
+        use_classifier_free_guidance=True,
+        guidance_dropout=float(cfg.diffusion.guidance_dropout),
+        num_timesteps=int(cfg.diffusion.timesteps),
+        beta_schedule=str(cfg.diffusion.beta_schedule),
+        guidance_scale=float(cfg.diffusion.guidance_scale),
+        sampling_timesteps=int(cfg.diffusion.sampling_steps),
+        objective=str(cfg.diffusion.objective),
+        ema_decay=float(cfg.diffusion.ema_decay),
+        lr=float(cfg.diffusion.lr),
+        weight_decay=float(cfg.diffusion.weight_decay),
+        use_ema=bool(cfg.diffusion.use_ema),
+    )
+    data_module = ScDataModule(
+        latent_adata,
+        label_keys={
+            name: {"obs_key": obs_keys[name], "type": "categorical"}
+            for name in cardinalities
+        },
+        batch_size=int(cfg.diffusion.batch_size),
+        balanced_sampling=False,
+    )
+    trainer = pl.Trainer(
+        max_epochs=int(cfg.diffusion.max_epochs),
+        accelerator="auto",
+        devices="auto",
+        log_every_n_steps=int(
+            OmegaConf.select(cfg, "training.log_every_n_steps", default=50)
+        ),
+        enable_checkpointing=False,
+        enable_progress_bar=bool(
+            OmegaConf.select(cfg, "training.enable_progress_bar", default=True)
+        ),
+        enable_model_summary=bool(
+            OmegaConf.select(cfg, "training.enable_model_summary", default=True)
+        ),
+        logger=bool(OmegaConf.select(cfg, "training.logger", default=True)),
+        default_root_dir=default_root_dir or hydra_output_dir(),
+    )
+    trainer.fit(diffusion, data_module)
+    if checkpoint_path is not None:
+        checkpoint_path = Path(checkpoint_path)
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        trainer.save_checkpoint(str(checkpoint_path))
+    return diffusion
+
+
+@torch.no_grad()
+def sample_joint_conditioned_latents(
+    diffusion: LightningDiffusion,
+    conditions: Mapping[str, Any],
+    *,
+    batch_size: int = 1024,
+    sampling_timesteps: int | None = None,
+    guidance_scale: float | None = None,
+    use_ema: bool | None = None,
+    progress: bool = False,
+) -> np.ndarray:
+    """Sample latent rows for aligned named categorical condition arrays."""
+    if not conditions:
+        raise ValueError("conditions must not be empty.")
+    arrays: dict[str, np.ndarray] = {}
+    n_samples: int | None = None
+    for name, values in conditions.items():
+        array = np.asarray(values)
+        if array.ndim != 1:
+            raise ValueError(f"Condition {name!r} must be one-dimensional.")
+        if not np.issubdtype(array.dtype, np.integer):
+            raise TypeError(f"Condition {name!r} must contain integers.")
+        if n_samples is None:
+            n_samples = int(array.shape[0])
+        elif array.shape[0] != n_samples:
+            raise ValueError("All condition arrays must have the same length.")
+        arrays[name] = array.astype(np.int64, copy=False)
+
+    if n_samples is None or n_samples <= 0:
+        raise ValueError("At least one condition row is required.")
+    if int(batch_size) <= 0:
+        raise ValueError("batch_size must be positive.")
+
+    chunks: list[np.ndarray] = []
+    for start in range(0, n_samples, int(batch_size)):
+        stop = min(start + int(batch_size), n_samples)
+        labels = {
+            name: torch.as_tensor(values[start:stop], dtype=torch.long)
+            for name, values in arrays.items()
+        }
+        samples = diffusion.sample(
+            num_samples=stop - start,
+            sampling_timesteps=sampling_timesteps,
+            labels=labels,
+            use_ema=use_ema,
+            guidance_scale=guidance_scale,
+            progress=progress,
+        )
+        chunks.append(samples.detach().cpu().numpy().astype(np.float32))
+    return np.vstack(chunks)
