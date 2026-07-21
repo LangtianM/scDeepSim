@@ -373,28 +373,25 @@ Dose-response evaluation of batch-strength manipulation using Gaussian OT transp
 
 #### Batch Integration Methods Benchmarking
 
-**Status:** Completed July 21, 2026. The full run is stored in `experiments/outputs/batch_integration_full/`.
+**Status:** The full run is stored in `experiments/outputs/batch_integration_full/`.
 
-The benchmark used all 16,382 cells and one fixed set of 2,000 HVGs from `data/scIBPancreas.h5ad`. A classifier-plus-adversarial VAE used a 128-dimensional latent space with cell-type dimensions $[0,8)$ and batch dimensions $[8,16)$. The latent diffusion model was jointly conditioned on 14 cell types and 9 technologies. A pooled, composition-matched inDrop3-to-smartseq2 whitening-recoloring map was estimated from 2,062 cells per technology across acinar, activated stellate, alpha, beta, delta, and ductal cells.
+##### Benchmark Design
 
-For each of seeds 42, 43, and 44, two independent inDrop3-conditioned cohorts were generated, each with exactly 500 cells from each of the six benchmark cell types. Cohort A was kept unchanged and the batch map was applied only to cohort B at $\alpha \in \{0,0.5,1.0,1.5,2.0\}$. Unintegrated PCA, ComBat, Harmony, and Scanorama were evaluated on every task. All 60 method/task rows completed successfully with finite metrics.
+The benchmark is designed as a controlled stress test in which the biological composition, sampled cells, genes, and integration parameters are fixed while only the strength of an introduced technical batch effect changes.
 
-The unintegrated representation shows the intended dose response: mean batch ASW rises from 0.009 at $\alpha=0$ to 0.171, 0.400, 0.453, and 0.486 as $\alpha$ increases, while mean iLISI falls from 1.940 to 1.301, 1.011, 1.003, and 1.001. Thus, the post-hoc batch intervention produces a strong, continuously tunable technical signal. Without integration, cell-type ASW declines from 0.374 to 0.201 at $\alpha=2$, although cLISI remains close to 1.08; high extrapolation therefore distorts global cell-type geometry more clearly than local cell-type neighbourhood purity.
+1. **Fit one shared generative model.** The experiment uses all 16,382 cells and one fixed set of 2,000 HVGs from the `counts` layer of `data/scIBPancreas.h5ad`, followed by library-size normalization and `log1p`. A classifier-plus-adversarial VAE has a 128-dimensional latent space with cell-type dimensions $[0,8)$ and batch dimensions $[8,16)$. A single latent diffusion model is jointly conditioned on all 14 cell types and 9 technologies. These models are trained once and reused for every benchmark task.
 
-Harmony is the strongest integration method in this run. At $\alpha=1$, it reduces batch ASW from 0.400 to 0.082 and raises iLISI from 1.011 to 1.491, while increasing cell-type ASW from 0.302 to 0.416. At $\alpha=2$, the stress-test endpoint is:
+2. **Estimate one real-data batch map.** The technical intervention is a pooled inDrop3-to-smartseq2 whitening-recoloring map fitted only in the eight-dimensional VAE batch block. To avoid confounding batch and cell-type composition, real cells are restricted to acinar, activated stellate, alpha, beta, delta, and ductal cells, and each cell type contributes the same number of inDrop3 and smartseq2 cells, determined by the smaller technology-specific group. Pooling these matched strata gives 2,062 cells per technology. A covariance ridge of $10^{-6}I$ is added when estimating the affine map.
 
-| Method | Batch ASW ↓ | iLISI ↑ | Cell-type ASW ↑ | cLISI ↓ |
-|---|---:|---:|---:|---:|
-| Unintegrated PCA | 0.486 | 1.001 | 0.201 | 1.083 |
-| ComBat | 0.195 | 1.058 | 0.305 | 1.087 |
-| Harmony | **0.067** | **1.458** | **0.353** | 1.085 |
-| Scanorama | 0.486 | 1.001 | 0.201 | 1.083 |
+3. **Generate paired de novo cohorts.** For each sampling seed (42, 43, and 44), the diffusion model independently generates cohort A and cohort B. Both cohorts are conditioned on inDrop3 and contain exactly 500 cells from each of the six cell types, giving 3,000 cells per cohort and 6,000 cells per integration task. This creates known, balanced cell-type composition without borrowing real observations at generation time.
 
-ComBat provides partial correction but leaves substantially more residual batch separation than Harmony at high $\alpha$. Harmony also preserves the global cell-type separation measured by ASW better than ComBat. cLISI remains similar and close to its optimum for all representations, so the biological difference between methods is expressed mainly in global rather than local cell-type geometry.
+4. **Vary only intervention strength.** The same two base latent cohorts are reused for $\alpha \in \{0,0.5,1.0,1.5,2.0\}$. Cohort A is unchanged at every alpha. Cohort B is transformed only in latent dimensions $[8,16)$ using sample-linear affine interpolation toward the smartseq2 endpoint; all cell-type and residual coordinates are asserted unchanged. Thus $\alpha=0$ is a synthetic null, $\alpha=1$ applies the full estimated real-data map, and $\alpha>1$ extrapolates to stronger-than-observed batch effects. No moment anchoring is applied after diffusion sampling.
 
-Scanorama requires follow-up before it can be interpreted as a baseline: its saved embeddings are exactly identical to the shared unintegrated PCA embeddings for every seed and alpha, even though the adapter returned success. The present result therefore indicates an effective no-op under the default parameters, not evidence that Scanorama intrinsically fails to correct these data.
+5. **Apply integration methods under fixed inputs.** Each decoded task uses the same 2,000 genes and is passed to unintegrated PCA, ComBat, Harmony, and Scanorama. Methods receive only the synthetic batch labels, never cell-type labels. Expression is not renormalized, rescaled, or subjected to another HVG selection. Unintegrated, Harmony, and Scanorama start from the same fixed-seed 30-dimensional PCA; ComBat corrects expression first and is followed by a fresh 30-dimensional PCA. Published/default method parameters are kept fixed across alpha values.
 
-No moment anchoring was applied after diffusion sampling. Across the six generated source cohorts, the batch-block mean has an $L_2$ distance of 0.120--0.158 from the real composition-matched inDrop3 mean, and the relative covariance Frobenius error is 0.085--0.102. This shows that source-conditioned diffusion sampling approximately, but not exactly, reproduces the real source moments.
+6. **Evaluate technical removal and biological preservation.** Every successful 30-dimensional embedding is scored with four complementary metrics. Batch ASW is computed within each cell type using absolute silhouette values and then averaged equally across cell types (lower is better). Raw unweighted $k=30$ iLISI measures local batch mixing (higher is better). Signed cell-type ASW measures global biological separation (higher is better), while raw $k=30$ cLISI measures local cell-type purity (lower is better). Results are summarized as means with $\pm1$ SD over the three independently generated cohort pairs.
+
+This paired construction is important: integration methods see exactly the same cells at a given seed and alpha, and comparisons across alpha reuse the same underlying latent cohorts. Consequently, changes in integration performance can be attributed to the controlled batch intervention rather than to composition changes or resampling noise. Adapter failures are recorded without stopping other methods; the completed run produced all $3 \times 5 \times 4=60$ rows successfully with finite metrics.
 
 ![Controlled Batch Integration Benchmark](../experiments/outputs/batch_integration_full/results/batch_integration_response_curves.png)
 
