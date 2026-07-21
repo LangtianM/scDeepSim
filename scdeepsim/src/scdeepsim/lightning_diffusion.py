@@ -3,6 +3,7 @@ PyTorch Lightning module for diffusion models on single-cell data.
 Clean, easy-to-use interface compatible with ScDataModule.
 """
 
+from collections.abc import Mapping
 from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
@@ -28,7 +29,7 @@ class LightningDiffusion(pl.LightningModule):
         self,
         # U-Net parameters
         input_dim: int,  # dimension of input data (number of genes)
-        num_classes: int,  # number of conditional classes
+        num_classes: int | None = None,  # number of conditional classes
         hidden_dims: List[int] = [512, 512, 256, 128],  # hidden dimensions for U-Net
         dropout: float = 0.05,  # dropout rate for U-Net
         use_classifier_free_guidance: bool = True,  # whether to use classifier-free guidance
@@ -44,11 +45,15 @@ class LightningDiffusion(pl.LightningModule):
         lr: float = 1e-4,  # learning rate
         weight_decay: float = 1e-4,  # weight decay for optimizer
         use_ema: bool = True,  # whether to use EMA
+        condition_cardinalities: Mapping[str, int] | None = None,
     ):
         """
         Args:
             input_dim: dimension of input data (number of genes)
             num_classes: number of conditional classes (e.g., cell types)
+            condition_cardinalities: ordered mapping from joint categorical
+                condition names to their cardinalities. Mutually exclusive with
+                ``num_classes``.
             hidden_dims: list of hidden dimensions for U-Net
             num_timesteps: number of diffusion steps
             beta_schedule: 'linear' or 'cosine'
@@ -63,13 +68,48 @@ class LightningDiffusion(pl.LightningModule):
             objective: "pred_noise" or "pred_v"
         """
         super().__init__()
+        if num_classes is not None and condition_cardinalities is not None:
+            raise ValueError(
+                "num_classes and condition_cardinalities are mutually exclusive."
+            )
+        if num_classes is None and condition_cardinalities is None:
+            raise ValueError(
+                "Provide either num_classes or condition_cardinalities."
+            )
+        if num_classes is not None:
+            if isinstance(num_classes, bool) or int(num_classes) <= 0:
+                raise ValueError("num_classes must be a positive integer.")
+            condition_width = int(num_classes)
+            self.condition_cardinalities: dict[str, int] | None = None
+            self.condition_names: tuple[str, ...] = ()
+        else:
+            normalized_cardinalities: dict[str, int] = {}
+            for name, cardinality in condition_cardinalities.items():
+                if not isinstance(name, str) or not name:
+                    raise ValueError("Condition names must be non-empty strings.")
+                if isinstance(cardinality, bool) or not isinstance(cardinality, int):
+                    raise TypeError(
+                        f"Cardinality for condition {name!r} must be an integer."
+                    )
+                if cardinality <= 0:
+                    raise ValueError(
+                        f"Cardinality for condition {name!r} must be positive."
+                    )
+                normalized_cardinalities[name] = int(cardinality)
+            if not normalized_cardinalities:
+                raise ValueError("condition_cardinalities must not be empty.")
+            self.condition_cardinalities = normalized_cardinalities
+            self.condition_names = tuple(normalized_cardinalities)
+            condition_width = sum(normalized_cardinalities.values())
+            condition_cardinalities = normalized_cardinalities
+
         self.save_hyperparameters()
 
         # Denoising model
         self.model = DenoisingUNet(
             input_dim=input_dim,
             hidden_dims=hidden_dims,
-            num_classes=num_classes,
+            num_classes=condition_width,
             dropout=dropout,
             use_classifier_free_guidance=use_classifier_free_guidance,
             guidance_dropout=guidance_dropout,
@@ -89,7 +129,7 @@ class LightningDiffusion(pl.LightningModule):
             self.ema_model = DenoisingUNet(
                 input_dim=input_dim,
                 hidden_dims=hidden_dims,
-                num_classes=num_classes,
+                num_classes=condition_width,
                 dropout=dropout,
                 use_classifier_free_guidance=use_classifier_free_guidance,
                 guidance_dropout=0.0,  # No dropout for EMA
@@ -102,13 +142,21 @@ class LightningDiffusion(pl.LightningModule):
             self.ema_model = None
 
     def forward(
-        self, x: torch.Tensor, t: torch.Tensor, labels: torch.Tensor
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        labels: Optional[torch.Tensor | Mapping[str, torch.Tensor]],
     ) -> torch.Tensor:
         """Forward pass through the model."""
-        return self.model(x, t, labels)
+        return self.model(x, t, self._format_labels(labels, x.shape[0]))
 
     def training_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
+        self,
+        batch: Tuple[
+            torch.Tensor,
+            torch.Tensor | Mapping[str, torch.Tensor],
+        ],
+        batch_idx: int,
     ) -> torch.Tensor:
         """
         Training step.
@@ -138,7 +186,12 @@ class LightningDiffusion(pl.LightningModule):
         return loss
 
     def validation_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int
+        self,
+        batch: Tuple[
+            torch.Tensor,
+            torch.Tensor | Mapping[str, torch.Tensor],
+        ],
+        batch_idx: int,
     ) -> torch.Tensor:
         """
         Validation step.
@@ -199,7 +252,7 @@ class LightningDiffusion(pl.LightningModule):
         self,
         num_samples: int,
         sampling_timesteps: Optional[int] = None,
-        labels: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor | Mapping[str, torch.Tensor]] = None,
         use_ema: Optional[bool] = None,
         guidance_scale: Optional[float] = None,
         progress: bool = True,
@@ -214,7 +267,8 @@ class LightningDiffusion(pl.LightningModule):
             num_samples: number of samples to generate
             sampling_timesteps: number of sampling steps (None = use max)
             labels: conditional labels [num_samples] for LabelEncoder,
-                [num_samples, num_classes] for OneHotEncoder
+                [num_samples, num_classes] for OneHotEncoder, or an exact
+                mapping of named integer label tensors in joint mode.
             use_ema: whether to use EMA model (if available)
             guidance_scale: classifier-free guidance scale (None = use default)
             progress: whether to show progress bar
@@ -293,7 +347,9 @@ class LightningDiffusion(pl.LightningModule):
         return loss
 
     def _format_labels(
-        self, labels: Optional[torch.Tensor], batch_size: int
+        self,
+        labels: Optional[torch.Tensor | Mapping[str, torch.Tensor]],
+        batch_size: int,
     ) -> Optional[torch.Tensor]:
         """
         Normalize label tensors while preserving the possibility of unconditional
@@ -301,6 +357,63 @@ class LightningDiffusion(pl.LightningModule):
         """
         if labels is None:
             return None
+
+        if self.condition_cardinalities is not None:
+            if not isinstance(labels, Mapping):
+                raise TypeError(
+                    "Joint-conditioned diffusion requires a mapping of labels."
+                )
+            actual_keys = set(labels)
+            expected_keys = set(self.condition_names)
+            if actual_keys != expected_keys:
+                missing = sorted(expected_keys - actual_keys)
+                extra = sorted(actual_keys - expected_keys)
+                raise ValueError(
+                    "Joint condition keys do not match configuration: "
+                    f"missing={missing}, extra={extra}."
+                )
+
+            integer_dtypes = {
+                torch.uint8,
+                torch.int8,
+                torch.int16,
+                torch.int32,
+                torch.int64,
+            }
+            one_hot_parts = []
+            for name in self.condition_names:
+                values = labels[name]
+                if not isinstance(values, torch.Tensor):
+                    raise TypeError(
+                        f"Joint condition {name!r} must be a torch.Tensor."
+                    )
+                if values.ndim != 1 or values.shape[0] != batch_size:
+                    raise ValueError(
+                        f"Joint condition {name!r} must have shape "
+                        f"({batch_size},), got {tuple(values.shape)}."
+                    )
+                if values.dtype not in integer_dtypes:
+                    raise TypeError(
+                        f"Joint condition {name!r} must use an integer dtype."
+                    )
+                values = values.to(device=self.device, dtype=torch.long)
+                cardinality = self.condition_cardinalities[name]
+                if values.numel() and (
+                    torch.any(values < 0) or torch.any(values >= cardinality)
+                ):
+                    raise ValueError(
+                        f"Joint condition {name!r} contains values outside "
+                        f"[0, {cardinality})."
+                    )
+                one_hot_parts.append(
+                    torch.nn.functional.one_hot(
+                        values, num_classes=cardinality
+                    ).float()
+                )
+            return torch.cat(one_hot_parts, dim=-1)
+
+        if isinstance(labels, Mapping):
+            raise TypeError("Single-label diffusion requires a tensor of labels.")
 
         labels = labels.to(self.device)
         if labels.dim() == 1 and labels.dtype != torch.long:
