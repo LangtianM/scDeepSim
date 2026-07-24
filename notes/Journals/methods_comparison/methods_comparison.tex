@@ -31,9 +31,8 @@
 \noindent\textbf{Comparison framework.}
 The comparison separates how a method represents the data-generating process,
 how it produces new cells, the domain in which a user can control the output,
-and the basis of the variables available for benchmarking.  It characterises
-method workflows and control semantics rather than empirical simulation
-fidelity.
+and the semantics of that control.  It characterises method workflows and
+control semantics rather than empirical simulation fidelity.
 
 \begin{description}
   \item[Independent generation.]
@@ -67,14 +66,6 @@ fidelity.
   observed conditions; and a \emph{continuous strength sweep} varies the
   numerical magnitude of a named intervention.
 
-  \item[Control and benchmark basis.]
-  \emph{Mechanism-defined} variables follow the simulated dynamics;
-  \emph{design-defined} variables follow a specified or fitted experimental
-  design; \emph{observed-label-defined} controls use annotations present in the
-  reference data; \emph{contrast-defined} controls derive from a learned
-  difference between observed conditions; and \emph{intervention-defined}
-  variables are assigned by a parameterised operation and are therefore known
-  by construction.
 \end{description}
 
 \clearpage
@@ -84,82 +75,72 @@ fidelity.
 \small
 \setlength{\tabcolsep}{5pt}
 \renewcommand{\arraystretch}{1.18}
-\begin{tabularx}{\linewidth}{@{}P{0.18\linewidth}YYYY@{}}
+\begin{tabularx}{\linewidth}{@{}P{0.18\linewidth}YYY@{}}
 \toprule
 \textbf{Method} &
 \textbf{Model basis} &
 \textbf{Generation workflow} &
-\textbf{Control domain} &
-\textbf{Control and benchmark basis} \\
+\textbf{Control domain} \\
 \midrule
-\multicolumn{5}{@{}l}{\textit{Mechanistic forward simulation}} \\
+\multicolumn{4}{@{}l}{\textit{Mechanistic forward simulation}} \\
 \addlinespace[0.2em]
 dyngen~\citep{cannoodt2021dyngen} &
 mechanistic &
 forward simulation &
-parameter sweep &
-mechanism-defined \\
+parameter sweep \\
 \addlinespace[0.6em]
 
-\multicolumn{5}{@{}l}{\textit{Fitted statistical sampling}} \\
+\multicolumn{4}{@{}l}{\textit{Fitted statistical sampling}} \\
 \addlinespace[0.2em]
 Splatter~\citep{zappia2017splatter} &
 fitted statistical &
 parametric sampling &
-design/covariate specification &
-design-defined \\
+design/covariate specification \\
 \addlinespace
 scDesign3~\citep{song2024scdesign3} &
 fitted statistical &
 fitted-distribution sampling &
-design/covariate specification &
-design-defined \\
+design/covariate specification \\
 \addlinespace
 ZINB-WaVE~\citep{risso2018general} &
 fitted statistical &
 fitted-distribution sampling &
-design/covariate specification &
-design-defined \\
+design/covariate specification \\
 \addlinespace[0.6em]
 
-\multicolumn{5}{@{}l}{\textit{Deep learned-distribution sampling}} \\
+\multicolumn{4}{@{}l}{\textit{Deep learned-distribution sampling}} \\
 \addlinespace[0.2em]
 cscGAN~\citep{marouf2020realistic} &
 deep learned &
 learned-distribution sampling &
-label selection &
-observed-label-defined \\
+label selection \\
 \addlinespace
 scDiffusion~\citep{luo2024scdiffusion} &
 deep learned &
 learned-distribution sampling &
-label selection &
-observed-label-defined \\
+label selection \\
 \addlinespace
 \textbf{scDeepSim} &
 \textbf{deep learned} &
 \textbf{learned-distribution sampling} &
-\textbf{continuous strength sweep} &
-\textbf{intervention-defined} \\
+\textbf{continuous strength sweep} \\
 \addlinespace[0.6em]
 
-\multicolumn{5}{@{}l}{\textit{Observation-dependent generation and transformation}} \\
+\multicolumn{4}{@{}l}{\textit{Observation-dependent generation and transformation}} \\
 \addlinespace[0.2em]
 scVI~\citep{lopez2018deep} &
 deep learned &
 posterior reconstruction &
-reference conditioning &
-observed-label-defined \\
+reference conditioning \\
 \addlinespace
 scGen~\citep{lotfollahi2019scgen} &
 deep learned &
 source-cell transformation &
-contrast transfer &
-contrast-defined \\
+contrast transfer \\
 \bottomrule
 \end{tabularx}
 
-\caption{Comparison of generation workflows, control domains, and benchmark-variable bases.  scDeepSim is distinguished by the combination of deep learned-distribution sampling, a continuous strength sweep, and intervention-defined benchmark variables.}
+\caption{Comparison of generation workflows and control domains.  scDeepSim is distinguished by the combination of deep learned-distribution sampling and a continuous strength sweep.}
 \label{tab:method-comparison}
 
 \vspace{0.5em}
@@ -173,8 +154,8 @@ reconstruction.  The scVI row centres the posterior-predictive reconstruction
 comparison.  Its separate prior baseline is not shown as another row because
 the study implementation borrows observed library sizes and covariates.
 scDeepSim's observed-label conditioning selects the generated population,
-whereas its continuous interventions provide the intervention-defined
-benchmark variables.
+whereas its continuous interventions vary the strength of a named
+intervention.
 \end{minipage}
 \end{table}
 \end{landscape}

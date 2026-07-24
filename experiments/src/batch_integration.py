@@ -284,7 +284,7 @@ def run_scanorama(
         "adjusted_basis": "X_scanorama",
         "knn": 20,
         "sigma": 15,
-        "approx": True,
+        "approx": False,
         "alpha": 0.1,
         "batch_size": 5000,
     }
@@ -329,6 +329,7 @@ def run_scanorama(
             key="synthetic_batch",
             basis="X_pca",
             adjusted_basis="X_scanorama",
+            approx=False,
         )
         embedding_sorted = np.asarray(work.obsm["X_scanorama"])
         return embedding_sorted[inverse_idx]
