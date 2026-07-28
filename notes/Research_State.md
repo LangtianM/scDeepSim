@@ -4,9 +4,9 @@
 
 Among existing simulators, there is a fundamental trade-off between simulation quality and controllability. The most accurate simulators are often based on deep learning models, which do not expose interpretable parameters that map onto data characteristics such as means, variances, or zero-inflation rates. Classical statistical simulators offer explicit parametric control over these characteristics but fail to capture the complex, high-dimensional structure of real single-cell data.
 
-This study addresses this trade-off by adapting disentangled variational autoencoders and classifier-free guided latent diffusion models for controlled deep-learning-based generation of single-cell data.
+This study addresses this trade-off by adapting variational autoencoders with supervision heads and adversarial heads and classifier-free guided latent diffusion models for controlled deep-learning-based generation of single-cell data.
 
-**Core Claim:** The trade-off between simulation quality and controllability is not fundamental. Modern generative models can be trained to produce high-fidelity synthetic data while still supporting explicit control over biologically meaningful signals such as batch effects and developmental trajectories.
+**Central Claim:** scDeepSim combines deep learning based single cell generation with interpretable control, enabling realistic single-cell benchmarks with known, tunable ground truth.
 
 **Expected Outcomes:**
 
