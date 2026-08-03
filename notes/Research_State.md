@@ -236,6 +236,8 @@ Empirical OT between finite samples and cell-type-stratified affine maps remain 
 
 ## Experiments
 
+Note: we haven't run many of the experiments in the full simulation pipeline. They are only applied to the encoded samples with VAE reconstruction, not the full VAE+Diffusion pipeline. We need to rerun them with the full workflow (e.g. the ti methods benchmark experiment) 
+
 ### Simulation Quality Evaluation
 
 ```text
