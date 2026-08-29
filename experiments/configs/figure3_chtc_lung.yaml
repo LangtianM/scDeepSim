@@ -13,6 +13,7 @@ data:
   celltype_key: cell_type
   batch_key: batch
   counts_layer: counts
+  filter_invalid_count_cells: true
   checksum: md5:aac0832c3e3413ae279343f5de02a2c6
 
 methods: [scdeepsim, vae_reconstruction, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]

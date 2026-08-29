@@ -13,6 +13,7 @@ data:
   celltype_key: final_annotation
   batch_key: batch
   counts_layer: counts
+  filter_invalid_count_cells: true
   checksum: md5:482a6a3117432d41a46effd8376b8ee0
 
 methods: [scdeepsim, vae_reconstruction, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]

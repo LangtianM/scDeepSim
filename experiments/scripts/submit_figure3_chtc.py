@@ -22,6 +22,7 @@ DATASET_DEFAULTS = {
     "lung": {"config": "figure3_chtc_lung", "title": "scIB Lung"},
     "wot": {"config": "figure3_chtc_wot", "title": "Waddington-OT D0-D8"},
 }
+DEFAULT_DATASETS = ("pancreas", "immune", "lung")
 
 METHOD_GROUPS = ("scdeepsim", "scvi", "scdiffusion", "scdesign3", "zinbwave")
 
@@ -313,7 +314,7 @@ def parse_args() -> argparse.Namespace:
         "--datasets",
         nargs="+",
         choices=sorted(DATASET_DEFAULTS),
-        default=list(DATASET_DEFAULTS),
+        default=list(DEFAULT_DATASETS),
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--asset-manifest", type=Path, required=True)

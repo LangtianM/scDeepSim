@@ -48,6 +48,7 @@ data:
   celltype_key: celltype
   batch_key: sequencing.batch
   counts_layer: counts
+  filter_invalid_count_cells: false
   checksum: null
 
 # Canonical method keys only. scDiffusion can use a precomputed sample_path,

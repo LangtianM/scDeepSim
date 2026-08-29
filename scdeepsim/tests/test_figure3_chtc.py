@@ -31,6 +31,25 @@ def test_normalized_x_is_rejected_when_count_layer_is_missing():
         select_count_matrix(adata, "counts")
 
 
+def test_invalid_count_cells_can_be_strictly_removed():
+    adata = ad.AnnData(X=np.zeros((3, 2), dtype=np.float32))
+    adata.obs_names = ["valid-a", "invalid", "valid-b"]
+    adata.layers["counts"] = np.array(
+        [[0.0, 2.0], [1.25, 0.0], [3.0, 1.0]], dtype=np.float32
+    )
+
+    source = select_count_matrix(
+        adata,
+        "counts",
+        filter_invalid_cells=True,
+    )
+
+    assert source == "layers['counts']"
+    assert adata.obs_names.tolist() == ["valid-a", "valid-b"]
+    assert adata.uns["figure3_count_selection"]["n_invalid_cells_removed"] == 1
+    np.testing.assert_array_equal(adata.X, [[0.0, 2.0], [3.0, 1.0]])
+
+
 def test_prepare_wot_joins_ids_filters_periods_and_preserves_counts():
     adata = ad.AnnData(
         X=sp.csr_matrix([[1, 0], [0, 2], [3, 1], [4, 0]], dtype=np.float32)
@@ -104,7 +123,7 @@ def test_aggregate_rejects_a_failed_required_method(tmp_path):
         validate_parent_results(tmp_path, "pancreas")
 
 
-def test_submit_matrix_has_twenty_four_nodes_and_expected_resources(tmp_path):
+def test_submit_matrix_has_eighteen_nodes_and_expected_resources(tmp_path):
     source_bundle = tmp_path / "source.tar.gz"
     source_bundle.write_bytes(b"source")
     manifest_path = tmp_path / "assets.json"
@@ -121,24 +140,24 @@ def test_submit_matrix_has_twenty_four_nodes_and_expected_resources(tmp_path):
                         "transfer": f"osdf:///chtc/staging/l/lma229/{dataset}.h5ad",
                         "checksum": f"sha256:{dataset}",
                     }
-                    for dataset in ("pancreas", "immune", "lung", "wot")
+                    for dataset in ("pancreas", "immune", "lung")
                 },
             }
         )
     )
 
     manifest = generate_workflow(
-        datasets=["pancreas", "immune", "lung", "wot"],
+        datasets=["pancreas", "immune", "lung"],
         seed=42,
         asset_manifest_path=manifest_path,
         source_bundle=source_bundle,
         batch_dir=tmp_path / "batch",
     )
 
-    assert manifest["formal_node_count"] == 24
+    assert manifest["formal_node_count"] == 18
     dag = (tmp_path / "batch" / "figure3.dag").read_text()
-    assert dag.count("JOB ") == 24
-    assert dag.count("PARENT ") == 4
+    assert dag.count("JOB ") == 18
+    assert dag.count("PARENT ") == 3
     scdiffusion_sub = (
         tmp_path / "batch/nodes/pancreas/scdiffusion/method.sub"
     ).read_text()

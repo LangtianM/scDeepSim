@@ -42,7 +42,37 @@ def validate_count_matrix(matrix: Any, *, source: str) -> None:
         )
 
 
-def select_count_matrix(adata: ad.AnnData, counts_layer: Any = "counts") -> str:
+def count_matrix_valid_rows(matrix: Any, *, chunk_rows: int = 256) -> np.ndarray:
+    """Return rows containing only finite, nonnegative, integer-like values."""
+    valid = np.ones(int(matrix.shape[0]), dtype=bool)
+    if sp.issparse(matrix):
+        coo = matrix.tocoo(copy=False)
+        values = coo.data
+        bad = (
+            ~np.isfinite(values)
+            | (values < 0)
+            | (np.abs(values - np.rint(values)) > 1e-6)
+        )
+        if bad.any():
+            valid[np.unique(coo.row[bad])] = False
+        return valid
+
+    for start in range(0, matrix.shape[0], chunk_rows):
+        values = np.asarray(matrix[start : start + chunk_rows])
+        valid[start : start + values.shape[0]] = (
+            np.isfinite(values).all(axis=1)
+            & (values >= 0).all(axis=1)
+            & (np.abs(values - np.rint(values)) <= 1e-6).all(axis=1)
+        )
+    return valid
+
+
+def select_count_matrix(
+    adata: ad.AnnData,
+    counts_layer: Any = "counts",
+    *,
+    filter_invalid_cells: bool = False,
+) -> str:
     """Put the preferred validated count matrix in ``adata.X``.
 
     A configured layer is preferred when present. If it is absent, ``X`` is
@@ -56,8 +86,25 @@ def select_count_matrix(adata: ad.AnnData, counts_layer: Any = "counts") -> str:
     else:
         matrix = adata.X
         source = "X"
-    validate_count_matrix(matrix, source=source)
+    valid_rows = count_matrix_valid_rows(matrix)
+    n_invalid = int((~valid_rows).sum())
+    if n_invalid and not filter_invalid_cells:
+        validate_count_matrix(matrix, source=source)
+    if n_invalid:
+        log.warning(
+            "Removing %d/%d cells whose %s values are not valid raw counts.",
+            n_invalid,
+            adata.n_obs,
+            source,
+        )
+        adata._inplace_subset_obs(valid_rows)
+        matrix = adata.layers[layer] if source != "X" else adata.X
     adata.X = matrix.copy()
+    adata.uns["figure3_count_selection"] = {
+        "n_source_cells": int(valid_rows.size),
+        "n_invalid_cells_removed": n_invalid,
+        "filter_invalid_cells": bool(filter_invalid_cells),
+    }
     return source
 
 
@@ -130,7 +177,11 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
     counts_source = select_count_matrix(
         adata,
         cfg.data.get("counts_layer", "counts"),
+        filter_invalid_cells=bool(
+            cfg.data.get("filter_invalid_count_cells", False)
+        ),
     )
+    count_selection = dict(adata.uns.pop("figure3_count_selection"))
     sc.pp.filter_cells(adata, min_genes=int(cfg.data.min_genes))
     sc.pp.filter_genes(adata, min_cells=int(cfg.data.min_cells))
 
@@ -170,6 +221,7 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
         "data_fingerprint": path_fingerprint(cfg.paths.data_path),
         "data_checksum": str(cfg.data.get("checksum", "unknown") or "unknown"),
         "counts_source": counts_source,
+        "count_selection": count_selection,
         "selected_obs_names_hash": stable_hash(adata.obs_names.astype(str).tolist()),
         "selected_var_names_hash": stable_hash(adata.var_names.astype(str).tolist()),
     }
