@@ -585,6 +585,7 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
                 "n_genes": int(adata_norm.n_vars),
             },
             "split": split_metadata,
+            "data_selection": dict(adata_raw.uns.get("figure3_input", {})),
             "celltype_key": str(cfg.data.celltype_key),
             "batch_key": str(cfg.data.batch_key),
             "scdeepsim": scdeepsim_extra,
@@ -619,13 +620,16 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
             outputs,
             results_dir / "gene_expression_scatter.png",
         )
+        figure_name = str(
+            cfg.figure.get("output_name", "figure3_uncontrolled_quality.png")
+        )
         plot_figure3(
             records,
             metrics,
             x_real,
             outputs,
             cfg,
-            results_dir / "figure3_uncontrolled_quality.png",
+            results_dir / figure_name,
         )
     else:
         log.warning("No successful main methods; skipping figures.")

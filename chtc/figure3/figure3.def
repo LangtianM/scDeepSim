@@ -1,0 +1,51 @@
+Bootstrap: docker
+From: continuumio/miniconda3
+
+%files
+    environment-lightning.yml /opt/build/environment-lightning.yml
+    environment-scdiffusion.yml /opt/build/environment-scdiffusion.yml
+    install_r_packages.R /opt/build/install_r_packages.R
+    scdiffusion-e20ee190-to-1d14c001.patch.b64 /opt/build/scdiffusion.patch.b64
+    encoder.ckpt /opt/scimilarity/annotation_model_v1/encoder.ckpt
+    decoder.ckpt /opt/scimilarity/annotation_model_v1/decoder.ckpt
+    gene_order.tsv /opt/scimilarity/annotation_model_v1/gene_order.tsv
+
+%post
+    set -e
+    apt-get update -o APT::Sandbox::User=root
+    apt-get install -y --no-install-recommends -o APT::Sandbox::User=root \
+        build-essential gfortran cmake git patch \
+        libxml2-dev libcurl4-openssl-dev libssl-dev \
+        libfontconfig1-dev libharfbuzz-dev libfribidi-dev \
+        libfreetype6-dev libpng-dev libtiff5-dev libjpeg-dev
+    rm -rf /var/lib/apt/lists/*
+
+    conda env create -f /opt/build/environment-lightning.yml
+    conda env create -f /opt/build/environment-scdiffusion.yml
+    conda run -n lightning Rscript /opt/build/install_r_packages.R
+
+    git clone https://github.com/EperLuo/scDiffusion.git /opt/scDiffusion
+    git -C /opt/scDiffusion checkout e20ee19090739a874fd8ae001d8337e4d480e52b
+    base64 -d /opt/build/scdiffusion.patch.b64 > /opt/build/scdiffusion.patch
+    git -C /opt/scDiffusion am /opt/build/scdiffusion.patch
+    test "$(git -C /opt/scDiffusion rev-parse HEAD)" = "1d14c0019f4d3dfcef1dc367d2d9b72e87e8dc15"
+
+    mkdir -p /opt/zinbwave/renv
+    : > /opt/zinbwave/.Rprofile
+    : > /opt/zinbwave/renv/activate.R
+
+    conda clean -afy
+    chmod -R a+rX /opt/scDiffusion /opt/scimilarity /opt/zinbwave
+
+%environment
+    export PATH=/opt/conda/bin:$PATH
+    export MPLCONFIGDIR=/tmp/scdeepsim_mplconfig
+    export NUMBA_CACHE_DIR=/tmp/scdeepsim_numba_cache
+    export SCDIFFUSION_SOURCE=/opt/scDiffusion
+    export SCDIFFUSION_SINGLE_PROCESS=1
+
+%test
+    conda run -n lightning python -c "import anndata, hydra, scanpy, scvi, torch; print(torch.__version__)"
+    conda run -n scdiffusion python -c "import anndata, blobfile, scanpy, torch; print(torch.__version__)"
+    conda run -n lightning Rscript -e 'stopifnot(requireNamespace("scDesign3"), requireNamespace("zinbwave"))'
+    test "$(git -C /opt/scDiffusion rev-parse HEAD)" = "1d14c0019f4d3dfcef1dc367d2d9b72e87e8dc15"

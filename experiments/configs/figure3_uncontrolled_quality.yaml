@@ -1,4 +1,5 @@
 seed: 42
+dataset_id: mouse_embryo
 
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
@@ -46,6 +47,8 @@ data:
   min_cells: 2
   celltype_key: celltype
   batch_key: sequencing.batch
+  counts_layer: counts
+  checksum: null
 
 # Canonical method keys only. scDiffusion can use a precomputed sample_path,
 # a custom command, or the built-in end-to-end external runner below.
@@ -202,6 +205,8 @@ eval:
 figure:
   dpi: 300
   cmap: tab20
+  title: null
+  output_name: figure3_uncontrolled_quality.png
 
 hydra:
   run:

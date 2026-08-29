@@ -477,5 +477,9 @@ def plot_figure3(
         ax.grid(alpha=0.25)
     ax_var.legend(frameon=False, fontsize=8, loc="best")
 
+    title = cfg.figure.get("title", None)
+    if title:
+        fig.suptitle(str(title), fontsize=15, fontweight="bold", y=1.02)
+
     fig.savefig(save_path, dpi=int(cfg.figure.dpi), bbox_inches="tight")
     plt.close(fig)

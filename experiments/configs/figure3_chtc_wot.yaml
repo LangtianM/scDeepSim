@@ -1,0 +1,24 @@
+defaults:
+  - figure3_uncontrolled_quality
+  - _self_
+
+dataset_id: wot
+
+paths:
+  data_path: ${paths.root_dir}/data/wot_d0_d8_counts.h5ad
+
+data:
+  n_cells: 20000
+  n_genes: 2500
+  celltype_key: period
+  batch_key: batch
+  counts_layer: counts
+  checksum: null
+
+methods: [scdeepsim, vae_reconstruction, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]
+
+eval:
+  continue_on_baseline_failure: false
+
+figure:
+  title: Waddington-OT D0-D8

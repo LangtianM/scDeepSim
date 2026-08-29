@@ -1,0 +1,22 @@
+name: scdiffusion
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch=2.7.0
+  - pytorch-cuda=12.6
+  - numpy=1.26.4
+  - scipy
+  - pandas=2.3.1
+  - scikit-learn=1.7.0
+  - scanpy=1.11.3
+  - anndata=0.11.4
+  - blobfile=2.0.0
+  - mpi4py=3.1.4
+  - celltypist
+  - imbalanced-learn
+  - h5py
+  - pillow
+  - pip

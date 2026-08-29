@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,8 +25,9 @@ import torch
 from omegaconf import DictConfig, ListConfig, OmegaConf
 
 root = Path(__file__).resolve().parents[3]
-os.environ.setdefault("MPLCONFIGDIR", "/private/tmp/scdeepsim_mplconfig")
-os.environ.setdefault("NUMBA_CACHE_DIR", "/private/tmp/scdeepsim_numba_cache")
+tmp_root = Path(tempfile.gettempdir())
+os.environ.setdefault("MPLCONFIGDIR", str(tmp_root / "scdeepsim_mplconfig"))
+os.environ.setdefault("NUMBA_CACHE_DIR", str(tmp_root / "scdeepsim_numba_cache"))
 os.environ.setdefault("PROJECT_ROOT", str(root))
 
 log = logging.getLogger(__name__)

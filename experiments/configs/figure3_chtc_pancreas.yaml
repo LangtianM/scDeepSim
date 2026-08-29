@@ -1,0 +1,24 @@
+defaults:
+  - figure3_uncontrolled_quality
+  - _self_
+
+dataset_id: pancreas
+
+paths:
+  data_path: ${paths.root_dir}/data/human_pancreas_norm_complexBatch.h5ad
+
+data:
+  n_cells: null
+  n_genes: 2500
+  celltype_key: celltype
+  batch_key: tech
+  counts_layer: counts
+  checksum: md5:5aa155652b998c90395a0c9bd731b4b3
+
+methods: [scdeepsim, vae_reconstruction, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]
+
+eval:
+  continue_on_baseline_failure: false
+
+figure:
+  title: scIB Pancreas

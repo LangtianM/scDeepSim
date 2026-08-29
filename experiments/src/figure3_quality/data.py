@@ -16,12 +16,49 @@ import anndata as ad
 import numpy as np
 import pandas as pd
 import scanpy as sc
+import scipy.sparse as sp
 from omegaconf import DictConfig
 from sklearn.model_selection import train_test_split
 
 from .common import as_dense, optional_int, resolve_path, root, stable_hash
 
 log = logging.getLogger(__name__)
+
+
+def validate_count_matrix(matrix: Any, *, source: str) -> None:
+    """Require a finite, nonnegative, integer-like count matrix."""
+    values = matrix.data if sp.issparse(matrix) else np.asarray(matrix).ravel()
+    if values.size == 0:
+        return
+    if not np.isfinite(values).all():
+        raise ValueError(f"Count matrix {source!r} contains non-finite values.")
+    if np.min(values) < 0:
+        raise ValueError(f"Count matrix {source!r} contains negative values.")
+    max_fractional = float(np.max(np.abs(values - np.rint(values))))
+    if max_fractional > 1e-6:
+        raise ValueError(
+            f"Count matrix {source!r} is not integer-like "
+            f"(maximum fractional deviation {max_fractional:.6g})."
+        )
+
+
+def select_count_matrix(adata: ad.AnnData, counts_layer: Any = "counts") -> str:
+    """Put the preferred validated count matrix in ``adata.X``.
+
+    A configured layer is preferred when present. If it is absent, ``X`` is
+    accepted only when it is already count-like; normalized values are never
+    rounded into pseudo-counts.
+    """
+    layer = None if counts_layer is None else str(counts_layer)
+    if layer and layer.lower() not in {"", "none", "null"} and layer in adata.layers:
+        matrix = adata.layers[layer]
+        source = f"layers[{layer!r}]"
+    else:
+        matrix = adata.X
+        source = "X"
+    validate_count_matrix(matrix, source=source)
+    adata.X = matrix.copy()
+    return source
 
 
 def path_fingerprint(path_like: Any) -> dict[str, Any]:
@@ -90,6 +127,10 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
     rng = np.random.default_rng(int(cfg.seed))
     adata = sc.read_h5ad(cfg.paths.data_path)
     adata.var_names_make_unique()
+    counts_source = select_count_matrix(
+        adata,
+        cfg.data.get("counts_layer", "counts"),
+    )
     sc.pp.filter_cells(adata, min_genes=int(cfg.data.min_genes))
     sc.pp.filter_genes(adata, min_cells=int(cfg.data.min_cells))
 
@@ -123,14 +164,25 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
     if cfg.data.batch_key is not None:
         adata.obs["batch"] = adata.obs[cfg.data.batch_key].astype(str)
 
-    adata_raw = adata.copy()
-    adata_raw.X = np.rint(np.clip(as_dense(adata_raw.X), 0, None)).astype(np.float32)
+    selection_metadata = {
+        "dataset_id": str(cfg.get("dataset_id", "unknown")),
+        "data_path": str(resolve_path(cfg.paths.data_path)),
+        "data_fingerprint": path_fingerprint(cfg.paths.data_path),
+        "data_checksum": str(cfg.data.get("checksum", "unknown") or "unknown"),
+        "counts_source": counts_source,
+        "selected_obs_names_hash": stable_hash(adata.obs_names.astype(str).tolist()),
+        "selected_var_names_hash": stable_hash(adata.var_names.astype(str).tolist()),
+    }
 
-    adata_norm = adata.copy()
-    adata_norm.X = as_dense(adata_norm.X).astype(np.float32)
+    adata_raw = adata.copy()
+    adata_raw.X = as_dense(adata_raw.X).astype(np.float32)
+    adata_raw.uns["figure3_input"] = selection_metadata
+
+    adata_norm = adata_raw.copy()
     sc.pp.normalize_total(adata_norm, target_sum=1e4)
     sc.pp.log1p(adata_norm)
     adata_norm.X = as_dense(adata_norm.X).astype(np.float32)
+    adata_norm.uns["figure3_input"] = selection_metadata
 
     log.info("Shared data shape: %s", adata_norm.shape)
     return adata_norm, adata_raw

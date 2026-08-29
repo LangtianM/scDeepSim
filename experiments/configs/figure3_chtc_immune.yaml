@@ -1,0 +1,24 @@
+defaults:
+  - figure3_uncontrolled_quality
+  - _self_
+
+dataset_id: immune
+
+paths:
+  data_path: ${paths.root_dir}/data/Immune_ALL_human.h5ad
+
+data:
+  n_cells: 20000
+  n_genes: 2500
+  celltype_key: final_annotation
+  batch_key: batch
+  counts_layer: counts
+  checksum: md5:482a6a3117432d41a46effd8376b8ee0
+
+methods: [scdeepsim, vae_reconstruction, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]
+
+eval:
+  continue_on_baseline_failure: false
+
+figure:
+  title: scIB Immune
