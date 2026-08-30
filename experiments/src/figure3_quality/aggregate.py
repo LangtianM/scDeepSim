@@ -178,6 +178,8 @@ def _run_plot(
     title: str,
     output_name: str,
     run_dir: Path,
+    selected_n_cells: int,
+    selected_n_genes: int,
 ) -> Path:
     command = [
         sys.executable,
@@ -187,6 +189,12 @@ def _run_plot(
         f"paths.root_dir={project_root}",
         f"paths.data_path={data_path}",
         f"data.checksum={data_checksum}",
+        # Reconstruct the exact parent selection. This is essential for smoke
+        # runs, whose parent jobs deliberately override the formal cell/gene
+        # counts, and is harmless for formal runs because both values come
+        # from the validated shared parent provenance.
+        f"data.n_cells={selected_n_cells}",
+        f"data.n_genes={selected_n_genes}",
         "cache.enabled=false",
         f"cache.sample_archive={archive_path}",
         f"methods=[{','.join(methods)}]",
@@ -216,6 +224,14 @@ def aggregate_and_plot(
 ) -> dict[str, Any]:
     """Validate parent jobs and atomically publish both official figures."""
     merged, summary = validate_parent_results(parent_root, dataset_id)
+    data_shape = dict(summary["provenance"]["data_shape"])
+    selected_n_cells = int(data_shape["selected_n_cells"])
+    selected_n_genes = int(data_shape["n_genes"])
+    if selected_n_cells < 1 or selected_n_genes < 1:
+        raise ValueError(
+            "Validated parent provenance contains a non-positive data shape: "
+            f"{data_shape}."
+        )
     work_dir = output_dir / "_aggregate_work"
     work_dir.mkdir(parents=True, exist_ok=True)
     archive_path = work_dir / "merged_samples.npz"
@@ -233,6 +249,8 @@ def aggregate_and_plot(
         title=f"{dataset_title}: Learned-distribution simulation methods comparison",
         output_name=learned_name,
         run_dir=work_dir / "learned_distribution",
+        selected_n_cells=selected_n_cells,
+        selected_n_genes=selected_n_genes,
     )
     reconstruction = _run_plot(
         project_root=project_root,
@@ -244,6 +262,8 @@ def aggregate_and_plot(
         title=f"{dataset_title}: Reconstruction Methods Comparison",
         output_name=reconstruction_name,
         run_dir=work_dir / "reconstruction",
+        selected_n_cells=selected_n_cells,
+        selected_n_genes=selected_n_genes,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)

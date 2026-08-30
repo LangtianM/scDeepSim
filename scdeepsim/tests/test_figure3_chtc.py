@@ -12,7 +12,11 @@ from experiments.src.figure3_quality.data import (
     select_count_matrix,
     stratified_subsample_indices,
 )
-from experiments.src.figure3_quality.aggregate import PARENT_METHODS, validate_parent_results
+from experiments.src.figure3_quality.aggregate import (
+    PARENT_METHODS,
+    _run_plot,
+    validate_parent_results,
+)
 from experiments.src.figure3_quality.wot import prepare_wot_adata
 from experiments.scripts.submit_figure3_chtc import generate_workflow
 
@@ -184,6 +188,44 @@ def test_aggregate_rejects_material_reference_differences(tmp_path):
 
     with pytest.raises(ValueError, match="different evaluation reference"):
         validate_parent_results(tmp_path, "pancreas")
+
+
+def test_aggregate_plot_reconstructs_parent_cell_and_gene_selection(
+    tmp_path,
+    monkeypatch,
+):
+    captured = {}
+
+    def fake_run(command, *, check, cwd):
+        captured["command"] = command
+        assert check is True
+        assert cwd == tmp_path
+        figure = tmp_path / "plot" / "results" / "figure.png"
+        figure.parent.mkdir(parents=True)
+        figure.write_bytes(b"png")
+
+    monkeypatch.setattr(
+        "experiments.src.figure3_quality.aggregate.subprocess.run",
+        fake_run,
+    )
+
+    figure = _run_plot(
+        project_root=tmp_path,
+        config_name="figure3_chtc_pancreas",
+        data_path=tmp_path / "pancreas.h5ad",
+        data_checksum="md5:test",
+        archive_path=tmp_path / "merged.npz",
+        methods=("scdeepsim",),
+        title="Smoke",
+        output_name="figure.png",
+        run_dir=tmp_path / "plot",
+        selected_n_cells=2048,
+        selected_n_genes=64,
+    )
+
+    assert figure == tmp_path / "plot" / "results" / "figure.png"
+    assert "data.n_cells=2048" in captured["command"]
+    assert "data.n_genes=64" in captured["command"]
 
 
 def test_submit_matrix_has_eighteen_nodes_and_expected_resources(tmp_path):
