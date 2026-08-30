@@ -43,6 +43,9 @@ cache:
 data:
   n_cells: 20000 
   n_genes: 2500
+  # Quantize numerically noisy HVG scores before ranking, then break cutoff
+  # ties by gene name so different CHTC hosts select the same feature set.
+  hvg_score_decimals: 6
   min_genes: 10
   min_cells: 2
   celltype_key: celltype

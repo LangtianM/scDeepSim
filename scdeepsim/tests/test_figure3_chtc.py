@@ -11,6 +11,7 @@ import pytest
 import scipy.sparse as sp
 
 from experiments.src.figure3_quality.data import (
+    deterministic_top_feature_indices,
     filter_unusable_labels,
     select_count_matrix,
     stratified_subsample_indices,
@@ -100,6 +101,28 @@ def test_label_filter_and_stratified_subsample_keep_estimable_groups():
     assert metadata["rare_labels_removed"] == {"singleton": 1}
     assert set(sampled) == {"common", "retained"}
     assert min(pd.Series(sampled).value_counts()) >= 6
+
+
+def test_hvg_ranking_is_stable_under_subprecision_score_drift():
+    names = np.array(["gene-z", "gene-a", "gene-b"])
+    scores_on_host_a = np.array([1.00000004, 0.99999996, 0.8])
+    scores_on_host_b = np.array([0.99999996, 1.00000004, 0.8])
+
+    selected_a = deterministic_top_feature_indices(
+        names,
+        scores_on_host_a,
+        1,
+        score_decimals=6,
+    )
+    selected_b = deterministic_top_feature_indices(
+        names,
+        scores_on_host_b,
+        1,
+        score_decimals=6,
+    )
+
+    assert names[selected_a].tolist() == ["gene-a"]
+    assert names[selected_b].tolist() == ["gene-a"]
 
 
 def test_prepare_wot_joins_ids_filters_periods_and_preserves_counts():

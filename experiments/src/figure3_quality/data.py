@@ -211,22 +211,76 @@ def adata_selection_fingerprint(adata: ad.AnnData) -> dict[str, Any]:
     }
 
 
-def subset_hvgs(adata: ad.AnnData, n_genes: int) -> ad.AnnData:
-    """Select HVGs, falling back to raw variance for singular small subsets."""
+def deterministic_top_feature_indices(
+    var_names: Any,
+    scores: Any,
+    n_features: int,
+    *,
+    score_decimals: int,
+) -> np.ndarray:
+    """Rank features reproducibly after quantizing numerically noisy scores.
+
+    Scanpy's Seurat-v3 scores can differ by a few floating-point bits across
+    compute hosts. Quantization makes the intended precision explicit and gene
+    names provide a stable tie-break at the selection cutoff.
+    """
+    names = np.asarray(var_names, dtype=str)
+    values = np.asarray(scores, dtype=np.float64)
+    if names.ndim != 1 or values.ndim != 1 or names.size != values.size:
+        raise ValueError("Feature names and scores must be matching 1D arrays.")
+    if not 0 < n_features <= values.size:
+        raise ValueError(
+            f"n_features must be between 1 and {values.size}, got {n_features}."
+        )
+    finite = np.isfinite(values)
+    if int(finite.sum()) < n_features:
+        raise ValueError(
+            f"Only {int(finite.sum())} finite feature scores are available for "
+            f"{n_features} requested features."
+        )
+
+    quantized = np.full(values.shape, -np.inf, dtype=np.float64)
+    quantized[finite] = np.round(values[finite], decimals=score_decimals)
+    ranked = np.lexsort((names, -quantized))
+    return np.sort(ranked[:n_features])
+
+
+def subset_hvgs(
+    adata: ad.AnnData,
+    n_genes: int,
+    *,
+    score_decimals: int = 6,
+) -> ad.AnnData:
+    """Select deterministic HVGs, with raw variance as a singular-data fallback."""
+    selection_method = "seurat_v3_variances_norm"
     try:
         sc.pp.highly_variable_genes(
             adata, flavor="seurat_v3", n_top_genes=n_genes
         )
-        return adata[:, adata.var["highly_variable"]].copy()
+        scores = adata.var["variances_norm"].to_numpy()
     except Exception as exc:
         log.warning(
             "Seurat v3 HVG selection failed (%s); using top raw-count variance genes.",
             exc,
         )
-        x = as_dense(adata.X)
-        top_idx = np.argsort(np.var(x, axis=0))[-n_genes:]
-        top_idx = np.sort(top_idx)
-        return adata[:, top_idx].copy()
+        selection_method = "raw_count_variance_fallback"
+        scores = np.var(as_dense(adata.X).astype(np.float64), axis=0)
+
+    top_idx = deterministic_top_feature_indices(
+        adata.var_names,
+        scores,
+        n_genes,
+        score_decimals=score_decimals,
+    )
+    selected = adata[:, top_idx].copy()
+    selected.uns["figure3_hvg_selection"] = {
+        "method": selection_method,
+        "requested_n_genes": int(n_genes),
+        "selected_n_genes": int(selected.n_vars),
+        "score_decimals": int(score_decimals),
+        "tie_breaker": "var_name_ascending",
+    }
+    return selected
 
 
 def normalize_log1p_counts(counts: np.ndarray, target_sum: float = 1e4) -> np.ndarray:
@@ -299,14 +353,35 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
         adata = adata.copy()
 
     n_genes = optional_int(cfg.data.n_genes)
+    hvg_score_decimals = int(cfg.data.get("hvg_score_decimals", 6))
     if n_genes is not None and n_genes < adata.n_vars:
-        adata = subset_hvgs(adata, n_genes)
+        adata = subset_hvgs(
+            adata,
+            n_genes,
+            score_decimals=hvg_score_decimals,
+        )
+        hvg_selection = dict(adata.uns.pop("figure3_hvg_selection"))
     elif n_genes is not None and n_genes > adata.n_vars:
         log.warning(
             "Requested %d genes, but only %d are available after filtering; using all genes.",
             n_genes,
             adata.n_vars,
         )
+        hvg_selection = {
+            "method": "all_filtered_genes",
+            "requested_n_genes": int(n_genes),
+            "selected_n_genes": int(adata.n_vars),
+            "score_decimals": hvg_score_decimals,
+            "tie_breaker": None,
+        }
+    else:
+        hvg_selection = {
+            "method": "all_filtered_genes",
+            "requested_n_genes": n_genes,
+            "selected_n_genes": int(adata.n_vars),
+            "score_decimals": hvg_score_decimals,
+            "tie_breaker": None,
+        }
 
     adata.obs["celltype"] = adata.obs[cfg.data.celltype_key].astype(str)
     if cfg.data.batch_key is not None:
@@ -320,6 +395,7 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
         "counts_source": counts_source,
         "count_selection": count_selection,
         "label_selection": label_selection,
+        "hvg_selection": hvg_selection,
         "stratified_subsample": bool(
             cfg.data.get("stratified_subsample", False)
         ),
