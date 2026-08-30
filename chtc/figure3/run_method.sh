@@ -45,7 +45,9 @@ overrides=(
 
 if [[ "$smoke" == 1 ]]; then
     overrides+=(
-        "data.n_cells=256"
+        # Keep rare Pancreas labels represented in both halves of the
+        # stratified split so group-wise scDesign3 copulas are well-defined.
+        "data.n_cells=2048"
         "data.n_genes=64"
         "vae.epochs=1"
         "diffusion.epochs=1"
