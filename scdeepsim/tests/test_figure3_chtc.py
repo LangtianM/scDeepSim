@@ -109,7 +109,14 @@ def test_prepare_wot_rejects_missing_batch_for_selected_cell():
         prepare_wot_adata(adata, days, batches)
 
 
-def _write_parent_result(parent_root, parent_name, methods, *, failed=None):
+def _write_parent_result(
+    parent_root,
+    parent_name,
+    methods,
+    *,
+    failed=None,
+    real_offset=0.0,
+):
     results = parent_root / parent_name / "results"
     results.mkdir(parents=True)
     metadata = {
@@ -130,7 +137,7 @@ def _write_parent_result(parent_root, parent_name, methods, *, failed=None):
     }
     (results / "baseline_metadata.json").write_text(json.dumps(metadata))
     arrays = {
-        "real": np.ones((2, 2), dtype=np.float32),
+        "real": np.ones((2, 2), dtype=np.float32) + np.float32(real_offset),
         "real_labels": np.array(["a", "b"]),
         **{method: np.ones((2, 2), dtype=np.float32) for method in methods},
     }
@@ -147,6 +154,35 @@ def test_aggregate_rejects_a_failed_required_method(tmp_path):
         )
 
     with pytest.raises(RuntimeError, match="zinbwave.*failed"):
+        validate_parent_results(tmp_path, "pancreas")
+
+
+def test_aggregate_accepts_one_ulp_reference_differences(tmp_path):
+    for parent_name, methods in PARENT_METHODS.items():
+        _write_parent_result(
+            tmp_path,
+            parent_name,
+            methods,
+            real_offset=5e-7 if parent_name == "scdesign3" else 0.0,
+        )
+
+    _, summary = validate_parent_results(tmp_path, "pancreas")
+
+    assert summary["parents"]["scdesign3"][
+        "evaluation_reference_max_abs_delta"
+    ] < 1e-6
+
+
+def test_aggregate_rejects_material_reference_differences(tmp_path):
+    for parent_name, methods in PARENT_METHODS.items():
+        _write_parent_result(
+            tmp_path,
+            parent_name,
+            methods,
+            real_offset=1e-3 if parent_name == "scdesign3" else 0.0,
+        )
+
+    with pytest.raises(ValueError, match="different evaluation reference"):
         validate_parent_results(tmp_path, "pancreas")
 
 

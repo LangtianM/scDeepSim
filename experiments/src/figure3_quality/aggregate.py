@@ -67,6 +67,7 @@ def validate_parent_results(
     reference_provenance = None
     real_hash = None
     labels_hash = None
+    reference_real = None
 
     for parent_name, expected_methods in PARENT_METHODS.items():
         results_dir = parent_root / parent_name / "results"
@@ -107,10 +108,34 @@ def validate_parent_results(
             if real_hash is None:
                 real_hash = current_real_hash
                 labels_hash = current_labels_hash
+                reference_real = parent_real
                 merged["real"] = parent_real
                 merged["real_labels"] = parent_labels
-            elif current_real_hash != real_hash or current_labels_hash != labels_hash:
-                raise ValueError(f"Parent {parent_name} has a different evaluation reference.")
+                reference_max_abs_delta = 0.0
+            else:
+                if current_labels_hash != labels_hash:
+                    raise ValueError(
+                        f"Parent {parent_name} has different evaluation labels."
+                    )
+                assert reference_real is not None
+                if parent_real.shape != reference_real.shape or not np.allclose(
+                    parent_real,
+                    reference_real,
+                    rtol=1e-7,
+                    atol=1e-6,
+                ):
+                    raise ValueError(
+                        f"Parent {parent_name} has a different evaluation reference."
+                    )
+                reference_max_abs_delta = float(
+                    np.max(
+                        np.abs(
+                            parent_real.astype(np.float64)
+                            - reference_real.astype(np.float64)
+                        ),
+                        initial=0.0,
+                    )
+                )
             for method in expected_methods:
                 values = np.asarray(archive[method])
                 if values.ndim != 2 or values.shape[1] != parent_real.shape[1]:
@@ -131,6 +156,7 @@ def validate_parent_results(
             "metadata": str(metadata_path),
             "samples": str(samples_path),
             "samples_sha256": file_sha256(samples_path),
+            "evaluation_reference_max_abs_delta": reference_max_abs_delta,
         }
 
     return merged, {
