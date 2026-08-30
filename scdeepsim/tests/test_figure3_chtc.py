@@ -193,3 +193,8 @@ def test_submit_matrix_has_eighteen_nodes_and_expected_resources(tmp_path):
     assert "CUDAGlobalMemoryMb >= 16000" in scdiffusion_sub
     assert "transfer_output_remaps" in scdiffusion_sub
     assert "figure3-runs/batch/pancreas/scdiffusion.tar.gz" in scdiffusion_sub
+    aggregate_sub = (
+        tmp_path / "batch/nodes/pancreas/aggregate/aggregate.sub"
+    ).read_text()
+    assert "arguments = \"run_aggregate.sh" in aggregate_sub
+    assert "'scIB Pancreas'" in aggregate_sub

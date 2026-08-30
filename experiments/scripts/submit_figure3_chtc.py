@@ -99,6 +99,17 @@ def _submit_header(initial_dir: Path, resources: Resources, image: str) -> list[
     return lines
 
 
+def _condor_arguments(parts: list[str]) -> str:
+    """Encode argv using HTCondor's new arguments syntax."""
+    encoded = []
+    for part in map(str, parts):
+        escaped = part.replace("'", "''").replace('"', '""')
+        if not escaped or any(char.isspace() for char in escaped) or "'" in part:
+            escaped = f"'{escaped}'"
+        encoded.append(escaped)
+    return f'arguments = "{" ".join(encoded)}"'
+
+
 def _write_parent_submit(
     *,
     path: Path,
@@ -120,8 +131,7 @@ def _write_parent_submit(
         [
             "executable = /bin/bash",
             f"transfer_input_files = {run_script}, {source_bundle}, {data_transfer}",
-            "arguments = "
-            + " ".join(
+            _condor_arguments(
                 [
                     run_script.name,
                     source_bundle.name,
@@ -163,15 +173,14 @@ def _write_aggregate_submit(
         [
             "executable = /bin/bash",
             f"transfer_input_files = {', '.join(inputs)}",
-            "arguments = "
-            + " ".join(
+            _condor_arguments(
                 [
                     run_script.name,
                     source_bundle.name,
                     data_basename,
                     config_name,
                     dataset_id,
-                    f'"{dataset_title}"',
+                    dataset_title,
                     checksum,
                 ]
             ),
