@@ -34,7 +34,7 @@ From: continuumio/miniconda3
     git -C /opt/scDiffusion checkout e20ee19090739a874fd8ae001d8337e4d480e52b
     base64 -d /opt/build/scdiffusion.patch.b64 > /opt/build/scdiffusion.patch
     git -C /opt/scDiffusion am /opt/build/scdiffusion.patch
-    test "$(git -C /opt/scDiffusion rev-parse HEAD)" = "1d14c0019f4d3dfcef1dc367d2d9b72e87e8dc15"
+    test "$(git -C /opt/scDiffusion rev-parse 'HEAD^{tree}')" = "f55a376f18a961d941a39bfd0d28cf69932ec3cc"
 
     mkdir -p /opt/zinbwave/renv
     : > /opt/zinbwave/.Rprofile
@@ -54,4 +54,4 @@ From: continuumio/miniconda3
     conda run -n lightning python -c "import anndata, hydra, scanpy, scvi, torch; assert torch.version.cuda == '12.6'; print(torch.__version__, torch.version.cuda)"
     conda run -n scdiffusion python -c "import anndata, blobfile, scanpy, torch; assert torch.version.cuda == '12.6'; print(torch.__version__, torch.version.cuda)"
     conda run -n lightning Rscript -e 'stopifnot(requireNamespace("scDesign3"), requireNamespace("zinbwave"))'
-    test "$(git -C /opt/scDiffusion rev-parse HEAD)" = "1d14c0019f4d3dfcef1dc367d2d9b72e87e8dc15"
+    test "$(git -C /opt/scDiffusion rev-parse 'HEAD^{tree}')" = "f55a376f18a961d941a39bfd0d28cf69932ec3cc"
