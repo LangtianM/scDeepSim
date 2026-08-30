@@ -245,22 +245,25 @@ experiments/scripts/eval_simulation_quality_scdesign3.py
 experiments/configs/eval_simulation_quality_scdesign3.yaml
 experiments/scripts/figure3_uncontrolled_quality.py
 experiments/configs/figure3_uncontrolled_quality.yaml
+experiments/configs/figure3_chtc_pancreas.yaml
+experiments/configs/figure3_chtc_immune.yaml
+experiments/configs/figure3_chtc_lung.yaml
 ```
 
-We compare simulation quality using UMAP visualisation, per-gene expression statistics, and an RF-based discriminability test (real vs. simulated). The earlier scDesign3-only experiment used the Tabula Muris input from the original VAE+Diffusion script, with a default subsample of 5000 cells and 1000 HVGs. The current Figure 3 comparison is configured in `experiments/configs/figure3_uncontrolled_quality.yaml` and uses `data/HVG_embryoatlas.h5ad`, 20,000 selected cells, 2,500 HVGs, a 50/50 stratified train/test split, and RF discriminability on normalised log1p expression. Hydra stores the resolved config and CLI overrides in each output directory under `.hydra/`.
+We compare simulation quality using UMAP visualisation, per-gene expression statistics, and an RF-based discriminability test (real vs. simulated). The completed formal CHTC run (`formal-77188a5-b0f25e-20260830-r3`, commit `77188a5`) evaluates three scIB v8 datasets: Pancreas, Immune, and Lung; Waddington-OT was excluded from this run. Each dataset uses the raw-count matrix from `layers["counts"]`, removes invalid count cells before selection, selects 2,500 HVGs using the deterministic Seurat-v3 ranking, and applies a seed-42, label-stratified 50/50 train/evaluation split. Pancreas retains all 10,963 valid cells, Immune uses a fixed 20,000-cell subsample, and Lung retains all 9,701 valid cells. All 18 CHTC DAG nodes completed successfully, including all seven comparison methods. Hydra's resolved configs, metrics, provenance hashes, and job logs are retained with the downloaded results.
 
-**De novo simulation methods:**
+**Learned-distribution simulation methods:**
 
 - **scDeepSim(ours):** Latents are sampled from the diffusion model and decoded by the VAE. No original observation is required at generation time. This is the proposed end-to-end generative pipeline.
-- **scDesign3:** A classical statistical baseline from the R package `scDesign3`. It fits marginal negative-binomial models conditioned on cell type and a Gaussian copula over genes, then generates new count data that are normalised and log-transformed before comparison. The current Figure 3 run fits the copula on the top 1000 variance genes while keeping all 2500 selected genes in the output.
 - **scDiffusion:** An external VAE+diffusion baseline. In the Figure 3 run, the upstream scDiffusion VAE is trained on the selected raw-count subset, a diffusion model is trained in the upstream latent space, sampled latents are decoded, and the resulting normalised log1p expression matrix is compared against the held-out real cells.
-- **scVI prior sampling:** manually sample $z \sim \mathcal{N}(0, I)$ and $x \sim p(x|z)$ use scVI. But it still requires externally supplied library size from real cells. (see `sample_from_prior` in `benchmark_simulation.py`, which draws `latent_library` from real observations). This dependency on real-cell library sizes means it is not fully generative.
+- **scVI prior sampling:** Samples $z \sim \mathcal{N}(0, I)$ and then $x \sim p(x \mid z)$, while borrowing empirical library sizes and covariates from real cells. It is therefore included as an operational learned-distribution comparator but remains reference-dependent at generation time.
+- **scDesign3:** A classical statistical baseline from the R package `scDesign3`. It fits marginal negative-binomial models conditioned on cell type and a Gaussian copula over genes, then generates new count data that are normalised and log-transformed before comparison. The current Figure 3 run fits the copula on the top 1000 variance genes while keeping all 2500 selected genes in the output.
 
-**Reconstruction methods (not genuine simulation):**
+**Observation-conditioned reconstruction methods:**
 
-- **VAE reconstruction** ($\text{Decoder}(\text{Encoder}(x))$): Serves as an upper-bound baseline for the best quality our model can achieve by construction.
-- **scVI posterior sampling** (`posterior_predictive_sample`): Produces $\text{Decoder}(\text{Encoder}(x))$ with the original cell's library size. This is reconstruction, not genuine simulation. We can compare this against our VAE reconstruction as a **reconstruction quality** benchmark.
-- **ZINB-WaVE:** A count-space statistical simulator fitted with `zinbwave::zinbFit` and sampled with `zinbwave::zinbSim`. In this run it uses the observed cell-type design matrix, two latent factors (`K=2`), common dispersion, and zero inflation, so it is best interpreted as a metadata-conditioned count baseline rather than an end-to-end latent generative model.
+- **scDeepSim VAE reconstruction:** Encodes each evaluation cell, samples its cell-specific VAE posterior, and decodes the result. It is an observation-conditioned upper reference for the reconstruction quality achievable before latent-diffusion sampling error is introduced.
+- **scVI posterior sampling** (`posterior_predictive_sample`): Encodes each evaluation cell and generates from its posterior predictive distribution while retaining the observed library-size context.
+- **ZINB-WaVE:** Fits a count-space model with `zinbwave::zinbFit` and calls `zinbwave::zinbSim` using the fitted cell-specific factors and observed cell-type design. The run uses two latent factors (`K=2`), common dispersion, and zero inflation; it is therefore treated as an observation-conditioned reconstruction baseline rather than learned-distribution sampling.
 
 <!-- ![Umap Comparison](../experiments/outputs/2026-05-19/17-20-18_simulation_quality_scdesign3/results/umap_comparison.png)
 
@@ -283,17 +286,37 @@ We assess discriminability via an RF classifier trained to distinguish real from
 
 <!-- In a fair gene-space comparison, VAE+Diffusion is less distinguishable from real data than scDesign3 on this subsample, despite both methods matching gene-level means and variances closely. The remaining gap between latent-space quality and gene-space quality still suggests that decoding/gene-space fidelity is a major bottleneck. -->
 
-**De novo simulation methods comparison**
+#### scIB Pancreas
 
-![Genuine Simulation Quality](../experiments/outputs/2026-06-22/22-49-08_figure3_uncontrolled_quality_denovo/results/figure3_uncontrolled_quality.png)
+**Learned-distribution simulation methods comparison**
 
-Caption: De novo simulation comparison on `data/HVG_embryoatlas.h5ad` using 20,000 cells, 2,500 HVGs, a 50/50 stratified train/test split, and RF real-vs-simulated discriminability.
+![scIB Pancreas learned-distribution simulation methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/pancreas/aggregate/official/figure3_pancreas_learned_distribution.png)
 
 **Reconstruction Methods Comparison**
 
-![Reconstruction Quality](../experiments/outputs/2026-06-22/23-05-00_figure3_uncontrolled_quality_reconstruction/results/figure3_uncontrolled_quality.png)
+![scIB Pancreas reconstruction methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/pancreas/aggregate/official/figure3_pancreas_reconstruction.png)
 
-Caption: Reconstruction/reference-conditioned comparison on the same `HVG_embryoatlas.h5ad` split and evaluation settings.
+#### scIB Immune
+
+**Learned-distribution simulation methods comparison**
+
+![scIB Immune learned-distribution simulation methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/immune/aggregate/official/figure3_immune_learned_distribution.png)
+
+**Reconstruction Methods Comparison**
+
+![scIB Immune reconstruction methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/immune/aggregate/official/figure3_immune_reconstruction.png)
+
+#### scIB Lung
+
+**Learned-distribution simulation methods comparison**
+
+![scIB Lung learned-distribution simulation methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/lung/aggregate/official/figure3_lung_learned_distribution.png)
+
+**Reconstruction Methods Comparison**
+
+![scIB Lung reconstruction methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/lung/aggregate/official/figure3_lung_reconstruction.png)
+
+Caption: For each dataset, the learned-distribution panel compares scDeepSim, scDiffusion, scVI prior, and scDesign3. The reconstruction panel separately compares scDeepSim VAE reconstruction, scVI posterior, and ZINB-WaVE. Metrics are computed against the held-out evaluation split in normalised log1p gene space; lower RF AUC (closer to 0.5) indicates that simulated or reconstructed cells are harder to distinguish from held-out real cells.
 
 <!-- **Todo:**
 

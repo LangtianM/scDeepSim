@@ -3,8 +3,7 @@
 \usepackage[margin=0.85in]{geometry}
 \usepackage{booktabs}
 \usepackage{array}
-\usepackage{tabularx}
-\usepackage{pdflscape}
+\usepackage{amssymb}
 \usepackage{xcolor}
 \usepackage{hyperref}
 \usepackage[numbers,sort&compress]{natbib}
@@ -17,150 +16,71 @@
 }
 
 \newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
-\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcommand{\yes}{\(\checkmark\)}
+\newcommand{\partialyes}{\(\triangle\)}
 \setlength{\emergencystretch}{2em}
 
-\title{Comparison Framework for Single-Cell Simulation and Generative Methods}
+\title{Concise Comparison of Single-Cell Simulation Methods}
 \author{}
 \date{\today}
 
 \begin{document}
 
-\maketitle
-
-\noindent\textbf{Comparison framework.}
-The comparison separates how a method represents the data-generating process,
-how it produces new cells, the domain in which a user can control the output,
-and the semantics of that control.  It characterises method workflows and
-control semantics rather than empirical simulation fidelity.
-
-\begin{description}
-  \item[Independent generation.]
-  Produces new expression profiles without encoding or transforming a matched
-  observed cell at generation time.  This definition is independent of whether
-  the profiles arise from specified dynamics, a fitted statistical model, or a
-  learned neural distribution.
-
-  \item[Model basis.]
-  \emph{Mechanistic} methods specify biological rules or reaction dynamics;
-  \emph{fitted statistical} methods estimate an explicit parametric model from
-  reference data; and \emph{deep learned} methods train a neural generative
-  model on the reference population.
-
-  \item[Generation workflow.]
-  \emph{Forward simulation} propagates specified dynamics.  \emph{Parametric
-  sampling} draws from a user-specified statistical model, whereas
-  \emph{fitted-distribution sampling} draws from a statistical model estimated
-  from reference data.  \emph{Learned-distribution sampling} draws new cells
-  from a neural model of the population.  \emph{Posterior reconstruction}
-  encodes an observed cell before sampling or decoding its reconstruction, and
-  \emph{source-cell transformation} applies a learned change to observed input
-  cells.
-
-  \item[Control domain.]
-  A \emph{parameter sweep} changes simulator parameters;
-  \emph{design/covariate specification} sets experimental-design variables;
-  \emph{label selection} chooses among learned observed conditions;
-  \emph{reference conditioning} anchors output to observed cells or their
-  covariates; \emph{contrast transfer} applies a difference learned between
-  observed conditions; and a \emph{continuous strength sweep} varies the
-  numerical magnitude of a named intervention.
-
-\end{description}
-
-\clearpage
-\begin{landscape}
-\begin{table}[p]
+\begin{table}[htbp]
 \centering
-\small
-\setlength{\tabcolsep}{5pt}
-\renewcommand{\arraystretch}{1.18}
-\begin{tabularx}{\linewidth}{@{}P{0.18\linewidth}YYY@{}}
+\scriptsize
+\setlength{\tabcolsep}{2.6pt}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{@{}P{0.32\textwidth}*{4}{C{0.155\textwidth}}@{}}
 \toprule
 \textbf{Method} &
-\textbf{Model basis} &
-\textbf{Generation workflow} &
-\textbf{Control domain} \\
+\textbf{\begin{tabular}[c]{@{}c@{}}Mechanistic\\de novo\\simulation\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Learned\\population\\distribution\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Learnable\\nonlinear\\structure\end{tabular}} &
+\textbf{\begin{tabular}[c]{@{}c@{}}Tunable\\targeted\\intervention\end{tabular}} \\
 \midrule
-\multicolumn{4}{@{}l}{\textit{Mechanistic forward simulation}} \\
-\addlinespace[0.2em]
-dyngen~\citep{cannoodt2021dyngen} &
-mechanistic &
-forward simulation &
-parameter sweep \\
-\addlinespace[0.6em]
-
-\multicolumn{4}{@{}l}{\textit{Fitted statistical sampling}} \\
-\addlinespace[0.2em]
-Splatter~\citep{zappia2017splatter} &
-fitted statistical &
-parametric sampling &
-design/covariate specification \\
+Splatter~\cite{zappia2017splatter} & \yes & & & \yes \\
 \addlinespace
-scDesign3~\citep{song2024scdesign3} &
-fitted statistical &
-fitted-distribution sampling &
-design/covariate specification \\
+dyngen~\cite{cannoodt2021dyngen} & \yes & & & \yes \\
 \addlinespace
-ZINB-WaVE~\citep{risso2018general} &
-fitted statistical &
-fitted-distribution sampling &
-design/covariate specification \\
-\addlinespace[0.6em]
-
-\multicolumn{4}{@{}l}{\textit{Deep learned-distribution sampling}} \\
-\addlinespace[0.2em]
-cscGAN~\citep{marouf2020realistic} &
-deep learned &
-learned-distribution sampling &
-label selection \\
+scDesign3~\cite{song2024scdesign3} & & \yes & & \yes \\
 \addlinespace
-scDiffusion~\citep{luo2024scdiffusion} &
-deep learned &
-learned-distribution sampling &
-label selection \\
+ZINB-WaVE~\cite{risso2018general} & & & & \yes \\
 \addlinespace
-\textbf{scDeepSim} &
-\textbf{deep learned} &
-\textbf{learned-distribution sampling} &
-\textbf{continuous strength sweep} \\
-\addlinespace[0.6em]
-
-\multicolumn{4}{@{}l}{\textit{Observation-dependent generation and transformation}} \\
-\addlinespace[0.2em]
-scVI~\citep{lopez2018deep} &
-deep learned &
-posterior reconstruction &
-reference conditioning \\
+scGAN / cscGAN~\cite{marouf2020realistic} & & \yes & \yes & \\
 \addlinespace
-scGen~\citep{lotfollahi2019scgen} &
-deep learned &
-source-cell transformation &
-contrast transfer \\
+scVI~\cite{lopez2018deep} & & & \yes & \\
+\addlinespace
+scGEN~\cite{lotfollahi2019scgen} & & & \yes & \\
+\addlinespace
+scDiffusion / scLDM~\cite{luo2024scdiffusion,palla2025scalable} & & \yes & \yes & \\
+\addlinespace
+\textbf{scDeepSim} & & \yes & \yes & \yes \\
 \bottomrule
-\end{tabularx}
-
-\caption{Comparison of generation workflows and control domains.  scDeepSim is distinguished by the combination of deep learned-distribution sampling and a continuous strength sweep.}
+\end{tabular}
+\caption{Capabilities of representative single-cell simulation and generative modelling methods.}
 \label{tab:method-comparison}
-
-\vspace{0.5em}
-\begin{minipage}{0.98\linewidth}
-\footnotesize
-\textit{Notes.}
-ZINB-WaVE is fitted with \texttt{zinbFit} and sampled with
-\texttt{zinbSim}.  This study retains a fitted observed design, but the
-workflow remains fitted-distribution sampling rather than posterior
-reconstruction.  The scVI row centres the posterior-predictive reconstruction
-comparison.  Its separate prior baseline is not shown as another row because
-the study implementation borrows observed library sizes and covariates.
-scDeepSim's observed-label conditioning selects the generated population,
-whereas its continuous interventions vary the strength of a named
-intervention.
-\end{minipage}
 \end{table}
-\end{landscape}
 
-\clearpage
+\noindent\textbf{Property definitions.}
+\begin{description}
+  \item[Mechanistic de novo simulation.] Generates synthetic cells from an
+  explicitly specified statistical or biological mechanism, without fitting the
+  joint distribution of an external reference dataset.
+  \item[Learned population distribution.] Fits a generative distribution to
+  reference cells and can sample synthetic cells without requiring a matched
+  observed cell as input at generation time.
+  \item[Learnable nonlinear structure] Uses trainable nonlinear models, such as
+  neural networks, to learn complex structure rather than relying
+  only on a prespecified parametric form.
+  \item[Tunable targeted intervention.] Exposes a parameterized biological or
+  technical axis along which a designated property can be varied to generate
+  matched families of datasets while non-target properties are preserved.
+\end{description}
+
+\newpage
+
 \bibliographystyle{plainnat}
 \bibliography{references}
 
