@@ -8,7 +8,7 @@ from pathlib import Path
 import pyrootutils
 
 root = pyrootutils.setup_root(
-    __file__, indicator=(".git", "AGENTS.md"), pythonpath=True, dotenv=True
+    __file__, indicator=(".git", "README.md"), pythonpath=True, dotenv=True
 )
 
 from experiments.src.figure3_quality.aggregate import aggregate_and_plot  # noqa: E402
