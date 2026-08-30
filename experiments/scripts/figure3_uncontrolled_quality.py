@@ -25,7 +25,7 @@ from hydra.core.hydra_config import HydraConfig
 from omegaconf import DictConfig
 
 root = pyrootutils.setup_root(
-    __file__, indicator=(".git", "README.md"), pythonpath=True, dotenv=True
+    __file__, indicator=(".git", ".project-root"), pythonpath=True, dotenv=True
 )
 
 from experiments.src.figure3_quality.cache import (  # noqa: E402

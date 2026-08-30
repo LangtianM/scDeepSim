@@ -14,6 +14,8 @@ data:
   batch_key: tech
   counts_layer: counts
   filter_invalid_count_cells: true
+  min_cells_per_label: 6
+  stratified_subsample: true
   checksum: md5:5aa155652b998c90395a0c9bd731b4b3
 
 methods: [scdeepsim, vae_reconstruction, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]

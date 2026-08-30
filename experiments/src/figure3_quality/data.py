@@ -108,6 +108,88 @@ def select_count_matrix(
     return source
 
 
+def filter_unusable_labels(
+    adata: ad.AnnData,
+    label_key: str,
+    *,
+    min_cells_per_label: int,
+) -> dict[str, Any]:
+    """Remove missing and too-small label groups in place.
+
+    A group must be large enough to remain estimable after the configured
+    50/50 stratified split. The returned metadata is included in the benchmark
+    provenance so every distributed parent can verify the same selection.
+    """
+    if min_cells_per_label < 1:
+        raise ValueError("min_cells_per_label must be at least 1.")
+    labels = adata.obs[label_key]
+    nonmissing = labels.notna().to_numpy()
+    label_strings = labels.astype("string").fillna("").str.strip()
+    nonmissing &= label_strings.ne("").to_numpy()
+    counts = label_strings[nonmissing].value_counts()
+    retained = counts[counts >= min_cells_per_label].index
+    retained_mask = label_strings.isin(retained).to_numpy()
+    keep = nonmissing & retained_mask
+    removed_counts = counts[counts < min_cells_per_label]
+    metadata = {
+        "min_cells_per_label": int(min_cells_per_label),
+        "n_source_cells": int(adata.n_obs),
+        "n_retained_cells": int(keep.sum()),
+        "n_missing_labels_removed": int((~nonmissing).sum()),
+        "n_rare_label_cells_removed": int((nonmissing & ~retained_mask).sum()),
+        "rare_labels_removed": {
+            str(label): int(count)
+            for label, count in removed_counts.sort_index().items()
+        },
+    }
+    if not keep.all():
+        log.warning(
+            "Removing %d cells with missing labels or label groups smaller than %d.",
+            int((~keep).sum()),
+            min_cells_per_label,
+        )
+        adata._inplace_subset_obs(keep)
+    return metadata
+
+
+def stratified_subsample_indices(
+    labels: np.ndarray,
+    n_cells: int,
+    *,
+    min_cells_per_label: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Choose a deterministic subsample with a minimum per retained label."""
+    labels = np.asarray(labels).astype(str)
+    unique_labels = np.unique(labels)
+    required = int(min_cells_per_label) * int(unique_labels.size)
+    if n_cells < required:
+        raise ValueError(
+            f"Requested {n_cells} cells, but {required} are needed to retain "
+            f"{min_cells_per_label} cells for each of {unique_labels.size} labels."
+        )
+    selected: list[np.ndarray] = []
+    selected_mask = np.zeros(labels.size, dtype=bool)
+    for label in unique_labels:
+        group = np.flatnonzero(labels == label)
+        if group.size < min_cells_per_label:
+            raise ValueError(
+                f"Label {label!r} has only {group.size} cells; expected at least "
+                f"{min_cells_per_label}."
+            )
+        chosen = rng.choice(group, size=min_cells_per_label, replace=False)
+        selected.append(chosen)
+        selected_mask[chosen] = True
+    base = np.concatenate(selected) if selected else np.empty(0, dtype=int)
+    remaining_n = n_cells - base.size
+    if remaining_n:
+        pool = np.flatnonzero(~selected_mask)
+        base = np.concatenate(
+            [base, rng.choice(pool, size=remaining_n, replace=False)]
+        )
+    return np.sort(base)
+
+
 def path_fingerprint(path_like: Any) -> dict[str, Any]:
     """Fingerprint a local file path by path, size, and mtime when available."""
     path = resolve_path(path_like)
@@ -190,13 +272,28 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
     if cfg.data.batch_key is not None and cfg.data.batch_key not in adata.obs:
         raise ValueError(f"Missing batch column: {cfg.data.batch_key}")
 
+    min_cells_per_label = int(cfg.data.get("min_cells_per_label", 1))
+    label_selection = filter_unusable_labels(
+        adata,
+        str(cfg.data.celltype_key),
+        min_cells_per_label=min_cells_per_label,
+    )
+
     n_cells = optional_int(cfg.data.n_cells)
     if n_cells is not None:
         if n_cells > adata.n_obs:
             raise ValueError(
                 f"Requested {n_cells} cells, but only {adata.n_obs} remain after filtering."
             )
-        idx = rng.choice(adata.n_obs, size=n_cells, replace=False)
+        if bool(cfg.data.get("stratified_subsample", False)):
+            idx = stratified_subsample_indices(
+                adata.obs[cfg.data.celltype_key].astype(str).to_numpy(),
+                n_cells,
+                min_cells_per_label=min_cells_per_label,
+                rng=rng,
+            )
+        else:
+            idx = rng.choice(adata.n_obs, size=n_cells, replace=False)
         adata = adata[idx].copy()
     else:
         adata = adata.copy()
@@ -222,6 +319,10 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
         "data_checksum": str(cfg.data.get("checksum", "unknown") or "unknown"),
         "counts_source": counts_source,
         "count_selection": count_selection,
+        "label_selection": label_selection,
+        "stratified_subsample": bool(
+            cfg.data.get("stratified_subsample", False)
+        ),
         "selected_obs_names_hash": stable_hash(adata.obs_names.astype(str).tolist()),
         "selected_var_names_hash": stable_hash(adata.var_names.astype(str).tolist()),
     }

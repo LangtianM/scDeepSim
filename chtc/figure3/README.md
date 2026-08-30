@@ -1,7 +1,7 @@
 # CHTC Figure 3 workflow
 
 This directory contains the pinned Apptainer build and the runtime wrappers for
-the four-dataset Figure 3 benchmark. Generated DAGs, logs, data, containers,
+the three-dataset Figure 3 benchmark. Generated DAGs, logs, data, containers,
 and sample archives live outside the repository under `~/scDeepSim_chtc` and
 `/staging/l/lma229`.
 
@@ -19,10 +19,15 @@ python experiments/scripts/submit_figure3_chtc.py \
 
 Use `--smoke --datasets pancreas` for the six-node preflight DAG. Replace
 `--dry-run` with `--submit` only after validating the generated manifest.
-Parent model, cache, log, and sample bundles are remapped to the manifest's
-content-isolated OSDF run directory; only aggregate figures and lightweight
-metadata return to the submit node.
+Each parent writes exactly one tar archive to the manifest's content-isolated
+OSDF run directory, keeping the staging file count small. Aggregate figures,
+metrics, manifests, and logs return to the submit node rather than being split
+into small files in staging.
 
 The formal 2026-08-29 run skips Waddington-OT because its published tutorial
 matrix is log-TPM rather than raw counts. The three scIB configs strictly remove
 cells whose configured count layer is non-finite, negative, or non-integer.
+They also remove missing or analytically unestimable label groups with fewer
+than six cells. Seeded subsampling reserves at least six cells per retained
+label so the 50/50 stratified split leaves at least three per side. Lung uses
+all cells remaining after these validity filters when fewer than 20,000 remain.

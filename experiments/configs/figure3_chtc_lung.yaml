@@ -8,12 +8,14 @@ paths:
   data_path: ${paths.root_dir}/data/Lung_atlas_public.h5ad
 
 data:
-  n_cells: 20000
+  n_cells: null
   n_genes: 2500
   celltype_key: cell_type
   batch_key: batch
   counts_layer: counts
   filter_invalid_count_cells: true
+  min_cells_per_label: 6
+  stratified_subsample: true
   checksum: md5:aac0832c3e3413ae279343f5de02a2c6
 
 methods: [scdeepsim, vae_reconstruction, scdiffusion, scvi_prior, scvi_posterior, scdesign3, zinbwave]

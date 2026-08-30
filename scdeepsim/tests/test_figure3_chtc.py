@@ -7,7 +7,11 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 
-from experiments.src.figure3_quality.data import select_count_matrix
+from experiments.src.figure3_quality.data import (
+    filter_unusable_labels,
+    select_count_matrix,
+    stratified_subsample_indices,
+)
 from experiments.src.figure3_quality.aggregate import PARENT_METHODS, validate_parent_results
 from experiments.src.figure3_quality.wot import prepare_wot_adata
 from experiments.scripts.submit_figure3_chtc import generate_workflow
@@ -48,6 +52,29 @@ def test_invalid_count_cells_can_be_strictly_removed():
     assert adata.obs_names.tolist() == ["valid-a", "valid-b"]
     assert adata.uns["figure3_count_selection"]["n_invalid_cells_removed"] == 1
     np.testing.assert_array_equal(adata.X, [[0.0, 2.0], [3.0, 1.0]])
+
+
+def test_label_filter_and_stratified_subsample_keep_estimable_groups():
+    labels = ["common"] * 20 + ["retained"] * 6 + ["singleton"]
+    adata = ad.AnnData(X=np.ones((len(labels), 2), dtype=np.float32))
+    adata.obs["label"] = labels
+
+    metadata = filter_unusable_labels(
+        adata,
+        "label",
+        min_cells_per_label=6,
+    )
+    indices = stratified_subsample_indices(
+        adata.obs["label"].to_numpy(),
+        16,
+        min_cells_per_label=6,
+        rng=np.random.default_rng(42),
+    )
+    sampled = adata.obs["label"].to_numpy()[indices]
+
+    assert metadata["rare_labels_removed"] == {"singleton": 1}
+    assert set(sampled) == {"common", "retained"}
+    assert min(pd.Series(sampled).value_counts()) >= 6
 
 
 def test_prepare_wot_joins_ids_filters_periods_and_preserves_counts():
