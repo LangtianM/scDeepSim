@@ -3,6 +3,9 @@ from __future__ import annotations
 import anndata as ad
 import json
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 
 from hydra import compose, initialize_config_dir
 import numpy as np
@@ -23,6 +26,32 @@ from experiments.src.figure3_quality.aggregate import (
 )
 from experiments.src.figure3_quality.wot import prepare_wot_adata
 from experiments.scripts.submit_figure3_chtc import generate_workflow
+
+
+def test_selection_probe_starts_from_archive_without_git_metadata(tmp_path):
+    project_root = Path(__file__).resolve().parents[2]
+    archive_root = tmp_path / "scDeepSim"
+    probe_path = archive_root / "experiments/scripts/probe_figure3_selection.py"
+    probe_path.parent.mkdir(parents=True)
+    shutil.copy2(project_root / ".project-root", archive_root / ".project-root")
+    shutil.copy2(
+        project_root / "experiments/scripts/probe_figure3_selection.py",
+        probe_path,
+    )
+    shutil.copytree(
+        project_root / "experiments/src/figure3_quality",
+        archive_root / "experiments/src/figure3_quality",
+    )
+
+    completed = subprocess.run(
+        [sys.executable, str(probe_path), "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "--config-name" in completed.stdout
 
 
 @pytest.mark.parametrize(

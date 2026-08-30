@@ -13,7 +13,12 @@ from hydra import compose, initialize_config_dir
 import pyrootutils
 
 root = Path(
-    pyrootutils.setup_root(__file__, indicator=".git", pythonpath=True, dotenv=True)
+    pyrootutils.setup_root(
+        __file__,
+        indicator=(".git", ".project-root"),
+        pythonpath=True,
+        dotenv=True,
+    )
 )
 
 from experiments.src.figure3_quality.data import (  # noqa: E402
