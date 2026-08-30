@@ -102,10 +102,13 @@ scdesign3:
   conda_env: lightning
   n_cores: 2
   celltype: ${data.celltype_key}
-  mu_formula: celltype
+  # scDesign3 evaluates both formulas against the original metadata column.
+  # Keep them aligned with dataset-specific keys such as final_annotation and
+  # cell_type instead of assuming every input calls the column "celltype".
+  mu_formula: ${data.celltype_key}
   sigma_formula: "1"
   family_use: nb
-  corr_formula: celltype
+  corr_formula: ${data.celltype_key}
   copula: gaussian
   # Fit the expensive copula on top-variance genes while keeping full-gene
   # marginal fits and full-gene simulated output.

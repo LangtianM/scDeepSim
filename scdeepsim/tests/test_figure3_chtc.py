@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import anndata as ad
 import json
+from pathlib import Path
+
+from hydra import compose, initialize_config_dir
 import numpy as np
 import pandas as pd
 import pytest
@@ -19,6 +22,24 @@ from experiments.src.figure3_quality.aggregate import (
 )
 from experiments.src.figure3_quality.wot import prepare_wot_adata
 from experiments.scripts.submit_figure3_chtc import generate_workflow
+
+
+@pytest.mark.parametrize(
+    ("config_name", "expected_key"),
+    [
+        ("figure3_chtc_pancreas", "celltype"),
+        ("figure3_chtc_immune", "final_annotation"),
+        ("figure3_chtc_lung", "cell_type"),
+    ],
+)
+def test_scdesign3_formulas_use_the_dataset_celltype_key(config_name, expected_key):
+    config_dir = Path(__file__).resolve().parents[2] / "experiments" / "configs"
+    with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
+        cfg = compose(config_name=config_name)
+
+    assert cfg.scdesign3.celltype == expected_key
+    assert cfg.scdesign3.mu_formula == expected_key
+    assert cfg.scdesign3.corr_formula == expected_key
 
 
 def test_count_layer_is_preferred_over_normalized_x():
