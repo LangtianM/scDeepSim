@@ -582,7 +582,13 @@ def run_scdesign3(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> M
         + proc.stderr
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"scDesign3 failed with exit code {proc.returncode}. See {log_path}")
+        details = (proc.stdout + "\n" + proc.stderr).strip()
+        if len(details) > 8000:
+            details = details[-8000:]
+        raise RuntimeError(
+            f"scDesign3 failed with exit code {proc.returncode}. See {log_path}.\n"
+            f"Captured R output:\n{details}"
+        )
 
     x_sim, labels = read_r_count_output(output_counts, output_metadata, adata_raw, cfg)
     return MethodOutput(
