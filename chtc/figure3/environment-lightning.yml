@@ -36,6 +36,12 @@ dependencies:
   - r-tibble
   - r-rlist
   - r-caret
+  - r-coop
+  - r-gamlss
+  - r-gamlss.dist
+  - r-irlba
+  - r-umap
+  - r-viridis
   - bioconductor-biocparallel
   - bioconductor-singlecellexperiment
   - bioconductor-summarizedexperiment
