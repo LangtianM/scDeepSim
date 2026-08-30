@@ -21,7 +21,13 @@ From: continuumio/miniconda3
     rm -rf /var/lib/apt/lists/*
 
     conda env create -f /opt/build/environment-lightning.yml
+    conda run -n lightning python -m pip install --no-cache-dir \
+        torch==2.8.0 --index-url https://download.pytorch.org/whl/cu126
+    conda run -n lightning python -m pip install --no-cache-dir \
+        pytorch-lightning==2.5.5 scvi-tools==1.4.1
     conda env create -f /opt/build/environment-scdiffusion.yml
+    conda run -n scdiffusion python -m pip install --no-cache-dir \
+        torch==2.7.0 --index-url https://download.pytorch.org/whl/cu126
     conda run -n lightning Rscript /opt/build/install_r_packages.R
 
     git clone https://github.com/EperLuo/scDiffusion.git /opt/scDiffusion
@@ -45,7 +51,7 @@ From: continuumio/miniconda3
     export SCDIFFUSION_SINGLE_PROCESS=1
 
 %test
-    conda run -n lightning python -c "import anndata, hydra, scanpy, scvi, torch; print(torch.__version__)"
-    conda run -n scdiffusion python -c "import anndata, blobfile, scanpy, torch; print(torch.__version__)"
+    conda run -n lightning python -c "import anndata, hydra, scanpy, scvi, torch; assert torch.version.cuda == '12.6'; print(torch.__version__, torch.version.cuda)"
+    conda run -n scdiffusion python -c "import anndata, blobfile, scanpy, torch; assert torch.version.cuda == '12.6'; print(torch.__version__, torch.version.cuda)"
     conda run -n lightning Rscript -e 'stopifnot(requireNamespace("scDesign3"), requireNamespace("zinbwave"))'
     test "$(git -C /opt/scDiffusion rev-parse HEAD)" = "1d14c0019f4d3dfcef1dc367d2d9b72e87e8dc15"
