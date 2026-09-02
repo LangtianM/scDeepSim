@@ -44,7 +44,10 @@ cds <- monocle3::new_cell_data_set(
 cds <- monocle3::preprocess_cds(cds, num_dim = min(30, nrow(mat) - 1, ncol(mat) - 1))
 cds <- monocle3::reduce_dimension(cds)
 cds <- monocle3::cluster_cells(cds)
-cds <- monocle3::learn_graph(cds)
+# Learn one global principal graph. With the default partition-wise graph,
+# order_cells() assigns Inf outside the root partition, which violates the
+# benchmark's exact all-cell pseudotime contract.
+cds <- monocle3::learn_graph(cds, use_partition = FALSE)
 cds <- monocle3::order_cells(cds, root_cells = root_cell)
 
 pt <- as.numeric(monocle3::pseudotime(cds))

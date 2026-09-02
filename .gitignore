@@ -39,3 +39,4 @@ experiments/renv/*
 *.png
 notes/Journals/*
 experiments/batch_integration_cache/
+experiments/artifacts/

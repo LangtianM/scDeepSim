@@ -26,7 +26,16 @@ def _repo_root_from_here() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _write_common_inputs(adata, work_dir: Path, *, random_state: int = 0) -> dict[str, Path | str]:
+def _write_common_inputs(
+    adata,
+    work_dir: Path,
+    *,
+    n_pcs: int = 30,
+    n_neighbors: int = 15,
+    cluster_key: str = "ti_leiden",
+    resolution: float = 0.5,
+    random_state: int = 0,
+) -> dict[str, Path | str]:
     """Write shared CSV inputs expected by R trajectory-inference scripts.
 
     The function computes common Scanpy inputs on a copy of ``adata`` and writes
@@ -36,7 +45,14 @@ def _write_common_inputs(adata, work_dir: Path, *, random_state: int = 0) -> dic
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     work = adata.copy()
-    ensure_common_ti_inputs(work, random_state=random_state)
+    ensure_common_ti_inputs(
+        work,
+        n_pcs=n_pcs,
+        n_neighbors=n_neighbors,
+        cluster_key=cluster_key,
+        resolution=resolution,
+        random_state=random_state,
+    )
 
     cell_ids = work.obs_names.astype(str)
     pca = pd.DataFrame(work.obsm["X_pca"], index=cell_ids)
@@ -47,7 +63,7 @@ def _write_common_inputs(adata, work_dir: Path, *, random_state: int = 0) -> dic
     clusters = pd.DataFrame(
         {
             "cell_id": cell_ids,
-            "cluster": work.obs["ti_leiden"].astype(str).to_numpy(),
+            "cluster": work.obs[cluster_key].astype(str).to_numpy(),
         }
     )
     cluster_path = work_dir / "clusters.csv"
@@ -68,7 +84,7 @@ def _write_common_inputs(adata, work_dir: Path, *, random_state: int = 0) -> dic
     expr.to_csv(expr_path, index=False)
 
     root_cell = root_cell_from_truth(work)
-    root_cluster = str(work.obs.loc[root_cell, "ti_leiden"])
+    root_cluster = str(work.obs.loc[root_cell, cluster_key])
     return {
         "pca": pca_path,
         "clusters": cluster_path,
@@ -85,6 +101,10 @@ def run_r_adapter(
     method: str,
     script_name: str,
     output_dir,
+    n_pcs: int = 30,
+    n_neighbors: int = 15,
+    cluster_key: str = "ti_leiden",
+    resolution: float = 0.5,
     random_state: int = 0,
     use_conda_run: bool = False,
     conda_env: str = "lightning",
@@ -115,7 +135,15 @@ def run_r_adapter(
     input_dir = out_dir / f"{method}_inputs"
     output_path = out_dir / f"{method}.csv"
     try:
-        inputs = _write_common_inputs(adata, input_dir, random_state=random_state)
+        inputs = _write_common_inputs(
+            adata,
+            input_dir,
+            n_pcs=n_pcs,
+            n_neighbors=n_neighbors,
+            cluster_key=cluster_key,
+            resolution=resolution,
+            random_state=random_state,
+        )
     except Exception as exc:
         if not keep_inputs:
             shutil.rmtree(input_dir, ignore_errors=True)

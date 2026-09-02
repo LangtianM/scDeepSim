@@ -1,10 +1,12 @@
 import numpy as np
 import pytest
+import scdeepsim.control as control_module
 
 from scdeepsim.control import (
     apply_affine_interpolation,
     branch_from_direction,
     branch_trajectory_ot,
+    estimate_branch_affine_maps,
     gaussian_ot_map,
     gaussian_ot_map_from_moments,
     trajectory_ot_interpolate,
@@ -297,6 +299,91 @@ def test_branch_trajectory_supports_whitening_recoloring_method():
     assert res["trunk"][0.5].shape == (200, d)
     assert res["branch_B"][1.0].shape == (100, d)
     assert res["branch_C"][1.0].shape == (100, d)
+
+
+def test_precomputed_branch_maps_match_legacy_and_do_not_reestimate(monkeypatch):
+    rng = np.random.RandomState(121)
+    d = 4
+    X_A = rng.normal(size=(100, d))
+    X_W = rng.normal(loc=1.0, size=(90, d))
+    X_B = rng.normal(loc=2.0, size=(80, d))
+    X_C = rng.normal(loc=-1.0, size=(70, d))
+    t_values = [0.0, 0.5, 1.0]
+    bundle = estimate_branch_affine_maps(
+        X_A, X_W, X_B, X_C, method="whitening_recoloring"
+    )
+
+    legacy = branch_trajectory_ot(
+        X_A,
+        X_W,
+        X_B,
+        X_C,
+        t_values,
+        tau=0.5,
+        n_samples_per_t=20,
+        seed=9,
+        method="whitening_recoloring",
+    )
+
+    def _unexpected_estimation(*args, **kwargs):
+        raise AssertionError("precomputed mode must not estimate moments")
+
+    monkeypatch.setattr(control_module, "_estimate_moments", _unexpected_estimation)
+    frozen = branch_trajectory_ot(
+        X_A * 50.0,
+        X_W,
+        X_B,
+        X_C,
+        t_values,
+        tau=0.5,
+        n_samples_per_t=20,
+        seed=9,
+        method="whitening_recoloring",
+        precomputed_maps=bundle,
+    )
+
+    for map_name in ("A_to_W", "W_to_B", "W_to_C"):
+        for key in ("mu_ref", "mu_target", "A"):
+            assert np.array_equal(
+                frozen["affine_params"][map_name][key],
+                legacy["affine_params"][map_name][key],
+            )
+    # Source rows come from the supplied pool, so changing the pool still
+    # changes samples while the frozen maps remain bitwise identical.
+    assert not np.allclose(frozen["trunk"][0.0], legacy["trunk"][0.0])
+
+
+def test_precomputed_branch_maps_validate_method_dimensions_and_finiteness():
+    rng = np.random.RandomState(122)
+    arrays = [rng.normal(size=(80, 3)) + shift for shift in range(4)]
+    bundle = estimate_branch_affine_maps(
+        *arrays, method="whitening_recoloring"
+    )
+
+    wrong_method = {**bundle, "method": "gaussian_ot"}
+    with pytest.raises(ValueError, match="does not match"):
+        branch_trajectory_ot(
+            *arrays,
+            [0.0, 1.0],
+            tau=0.5,
+            method="whitening_recoloring",
+            precomputed_maps=wrong_method,
+        )
+
+    nonfinite = {
+        **bundle,
+        "maps": {key: dict(value) for key, value in bundle["maps"].items()},
+    }
+    nonfinite["maps"]["A_to_W"]["A"] = bundle["maps"]["A_to_W"]["A"].copy()
+    nonfinite["maps"]["A_to_W"]["A"][0, 0] = np.inf
+    with pytest.raises(ValueError, match="non-finite"):
+        branch_trajectory_ot(
+            *arrays,
+            [0.0, 1.0],
+            tau=0.5,
+            method="whitening_recoloring",
+            precomputed_maps=nonfinite,
+        )
 
 
 # ---------------------------------------------------------------------------

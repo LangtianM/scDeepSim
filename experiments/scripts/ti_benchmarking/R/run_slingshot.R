@@ -50,17 +50,13 @@ fit <- slingshot::slingshot(
   start.clus = root_cluster
 )
 
-pt <- slingshot::slingPseudotime(fit)
+pt <- slingshot::slingAvgPseudotime(fit)
 lineage <- slingshot::slingCurveWeights(fit)
 
-if (is.null(dim(pt))) {
-  inferred_pt <- as.numeric(pt)
+inferred_pt <- as.numeric(pt)
+if (is.null(dim(lineage))) {
   inferred_lineage <- rep(NA_character_, length(inferred_pt))
 } else {
-  inferred_pt <- apply(pt, 1, function(x) {
-    vals <- x[is.finite(x)]
-    if (length(vals) == 0) NA_real_ else min(vals)
-  })
   inferred_lineage <- apply(lineage, 1, function(x) {
     if (all(!is.finite(x)) || max(x, na.rm = TRUE) <= 0) NA_character_ else paste0("lineage_", which.max(x))
   })

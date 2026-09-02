@@ -1,0 +1,43 @@
+defaults:
+  - benchmark_ti
+  - _self_
+
+paths:
+  artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_benchmark_smoke
+  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_smoke
+
+execution:
+  profile: smoke
+
+vae:
+  max_epochs: 1
+
+diffusion:
+  timesteps: 4
+  sampling_steps: 4
+  max_epochs: 1
+
+training:
+  enable_progress_bar: false
+  sampling_progress: false
+
+artifacts:
+  pool_size: 40
+
+generation:
+  t_values_count: 5
+  n_samples_per_t: 20
+
+benchmark:
+  run_axes: [discrepancy]
+  run_replicates: [0]
+  run_setting_indices: [0]
+
+outputs:
+  require_complete: false
+
+hydra:
+  run:
+    dir: ${paths.benchmark_dir}
+  job:
+    chdir: false

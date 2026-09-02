@@ -419,6 +419,163 @@ def _estimate_moments(X, subspace_slice=None):
     return mu, Sigma
 
 
+def estimate_branch_affine_maps(X_A, X_W, X_B, X_C, *,
+                                subspace_slice=None,
+                                method="gaussian_ot"):
+    """Estimate and freeze every affine map used by a branch trajectory.
+
+    The returned bundle is suitable for the ``precomputed_maps`` argument of
+    :func:`branch_trajectory_ot`.  In particular, it includes the direct
+    ``A_to_B`` and ``A_to_C`` maps required by the ``tau=0`` edge case.  This
+    makes it possible to estimate all moments from a fixed reference dataset
+    once, then draw source rows from a different pool without silently
+    re-estimating the trajectory geometry from that pool.
+
+    Parameters
+    ----------
+    X_A, X_W, X_B, X_C : np.ndarray
+        Reference samples for the start, waypoint, and two terminal states.
+    subspace_slice : slice, optional
+        Active latent subspace used to estimate the maps.
+    method : {"gaussian_ot", "whitening_recoloring"}
+        Affine map construction method.
+
+    Returns
+    -------
+    dict
+        JSON/NPZ-serializable metadata plus a ``maps`` dictionary containing
+        ``A_to_W``, ``W_to_B``, ``W_to_C``, ``A_to_B``, and ``A_to_C``.
+    """
+    arrays = {
+        "A": np.asarray(X_A, dtype=np.float64),
+        "W": np.asarray(X_W, dtype=np.float64),
+        "B": np.asarray(X_B, dtype=np.float64),
+        "C": np.asarray(X_C, dtype=np.float64),
+    }
+    if any(arr.ndim != 2 for arr in arrays.values()):
+        raise ValueError("All reference anchor arrays must be two-dimensional")
+    latent_dim = arrays["A"].shape[1]
+    if any(arr.shape[1] != latent_dim for arr in arrays.values()):
+        raise ValueError("All reference anchor arrays must share latent_dim")
+
+    moments = {
+        name: _estimate_moments(arr, subspace_slice=subspace_slice)
+        for name, arr in arrays.items()
+    }
+
+    def _map(source, target):
+        mu_source, sigma_source = moments[source]
+        mu_target, sigma_target = moments[target]
+        return _affine_map_from_moments(
+            mu_source, sigma_source, mu_target, sigma_target, method
+        )
+
+    mu_W, sigma_W = moments["W"]
+    maps = {
+        "A_to_W": _map("A", "W"),
+        "W_to_B": _map("W", "B"),
+        "W_to_C": _map("W", "C"),
+        "A_to_B": _map("A", "B"),
+        "A_to_C": _map("A", "C"),
+    }
+    return {
+        "method": str(method),
+        "latent_dim": int(latent_dim),
+        "subspace_dim": int(mu_W.shape[0]),
+        "waypoint": {"mu": mu_W, "Sigma": sigma_W},
+        "maps": maps,
+    }
+
+
+def _validate_precomputed_branch_maps(precomputed_maps, *, latent_dim,
+                                      subspace_slice, method, tau):
+    """Validate and unpack a frozen branch-map bundle."""
+    if not isinstance(precomputed_maps, dict):
+        raise TypeError("precomputed_maps must be a dictionary")
+    required_top = {"method", "latent_dim", "subspace_dim", "waypoint", "maps"}
+    missing_top = sorted(required_top - set(precomputed_maps))
+    if missing_top:
+        raise ValueError(f"precomputed_maps is missing keys: {missing_top}")
+
+    stored_method = str(precomputed_maps["method"])
+    if stored_method != str(method):
+        raise ValueError(
+            f"precomputed_maps method={stored_method!r} does not match "
+            f"requested method={method!r}"
+        )
+    if int(precomputed_maps["latent_dim"]) != int(latent_dim):
+        raise ValueError(
+            "precomputed_maps latent_dim does not match source pool: "
+            f"{precomputed_maps['latent_dim']} != {latent_dim}"
+        )
+
+    if subspace_slice is None:
+        active_dim = int(latent_dim)
+    else:
+        start, stop, step = subspace_slice.indices(int(latent_dim))
+        active_dim = len(range(start, stop, step))
+    if int(precomputed_maps["subspace_dim"]) != active_dim:
+        raise ValueError(
+            "precomputed_maps subspace_dim does not match active subspace: "
+            f"{precomputed_maps['subspace_dim']} != {active_dim}"
+        )
+
+    maps = precomputed_maps["maps"]
+    if not isinstance(maps, dict):
+        raise TypeError("precomputed_maps['maps'] must be a dictionary")
+    required_maps = {"A_to_W", "W_to_B", "W_to_C", "A_to_B", "A_to_C"}
+    missing_maps = sorted(required_maps - set(maps))
+    if missing_maps:
+        raise ValueError(f"precomputed_maps['maps'] is missing: {missing_maps}")
+
+    for map_name in required_maps:
+        params = maps[map_name]
+        if not isinstance(params, dict):
+            raise TypeError(f"precomputed map {map_name!r} must be a dictionary")
+        missing = sorted({"mu_ref", "mu_target", "A", "method"} - set(params))
+        if missing:
+            raise ValueError(f"precomputed map {map_name!r} is missing: {missing}")
+        if str(params["method"]) != stored_method:
+            raise ValueError(
+                f"precomputed map {map_name!r} has method={params['method']!r}; "
+                f"expected {stored_method!r}"
+            )
+        mu_ref = np.asarray(params["mu_ref"], dtype=np.float64)
+        mu_target = np.asarray(params["mu_target"], dtype=np.float64)
+        matrix = np.asarray(params["A"], dtype=np.float64)
+        if mu_ref.shape != (active_dim,) or mu_target.shape != (active_dim,):
+            raise ValueError(
+                f"precomputed map {map_name!r} means must have shape "
+                f"({active_dim},)"
+            )
+        if matrix.shape != (active_dim, active_dim):
+            raise ValueError(
+                f"precomputed map {map_name!r} matrix must have shape "
+                f"({active_dim}, {active_dim})"
+            )
+        if not (
+            np.isfinite(mu_ref).all()
+            and np.isfinite(mu_target).all()
+            and np.isfinite(matrix).all()
+        ):
+            raise ValueError(f"precomputed map {map_name!r} contains non-finite values")
+
+    waypoint = precomputed_maps["waypoint"]
+    if not isinstance(waypoint, dict) or not {"mu", "Sigma"} <= set(waypoint):
+        raise ValueError("precomputed_maps['waypoint'] must contain mu and Sigma")
+    waypoint_mu = np.asarray(waypoint["mu"], dtype=np.float64)
+    waypoint_sigma = np.asarray(waypoint["Sigma"], dtype=np.float64)
+    if waypoint_mu.shape != (active_dim,) or waypoint_sigma.shape != (
+        active_dim,
+        active_dim,
+    ):
+        raise ValueError("precomputed waypoint moments have incompatible dimensions")
+    if not np.isfinite(waypoint_mu).all() or not np.isfinite(waypoint_sigma).all():
+        raise ValueError("precomputed waypoint moments contain non-finite values")
+
+    return maps, {"mu": waypoint_mu, "Sigma": waypoint_sigma}
+
+
 # ---------------------------------------------------------------------------
 # Knob 1 - direction-based branch primitive
 # ---------------------------------------------------------------------------
@@ -633,7 +790,8 @@ def _resolve_segment_noise(spec, segment, n_steps):
 
 def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
                          subspace_slice=None, n_samples_per_t=None,
-                         noise_scales=None, seed=42, method="gaussian_ot"):
+                         noise_scales=None, seed=42, method="gaussian_ot",
+                         precomputed_maps=None):
     """Two-branch affine trajectory through an observed waypoint ``W``.
 
     Builds a bifurcation by composing three independent affine
@@ -694,6 +852,11 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
     method : {"gaussian_ot", "whitening_recoloring"}
         Affine endpoint map used by every segment. Defaults to
         ``"gaussian_ot"`` for backward compatibility.
+    precomputed_maps : dict, optional
+        Frozen bundle returned by :func:`estimate_branch_affine_maps`. When
+        supplied, its keys, dimensions, method, and finite values are checked,
+        and no moments are estimated from ``X_A`` or the other input arrays.
+        ``X_A`` is then used only as the resampling source pool.
 
     Returns
     -------
@@ -733,22 +896,33 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
 
     rng = np.random.RandomState(seed)
 
-    mu_A, Sigma_A = _estimate_moments(X_A, subspace_slice=subspace_slice)
-    mu_W, Sigma_W = _estimate_moments(X_W, subspace_slice=subspace_slice)
-    mu_B, Sigma_B = _estimate_moments(X_B, subspace_slice=subspace_slice)
-    mu_C, Sigma_C = _estimate_moments(X_C, subspace_slice=subspace_slice)
-
-    affine_params = {
-        "A_to_W": _affine_map_from_moments(
-            mu_A, Sigma_A, mu_W, Sigma_W, method
-        ),
-        "W_to_B": _affine_map_from_moments(
-            mu_W, Sigma_W, mu_B, Sigma_B, method
-        ),
-        "W_to_C": _affine_map_from_moments(
-            mu_W, Sigma_W, mu_C, Sigma_C, method
-        ),
-    }
+    if precomputed_maps is None:
+        estimated = estimate_branch_affine_maps(
+            X_A,
+            X_W,
+            X_B,
+            X_C,
+            subspace_slice=subspace_slice,
+            method=method,
+        )
+        affine_params = {
+            key: estimated["maps"][key]
+            for key in ("A_to_W", "W_to_B", "W_to_C")
+        }
+        waypoint = estimated["waypoint"]
+        direct_maps = estimated["maps"]
+    else:
+        direct_maps, waypoint = _validate_precomputed_branch_maps(
+            precomputed_maps,
+            latent_dim=latent_dim,
+            subspace_slice=subspace_slice,
+            method=method,
+            tau=tau,
+        )
+        affine_params = {
+            key: direct_maps[key]
+            for key in ("A_to_W", "W_to_B", "W_to_C")
+        }
 
     if tau <= 0.0:
         t_trunk = []
@@ -804,12 +978,8 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
         pass
     elif tau == 0.0:
         # Root split: two independent draws from X_A, direct A -> B / A -> C.
-        affine_params["A_to_B"] = _affine_map_from_moments(
-            mu_A, Sigma_A, mu_B, Sigma_B, method
-        )
-        affine_params["A_to_C"] = _affine_map_from_moments(
-            mu_A, Sigma_A, mu_C, Sigma_C, method
-        )
+        affine_params["A_to_B"] = direct_maps["A_to_B"]
+        affine_params["A_to_C"] = direct_maps["A_to_C"]
 
         idx_B = rng.choice(
             X_A.shape[0], size=n_samples_per_t,
@@ -863,7 +1033,7 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
         "trunk": trunk_samples,
         "branch_B": branch_B_samples,
         "branch_C": branch_C_samples,
-        "waypoint": {"mu": mu_W, "Sigma": Sigma_W},
+        "waypoint": waypoint,
         "affine_params": affine_params,
         "ot_params": affine_params,
     }

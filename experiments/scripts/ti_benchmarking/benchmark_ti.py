@@ -1,29 +1,13 @@
-"""Run pseudo-time trajectory-inference benchmarks.
+"""Run the frozen full VAE+diffusion trajectory-inference benchmark.
 
-This Hydra entry point trains a celltype-supervised TruncatedNormalVAE,
-generates OT-based bifurcating trajectories with known ground truth, runs
-configured TI adapters (Scanpy DPT/PAGA, Slingshot, Monocle3), and writes
-aggregate ordering/topology metrics.
-
-Main inputs:
-    Hydra config experiments/configs/benchmark_ti.yaml, the scvelo pancreas
-    dataset, and optional R packages for Slingshot/Monocle3 adapters.
-
-Outputs:
-    Top-level metrics.csv/metrics.json, benchmark plots when enabled,
-    per-setting simulator_settings.json, optional ground-truth/method output
-    CSVs, and optional generated AnnData files.
-
-Example:
-    python experiments/scripts/ti_benchmarking/benchmark_ti.py \
-        --config-path ../../configs --config-name benchmark_ti
-
-Lightweight smoke run:
-    python experiments/scripts/ti_benchmarking/benchmark_ti.py \
-        --config-path ../../configs --config-name benchmark_ti \
-        'benchmark.methods=[scanpy_dpt_paga]' benchmark.n_replicates=1 \
-        generation.t_values_count=5 generation.n_samples_per_t=20 vae.max_epochs=1
+The script never trains a model. It requires a validated bundle produced by
+``prepare_ti_artifacts.py``, reconstructs each synthetic expression dataset
+deterministically, resumes successful method-level runs, and publishes formal
+metrics/figures only after all 225 method runs pass strict validity checks.
 """
+
+import os
+import tempfile
 
 import pyrootutils
 
@@ -31,438 +15,510 @@ root = pyrootutils.setup_root(
     __file__, indicator=".git", pythonpath=True, dotenv=True
 )
 
-import json
-import logging
-import os
-import shutil
-import tempfile
-from pathlib import Path
-
 os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(tempfile.gettempdir(), "numba_cache"))
 os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
 os.environ.setdefault("XDG_CACHE_HOME", os.path.join(tempfile.gettempdir(), "xdg_cache"))
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
-import anndata as ad
+import json
+import logging
+from pathlib import Path
+
 import hydra
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import scanpy as sc
-import torch
 from hydra.core.hydra_config import HydraConfig
-from omegaconf import DictConfig, ListConfig, OmegaConf
-from sklearn.preprocessing import LabelEncoder
+from omegaconf import DictConfig, OmegaConf
 
-from experiments.src.ti_benchmark import (
-    ensure_common_ti_inputs,
-    make_ti_benchmark_dataset,
+from experiments.src.common import save_git_info, set_random_seed
+from experiments.src.ti_artifacts import (
+    artifact_code_hash,
+    artifact_config_hash,
+    benchmark_code_hash,
+    benchmark_config_hash,
+    load_ti_artifacts,
+    sha256_file,
+    validate_artifact_design,
+)
+from experiments.src.ti_benchmark import make_ti_benchmark_dataset
+from experiments.src.ti_experiment import (
+    AXIS_ORDER,
+    atomic_write_csv,
+    atomic_write_json,
+    formal_sweep_settings,
+    method_run_key,
+    plot_global_spearman,
+    plot_umap_axis_panel,
+    setting_run_dir,
+    shared_umap_limits,
+    summarize_global_spearman,
+    transform_synthetic_umap,
+    validate_formal_design,
 )
 from experiments.src.ti_methods import ADAPTERS
 from experiments.src.ti_metrics import evaluate_ti_output, skipped_method_output
-from experiments.src.common import encode_adata
-from experiments.src.data import load_pancreas
-from experiments.src.training import train_celltype_vae
-from experiments.src.utils import save_git_info
 from scdeepsim.control import branch_trajectory_ot
+
 
 log = logging.getLogger(__name__)
 
 
-def _as_list(value):
-    if isinstance(value, (list, tuple, ListConfig)):
-        return list(value)
-    return [value]
+def _anchor(bundle, state: str) -> np.ndarray:
+    mask = bundle.reference_celltypes == str(state)
+    if not mask.any():
+        raise ValueError(f"Reference artifact is missing anchor state {state!r}")
+    return bundle.reference_latents[mask]
 
 
-def sweep_settings(cfg):
-    axis = str(cfg.benchmark.sweep_axis)
-    defaults = {
-        "tau": float(_as_list(cfg.benchmark.tau_values)[0]),
-        "noise_scale": float(_as_list(cfg.benchmark.noise_scales)[0]),
-        "discrepancy": float(_as_list(cfg.benchmark.discrepancy_values)[0]),
-    }
-    if axis == "tau":
-        values = [float(v) for v in cfg.benchmark.tau_values]
-    elif axis == "noise_scale":
-        values = [float(v) for v in cfg.benchmark.noise_scales]
-    elif axis == "discrepancy":
-        values = [float(v) for v in cfg.benchmark.discrepancy_values]
-    else:
-        raise ValueError(f"unknown benchmark.sweep_axis={axis}")
-
-    for value in values:
-        setting = defaults.copy()
-        setting[axis] = value
-        setting["sweep_axis"] = axis
-        setting["sweep_value"] = value
-        yield setting
-
-
-def adjust_endpoint_discrepancy(X_W, X_endpoint, factor):
-    """Scale endpoint mean displacement from W while preserving covariance."""
-    if float(factor) == 1.0:
-        return X_endpoint
-    mu_w = X_W.mean(axis=0)
-    mu_endpoint = X_endpoint.mean(axis=0)
-    target_mu = mu_w + float(factor) * (mu_endpoint - mu_w)
-    return X_endpoint + (target_mu - mu_endpoint)
-
-
-def _summarize_metric_curve(metrics_df, metric):
-    """Summarize one metric by method and sweep value."""
-    rows = []
-    for (method, sweep_value), sub in metrics_df.groupby(["method", "sweep_value"]):
-        values = pd.to_numeric(sub[metric], errors="coerce").dropna()
-        if values.empty:
-            continue
-        rows.append(
-            {
-                "method": method,
-                "sweep_value": sweep_value,
-                "median": float(values.median()),
-                "q25": float(values.quantile(0.25)),
-                "q75": float(values.quantile(0.75)),
-                "min": float(values.min()),
-                "max": float(values.max()),
-                "n_valid": int(values.shape[0]),
-            }
-        )
-    return pd.DataFrame(rows)
-
-
-def plot_metric_curves(metrics_df, save_path, sweep_axis):
-    if metrics_df.empty:
-        return
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
-    metric_specs = [
-        ("spearman_global", "Global Spearman"),
-        ("lineage_ari", "Lineage ARI"),
+def _maps_for_discrepancy(bundle, discrepancy: float) -> dict:
+    matches = [
+        value for value in bundle.maps if np.isclose(value, float(discrepancy))
     ]
-    methods = sorted(metrics_df["method"].dropna().astype(str).unique())
-    sweep_values = np.sort(
-        pd.to_numeric(metrics_df["sweep_value"], errors="coerce").dropna().unique()
-    )
-    colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
-    markers = ["o", "s", "^", "D", "P", "X", "v", "<", ">"]
-    expected_n = (
-        metrics_df.groupby(["method", "sweep_value"])["replicate"].nunique().max()
-        if "replicate" in metrics_df
-        else metrics_df.groupby(["method", "sweep_value"]).size().max()
-    )
-    expected_n = int(expected_n) if pd.notna(expected_n) else 1
-    interval_cols = ("min", "max") if expected_n <= 3 else ("q25", "q75")
-    if len(sweep_values) > 1:
-        min_step = np.diff(sweep_values).min()
-    else:
-        min_step = (
-            max(abs(float(sweep_values[0])) * 0.1, 1.0)
-            if len(sweep_values)
-            else 1.0
+    if len(matches) != 1:
+        raise ValueError(
+            f"Artifact does not contain exactly one map for discrepancy={discrepancy}"
         )
-    dodge_width = min_step * 0.18
-    x_margin = min_step * 0.35
-    offsets = (
-        np.linspace(-dodge_width / 2, dodge_width / 2, len(methods))
-        if len(methods) > 1
-        else [0.0]
+    return bundle.maps[matches[0]]
+
+
+def _dataset_id(setting: dict, replicate: int) -> str:
+    value = format(float(setting["value"]), ".12g").replace(".", "p")
+    return f"{setting['axis']}_value_{value}_replicate_{replicate:02d}"
+
+
+def _run_adapter(method: str, adata, method_dir: Path, cfg, seed: int):
+    adapter = ADAPTERS.get(method)
+    if adapter is None:
+        return skipped_method_output(method, "unknown method adapter")
+    try:
+        return adapter(
+            adata,
+            output_dir=method_dir,
+            n_pcs=int(cfg.ti.n_pcs),
+            n_neighbors=int(cfg.ti.n_neighbors),
+            cluster_key=str(cfg.ti.cluster_key),
+            resolution=float(cfg.ti.resolution),
+            random_state=int(seed),
+            r_use_conda_run=bool(cfg.r.use_conda_run),
+            r_conda_env=str(cfg.r.conda_env),
+            keep_adapter_inputs=bool(cfg.outputs.keep_adapter_inputs),
+        )
+    except Exception as exc:
+        return skipped_method_output(method, f"adapter failed: {exc}")
+
+
+def _resume_record(
+    record_path: Path,
+    output_path: Path,
+    truth: pd.DataFrame,
+    expected_key: str,
+    method: str,
+) -> dict | None:
+    """Return a revalidated successful record, or ``None`` to rerun."""
+    if not record_path.exists() or not output_path.exists():
+        return None
+    try:
+        with record_path.open() as handle:
+            record = json.load(handle)
+        if record.get("run_key") != expected_key:
+            return None
+        if record.get("status") != "ok":
+            return None
+        if sha256_file(output_path) != record.get("method_output_sha256"):
+            return None
+        output = pd.read_csv(output_path)
+        metrics = evaluate_ti_output(truth, output, method=method)
+        if metrics["status"] != "ok":
+            return None
+        return {**record, **metrics}
+    except Exception:
+        return None
+
+
+def _execute_method(
+    *,
+    method: str,
+    dataset,
+    run_dir: Path,
+    setting: dict,
+    replicate: int,
+    seed: int,
+    artifact_hash: str,
+    config_hash: str,
+    cfg,
+) -> dict:
+    method_dir = run_dir / "method_outputs"
+    method_dir.mkdir(parents=True, exist_ok=True)
+    output_path = method_dir / f"{method}.csv"
+    record_path = method_dir / f"{method}.record.json"
+    run_key = method_run_key(
+        setting,
+        replicate,
+        method,
+        artifact_hash,
+        config_hash,
+    )
+    if bool(cfg.outputs.resume):
+        resumed = _resume_record(
+            record_path,
+            output_path,
+            dataset.ground_truth,
+            run_key,
+            method,
+        )
+        if resumed is not None:
+            log.info("Resume hit: %s / %s", _dataset_id(setting, replicate), method)
+            return resumed
+
+    output = _run_adapter(method, dataset.adata, method_dir, cfg, seed)
+    atomic_write_csv(output_path, output)
+    metrics = evaluate_ti_output(dataset.ground_truth, output, method=method)
+    record = {
+        **metrics,
+        "run_key": run_key,
+        "axis": str(setting["axis"]),
+        "value": float(setting["value"]),
+        "discrepancy": float(setting["discrepancy"]),
+        "tau": float(setting["tau"]),
+        "noise_scale": float(setting["noise_scale"]),
+        "replicate": int(replicate),
+        "seed": int(seed),
+        "artifact_hash": str(artifact_hash),
+        "config_hash": str(config_hash),
+        "method_output": str(output_path),
+        "method_output_sha256": sha256_file(output_path),
+    }
+    atomic_write_json(record_path, record)
+    return record
+
+
+def _collect_records(results_dir: Path, cfg, artifact_hash: str, config_hash: str):
+    """Revalidate all formal outputs and build records plus a 225-row status."""
+    records: list[dict] = []
+    status_rows: list[dict] = []
+    methods = [str(method) for method in cfg.benchmark.methods]
+    seeds = [int(seed) for seed in cfg.benchmark.replicate_seeds]
+    for setting in formal_sweep_settings(cfg):
+        for replicate, seed in enumerate(seeds):
+            run_dir = setting_run_dir(results_dir, setting, replicate)
+            truth_path = run_dir / "ground_truth.csv"
+            truth = pd.read_csv(truth_path) if truth_path.exists() else None
+            for method in methods:
+                expected_key = method_run_key(
+                    setting,
+                    replicate,
+                    method,
+                    artifact_hash,
+                    config_hash,
+                )
+                output_path = run_dir / "method_outputs" / f"{method}.csv"
+                record_path = run_dir / "method_outputs" / f"{method}.record.json"
+                record = None
+                if truth is not None:
+                    record = _resume_record(
+                        record_path,
+                        output_path,
+                        truth,
+                        expected_key,
+                        method,
+                    )
+                if record is None:
+                    stored_status = "missing"
+                    reason = "no matching valid record"
+                    if record_path.exists():
+                        try:
+                            with record_path.open() as handle:
+                                stored = json.load(handle)
+                            stored_status = str(stored.get("status", "invalid"))
+                            reason = str(stored.get("invalid_reason", "record failed validation"))
+                        except Exception as exc:
+                            reason = f"unreadable record: {exc}"
+                    status_rows.append(
+                        {
+                            "axis": str(setting["axis"]),
+                            "value": float(setting["value"]),
+                            "replicate": replicate,
+                            "seed": seed,
+                            "method": method,
+                            "status": stored_status,
+                            "reason": reason,
+                            "run_key": expected_key,
+                        }
+                    )
+                else:
+                    records.append(record)
+                    status_rows.append(
+                        {
+                            "axis": str(setting["axis"]),
+                            "value": float(setting["value"]),
+                            "replicate": replicate,
+                            "seed": seed,
+                            "method": method,
+                            "status": "ok",
+                            "reason": "",
+                            "run_key": expected_key,
+                        }
+                    )
+    return pd.DataFrame(records), pd.DataFrame(status_rows)
+
+
+def _publish_final_outputs(results_dir: Path, metrics: pd.DataFrame, bundle, cfg):
+    """Write formal tables and figures after complete validity is established."""
+    metrics = metrics.sort_values(["axis", "value", "replicate", "method"])
+    if metrics.shape[0] != 225:
+        raise RuntimeError(f"Expected 225 run metrics, got {metrics.shape[0]}")
+    if set(metrics["status"]) != {"ok"}:
+        raise RuntimeError("Formal metrics contain a non-valid method run")
+    if "lineage_ari" in metrics.columns:
+        raise RuntimeError("lineage_ari must not appear in formal metrics")
+
+    summary = summarize_global_spearman(metrics)
+    if summary.shape[0] != 45 or not (summary["n"] == 5).all():
+        raise RuntimeError(
+            f"Expected 45 complete summary rows with n=5, got {summary.shape[0]}"
+        )
+    atomic_write_csv(results_dir / "metrics.csv", metrics)
+    atomic_write_csv(results_dir / "metrics_summary.csv", summary)
+    atomic_write_json(
+        results_dir / "metrics.json",
+        metrics.to_dict(orient="records"),
     )
 
-    for ax, (metric, title) in zip(axes, metric_specs):
-        summary = _summarize_metric_curve(metrics_df, metric)
-        for method_idx, method in enumerate(methods):
-            color = colors[method_idx % len(colors)]
-            marker = markers[method_idx % len(markers)]
-            offset = offsets[method_idx]
-            sub = metrics_df[metrics_df["method"].astype(str) == method].copy()
-            sub[metric] = pd.to_numeric(sub[metric], errors="coerce")
-            sub = sub.dropna(subset=["sweep_value", metric]).sort_values("sweep_value")
-            if not sub.empty:
-                x = (
-                    pd.to_numeric(sub["sweep_value"], errors="coerce")
-                    .to_numpy(dtype=float)
-                    + offset
-                )
-                ax.scatter(
-                    x,
-                    sub[metric],
-                    s=22,
-                    marker=marker,
-                    color=color,
-                    alpha=0.28,
-                    linewidths=0,
-                    zorder=2,
-                )
+    figures_dir = results_dir / "figures"
+    plot_data_dir = results_dir / "plot_data"
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    plot_data_dir.mkdir(parents=True, exist_ok=True)
+    colors = {
+        str(method): str(cfg.plots.method_colors[method])
+        for method in cfg.benchmark.methods
+    }
+    plot_global_spearman(
+        metrics,
+        summary,
+        methods=[str(method) for method in cfg.benchmark.methods],
+        colors=colors,
+        png_path=figures_dir / "global_spearman_1x3.png",
+        pdf_path=figures_dir / "global_spearman_1x3.pdf",
+        dpi=int(cfg.plots.dpi),
+    )
 
-            method_summary = summary[
-                summary["method"].astype(str) == method
-            ].sort_values("sweep_value")
-            if method_summary.empty:
-                continue
-            x = method_summary["sweep_value"].to_numpy(dtype=float) + offset
-            y = method_summary["median"].to_numpy(dtype=float)
-            y_low = method_summary[interval_cols[0]].to_numpy(dtype=float)
-            y_high = method_summary[interval_cols[1]].to_numpy(dtype=float)
-            yerr = np.vstack([y - y_low, y_high - y])
-
-            ax.plot(
-                x,
-                y,
-                color=color,
-                linewidth=2.0,
-                alpha=0.95,
-                label=method,
-                zorder=4,
+    atomic_write_csv(plot_data_dir / "real_umap_reference.csv", bundle.real_umap)
+    axis_frames: dict[str, pd.DataFrame] = {}
+    all_frames: list[pd.DataFrame] = []
+    for axis_name in AXIS_ORDER:
+        frames = []
+        axis_settings = [
+            setting
+            for setting in formal_sweep_settings(cfg)
+            if setting["axis"] == axis_name
+        ]
+        for setting in axis_settings:
+            path = (
+                setting_run_dir(results_dir, setting, 0)
+                / "synthetic_umap.csv"
             )
-            ax.errorbar(
-                x,
-                y,
-                yerr=yerr,
-                fmt="none",
-                ecolor=color,
-                elinewidth=1.8,
-                capsize=4,
-                alpha=0.85,
-                zorder=3,
-            )
-            complete = method_summary["n_valid"].to_numpy(dtype=int) >= expected_n
-            if complete.any():
-                ax.scatter(
-                    x[complete],
-                    y[complete],
-                    s=48,
-                    marker=marker,
-                    facecolors=color,
-                    edgecolors=color,
-                    linewidths=1.0,
-                    zorder=5,
-                )
-            if (~complete).any():
-                ax.scatter(
-                    x[~complete],
-                    y[~complete],
-                    s=54,
-                    marker=marker,
-                    facecolors="white",
-                    edgecolors=color,
-                    linewidths=1.4,
-                    zorder=5,
-                )
-                for xi, yi, n_valid in zip(
-                    x[~complete],
-                    y[~complete],
-                    method_summary.loc[~complete, "n_valid"],
-                ):
-                    ax.annotate(
-                        f"n={n_valid}",
-                        (xi, yi),
-                        xytext=(0, 7),
-                        textcoords="offset points",
-                        ha="center",
-                        va="bottom",
-                        fontsize=7,
-                        color=color,
-                    )
-        ax.set_title(title)
-        ax.set_xlabel(sweep_axis)
-        ax.grid(alpha=0.3, linestyle="--")
-        if len(sweep_values):
-            ax.set_xlim(
-                float(sweep_values.min()) - x_margin,
-                float(sweep_values.max()) + x_margin,
-            )
-        if metric == "lineage_ari":
-            values = pd.to_numeric(metrics_df[metric], errors="coerce").dropna()
-            lower = (
-                min(-0.1, float(values.min()) - 0.05)
-                if not values.empty
-                else -0.1
-            )
-            upper = max(1.0, float(values.max()) + 0.05) if not values.empty else 1.0
-            ax.set_ylim(lower, upper)
-        elif metric == "spearman_global":
-            values = pd.to_numeric(metrics_df[metric], errors="coerce").dropna()
-            if not values.empty and values.max() <= 1.0:
-                lower = min(float(values.min()) - 0.05, -0.05)
-                ax.set_ylim(lower, 1.0)
-    axes[0].set_ylabel("score")
-    handles, labels = axes[0].get_legend_handles_labels()
-    axes[-1].legend(handles, labels, loc="best")
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+            if not path.exists():
+                raise RuntimeError(f"Missing formal UMAP transform data: {path}")
+            frames.append(pd.read_csv(path))
+        axis_frame = pd.concat(frames, ignore_index=True)
+        axis_frames[axis_name] = axis_frame
+        all_frames.extend(frames)
+        atomic_write_csv(
+            plot_data_dir / f"umap_plot_data_{axis_name}.csv", axis_frame
+        )
+
+    xlim, ylim = shared_umap_limits(bundle.real_umap, all_frames)
+    lineage_colormaps = {
+        key: str(cfg.plots.lineage_colormaps[key])
+        for key in ("trunk", "branch_B", "branch_C")
+    }
+    for axis_name in AXIS_ORDER:
+        values = [
+            float(setting["value"])
+            for setting in formal_sweep_settings(cfg)
+            if setting["axis"] == axis_name
+        ]
+        plot_umap_axis_panel(
+            bundle.real_umap,
+            axis_frames[axis_name],
+            axis_name=axis_name,
+            values=values,
+            lineage_colormaps=lineage_colormaps,
+            xlim=xlim,
+            ylim=ylim,
+            png_path=figures_dir / f"umap_{axis_name}_1x5.png",
+            pdf_path=figures_dir / f"umap_{axis_name}_1x5.pdf",
+            dpi=int(cfg.plots.dpi),
+        )
 
 
-def plot_diagnostic_panel(adata: ad.AnnData, save_path: Path, random_state: int):
-    work = adata.copy()
-    ensure_common_ti_inputs(work, random_state=random_state)
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4.5))
-    sc.pl.umap(work, color="true_pseudotime", ax=axes[0], show=False, title="True pseudotime")
-    sc.pl.umap(work, color="true_lineage", ax=axes[1], show=False, title="True lineage")
-    fig.tight_layout()
-    fig.savefig(save_path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
-
-
-def run_adapters(adata, methods, output_dir, cfg, random_state):
-    method_dir = Path(output_dir) / "method_outputs"
-    method_dir.mkdir(parents=True, exist_ok=True)
-    outputs = {}
-    for method in methods:
-        adapter = ADAPTERS.get(str(method))
-        if adapter is None:
-            out = skipped_method_output(str(method), "unknown method adapter")
-        else:
-            try:
-                out = adapter(
-                    adata,
-                    output_dir=method_dir,
-                    n_pcs=int(cfg.ti.n_pcs),
-                    n_neighbors=int(cfg.ti.n_neighbors),
-                    cluster_key=str(cfg.ti.cluster_key),
-                    resolution=float(cfg.ti.resolution),
-                    random_state=random_state,
-                    r_use_conda_run=bool(cfg.r.use_conda_run),
-                    r_conda_env=str(cfg.r.conda_env),
-                    keep_adapter_inputs=bool(cfg.outputs.keep_adapter_inputs),
-                )
-            except Exception as exc:
-                out = skipped_method_output(str(method), f"adapter failed: {exc}")
-        if bool(cfg.outputs.save_method_outputs):
-            out.to_csv(method_dir / f"{method}.csv", index=False)
-        outputs[str(method)] = out
-    if not bool(cfg.outputs.save_method_outputs):
-        shutil.rmtree(method_dir, ignore_errors=True)
-    return outputs
-
-
-@hydra.main(config_path="../../configs", 
-            config_name="benchmark_ti", 
-            version_base="1.3")
+@hydra.main(
+    config_path="../../configs",
+    config_name="benchmark_ti",
+    version_base="1.3",
+)
 def main(cfg: DictConfig) -> None:
-    torch.manual_seed(cfg.seed)
-    np.random.seed(cfg.seed)
+    validate_formal_design(cfg)
+    validate_artifact_design(cfg)
+    set_random_seed(int(cfg.seed))
 
-    output_dir = Path(HydraConfig.get().runtime.output_dir)
-    results_dir = output_dir / "results"
+    output_dir = Path(HydraConfig.get().runtime.output_dir).resolve()
+    artifact_hash_expected = artifact_config_hash(cfg)
+    code_hash_expected = artifact_code_hash(cfg.paths.root_dir)
+    config_hash = benchmark_config_hash(cfg)
+    bundle = load_ti_artifacts(
+        cfg.paths.artifact_dir,
+        expected_config_hash=artifact_hash_expected,
+        expected_code_hash=code_hash_expected,
+    )
+    results_dir = output_dir / "results" / (
+        f"{bundle.artifact_hash[:12]}_{config_hash[:12]}"
+    )
     results_dir.mkdir(parents=True, exist_ok=True)
-    save_git_info(str(output_dir))
+    save_git_info(output_dir)
+    (output_dir / "resolved_config.yaml").write_text(
+        OmegaConf.to_yaml(cfg, resolve=True)
+    )
+    atomic_write_json(
+        results_dir / "run_manifest.json",
+        {
+            "artifact_dir": str(bundle.root),
+            "artifact_manifest": str(bundle.root / "manifest.json"),
+            "artifact_hash": bundle.artifact_hash,
+            "artifact_config_hash": artifact_hash_expected,
+            "artifact_code_hash": code_hash_expected,
+            "benchmark_config_hash": config_hash,
+            "benchmark_code_hash": benchmark_code_hash(cfg.paths.root_dir),
+            "formal_dataset_count": 75,
+            "formal_method_run_count": 225,
+            "global_spearman_definition": "simulator common-axis recovery",
+            "lineage_fields": "audit-only; not scored or plotted",
+        },
+    )
 
-    log.info("Pseudo-time TI benchmarking")
-    log.info("Config:\n%s", OmegaConf.to_yaml(cfg))
+    vae = bundle.load_vae()
+    pca, umap_model = bundle.load_embedding_models()
+    X_W = _anchor(bundle, cfg.data.waypoint_state)
+    X_B = _anchor(bundle, cfg.data.terminal_state_1)
+    X_C = _anchor(bundle, cfg.data.terminal_state_2)
+    t_values = np.linspace(
+        0.0, 1.0, int(cfg.generation.t_values_count)
+    ).tolist()
+    methods = [str(method) for method in cfg.benchmark.methods]
+    seeds = [int(seed) for seed in cfg.benchmark.replicate_seeds]
+    selected_axes = {str(axis) for axis in cfg.benchmark.run_axes}
+    selected_replicates = {int(rep) for rep in cfg.benchmark.run_replicates}
+    selected_setting_indices = {
+        int(index) for index in cfg.benchmark.run_setting_indices
+    }
 
-    adata_real = load_pancreas(cfg)
-    celltype_labels = np.asarray(adata_real.obs["celltype"])
-    ct_le = LabelEncoder().fit(celltype_labels)
-    for name, state in [
-        ("start_state", cfg.data.start_state),
-        ("waypoint_state", cfg.data.waypoint_state),
-        ("terminal_state_1", cfg.data.terminal_state_1),
-        ("terminal_state_2", cfg.data.terminal_state_2),
-    ]:
-        if state not in ct_le.classes_:
-            raise ValueError(f"{name}={state!r} not in cell types {list(ct_le.classes_)}")
-
-    vae = train_celltype_vae(adata_real, len(ct_le.classes_), cfg)
-    z_all = encode_adata(vae, adata_real)
-
-    def _z_for(state):
-        return z_all[celltype_labels == state]
-
-    X_A = _z_for(cfg.data.start_state)
-    X_W = _z_for(cfg.data.waypoint_state)
-    X_B_base = _z_for(cfg.data.terminal_state_1)
-    X_C_base = _z_for(cfg.data.terminal_state_2)
-    t_values = np.linspace(0.0, 1.0, int(cfg.generation.t_values_count)).tolist()
-    affine_method = str(cfg.generation.affine_method)
-    log.info("Affine interpolation method: %s", affine_method)
-
-    all_metric_rows = []
-    methods = [str(m) for m in cfg.benchmark.methods]
-    n_replicates = int(cfg.benchmark.n_replicates)
-
-    for setting in sweep_settings(cfg):
-        tau = float(setting["tau"])
-        noise_scale = float(setting["noise_scale"])
-        discrepancy = float(setting["discrepancy"])
-        X_B = adjust_endpoint_discrepancy(X_W, X_B_base, discrepancy)
-        X_C = adjust_endpoint_discrepancy(X_W, X_C_base, discrepancy)
-
-        for rep in range(n_replicates):
-            seed = int(cfg.seed) + rep
-            run_name = (
-                f"{setting['sweep_axis']}_{setting['sweep_value']:.3g}"
-                f"_rep_{rep:03d}"
-            ).replace(".", "p")
-            run_dir = results_dir / run_name
+    for setting_index, setting in enumerate(formal_sweep_settings(cfg)):
+        if (
+            setting["axis"] not in selected_axes
+            or setting_index not in selected_setting_indices
+        ):
+            continue
+        maps = _maps_for_discrepancy(bundle, float(setting["discrepancy"]))
+        for replicate, seed in enumerate(seeds):
+            if replicate not in selected_replicates:
+                continue
+            set_random_seed(seed)
+            run_dir = setting_run_dir(results_dir, setting, replicate)
             run_dir.mkdir(parents=True, exist_ok=True)
-            log.info("Generating %s", run_name)
-
+            dataset_id = _dataset_id(setting, replicate)
+            pool = bundle.pools[seed]
+            pool_checksum = bundle.manifest["pool_checksums"][f"seed_{seed}"]
             simulator_settings = {
+                "dataset_id": dataset_id,
                 "start_state": str(cfg.data.start_state),
                 "waypoint_state": str(cfg.data.waypoint_state),
                 "terminal_state_1": str(cfg.data.terminal_state_1),
                 "terminal_state_2": str(cfg.data.terminal_state_2),
-                "tau": tau,
-                "noise_scale": noise_scale,
-                "discrepancy": discrepancy,
+                "axis": str(setting["axis"]),
+                "value": float(setting["value"]),
+                "discrepancy": float(setting["discrepancy"]),
+                "tau": float(setting["tau"]),
+                "noise_scale": float(setting["noise_scale"]),
                 "t_values_count": int(cfg.generation.t_values_count),
                 "n_samples_per_t": int(cfg.generation.n_samples_per_t),
-                "affine_method": affine_method,
-                "seed": seed,
-                "replicate": rep,
-                "sweep_axis": setting["sweep_axis"],
-                "sweep_value": setting["sweep_value"],
+                "affine_method": str(cfg.generation.affine_method),
+                "replicate": int(replicate),
+                "seed": int(seed),
+                "base_pool_seed": int(seed),
+                "base_pool_sha256": pool_checksum,
+                "artifact_hash": bundle.artifact_hash,
+                "benchmark_config_hash": config_hash,
             }
             trajectory = branch_trajectory_ot(
-                X_A,
+                pool,
                 X_W,
                 X_B,
                 X_C,
                 t_values,
-                tau=tau,
+                tau=float(setting["tau"]),
                 n_samples_per_t=int(cfg.generation.n_samples_per_t),
-                noise_scales=noise_scale,
+                noise_scales=float(setting["noise_scale"]),
                 seed=seed,
-                method=affine_method,
+                method=str(cfg.generation.affine_method),
+                precomputed_maps=maps,
             )
             dataset = make_ti_benchmark_dataset(
                 trajectory,
                 vae,
-                tau=tau,
+                tau=float(setting["tau"]),
                 simulator_settings=simulator_settings,
-                var_names=list(adata_real.var_names),
-                cell_id_prefix=f"{run_name}_cell",
+                var_names=bundle.var_names.tolist(),
+                cell_id_prefix=f"{dataset_id}_cell",
                 decode_batch_size=int(cfg.generation.decode_batch_size),
             )
-            if bool(cfg.outputs.save_generated):
-                dataset.adata.write_h5ad(run_dir / "generated.h5ad")
             if bool(cfg.outputs.save_ground_truth):
-                dataset.ground_truth.to_csv(run_dir / "ground_truth.csv", index=False)
-            with open(run_dir / "simulator_settings.json", "w") as f:
-                json.dump(simulator_settings, f, indent=2)
-            if bool(cfg.plots.diagnostic_panels) and bool(cfg.outputs.save_plots):
-                plot_diagnostic_panel(dataset.adata, run_dir / "diagnostic_umap.png", seed)
+                atomic_write_csv(run_dir / "ground_truth.csv", dataset.ground_truth)
+            atomic_write_json(run_dir / "simulator_settings.json", simulator_settings)
+            if bool(cfg.outputs.save_generated_h5ad):
+                dataset.adata.write_h5ad(run_dir / "generated.h5ad")
 
-            method_outputs = run_adapters(dataset.adata, methods, run_dir, cfg, seed)
-            for method, method_df in method_outputs.items():
-                metrics = evaluate_ti_output(dataset.ground_truth, method_df, method=method)
-                metrics.update(simulator_settings)
-                all_metric_rows.append(metrics)
+            if replicate == 0:
+                umap_data = transform_synthetic_umap(
+                    dataset, pca, umap_model, setting
+                )
+                atomic_write_csv(run_dir / "synthetic_umap.csv", umap_data)
 
-    metrics_df = pd.DataFrame(all_metric_rows)
-    metrics_df.to_csv(results_dir / "metrics.csv", index=False)
-    with open(results_dir / "metrics.json", "w") as f:
-        json.dump(metrics_df.to_dict(orient="records"), f, indent=2)
+            for method in methods:
+                record = _execute_method(
+                    method=method,
+                    dataset=dataset,
+                    run_dir=run_dir,
+                    setting=setting,
+                    replicate=replicate,
+                    seed=seed,
+                    artifact_hash=bundle.artifact_hash,
+                    config_hash=config_hash,
+                    cfg=cfg,
+                )
+                log.info(
+                    "%s / %s: %s",
+                    dataset_id,
+                    method,
+                    record["status"],
+                )
 
-    if bool(cfg.plots.enabled) and bool(cfg.outputs.save_plots):
-        plot_metric_curves(
-            metrics_df,
-            results_dir / "ti_metric_curves.png",
-            str(cfg.benchmark.sweep_axis),
+    metrics, status = _collect_records(
+        results_dir, cfg, bundle.artifact_hash, config_hash
+    )
+    atomic_write_csv(results_dir / "run_status.csv", status)
+    n_valid = int((status["status"] == "ok").sum())
+    complete = n_valid == 225 and status.shape[0] == 225
+    if complete:
+        _publish_final_outputs(results_dir, metrics, bundle, cfg)
+        log.info("Formal TI benchmark complete: 225/225 valid runs")
+    else:
+        message = (
+            f"Formal TI benchmark incomplete: {n_valid}/225 valid method runs. "
+            "No formal metrics summary or figures were published."
         )
-
-    log.info("TI benchmark complete: %s", results_dir)
+        if bool(cfg.outputs.require_complete):
+            raise RuntimeError(message)
+        log.warning(message)
 
 
 if __name__ == "__main__":

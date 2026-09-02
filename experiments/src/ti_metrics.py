@@ -13,7 +13,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
-from sklearn.metrics import adjusted_rand_score
 
 
 STANDARD_METHOD_COLUMNS = [
@@ -76,12 +75,15 @@ def standardize_method_output(
 
 def _safe_spearman(x: pd.Series, y: pd.Series) -> float:
     """Return Spearman correlation, or ``nan`` for degenerate inputs."""
-    mask = x.notna() & y.notna()
-    if mask.sum() < 2:
+    x_values = pd.to_numeric(x, errors="coerce").to_numpy(dtype=float)
+    y_values = pd.to_numeric(y, errors="coerce").to_numpy(dtype=float)
+    if x_values.size < 2 or not (
+        np.isfinite(x_values).all() and np.isfinite(y_values).all()
+    ):
         return np.nan
-    if x[mask].nunique() < 2 or y[mask].nunique() < 2:
+    if np.unique(x_values).size < 2 or np.unique(y_values).size < 2:
         return np.nan
-    value = spearmanr(x[mask].astype(float), y[mask].astype(float)).correlation
+    value = spearmanr(x_values, y_values).correlation
     return float(value) if value is not None else np.nan
 
 
@@ -93,40 +95,117 @@ def evaluate_ti_output(
 ) -> dict[str, Any]:
     """Evaluate one standardized TI method output against ground truth.
 
-    Metrics currently include global pseudotime Spearman correlation and
-    adjusted Rand index between true and inferred lineages.
+    Global Spearman is intentionally a simulator common-axis recovery score,
+    not a branch-specific ordering score. A run is scored only when the method
+    output has an exact one-to-one cell-id match, all inferred pseudotimes are
+    finite, and the inferred pseudotime has at least two unique values. No
+    finite subset is silently selected.
     """
     if method is None:
         method = str(method_df["method"].dropna().iloc[0]) if "method" in method_df and method_df["method"].notna().any() else "unknown"
 
+    n_truth = int(truth_df.shape[0])
+    required_truth = {"cell_id", "true_pseudotime"}
+    required_output = {"cell_id", "inferred_pseudotime"}
+    missing_truth = sorted(required_truth - set(truth_df.columns))
+    missing_output = sorted(required_output - set(method_df.columns))
+    if missing_truth:
+        return {
+            "method": method,
+            "status": "invalid",
+            "invalid_reason": f"ground truth is missing columns: {missing_truth}",
+            "spearman_global": np.nan,
+            "coverage": np.nan,
+            "n_truth": n_truth,
+            "n_output": int(method_df.shape[0]),
+            "n_finite_pseudotime": 0,
+        }
+    if missing_output:
+        return {
+            "method": method,
+            "status": "invalid",
+            "invalid_reason": f"method output is missing columns: {missing_output}",
+            "spearman_global": np.nan,
+            "coverage": 0.0,
+            "n_truth": n_truth,
+            "n_output": int(method_df.shape[0]),
+            "n_finite_pseudotime": 0,
+        }
     if method_df.empty or method_df["cell_id"].isna().all():
         return {
             "method": method,
             "status": "skipped",
+            "invalid_reason": "empty or skipped method output",
             "spearman_global": np.nan,
-            "lineage_ari": np.nan,
+            "coverage": 0.0,
+            "n_truth": n_truth,
+            "n_output": 0,
+            "n_finite_pseudotime": 0,
         }
 
-    merged = truth_df.merge(method_df, on="cell_id", how="inner")
-    out: dict[str, Any] = {
+    truth = truth_df.copy()
+    output = method_df.copy()
+    truth_ids = truth["cell_id"].astype(str)
+    output_ids = output["cell_id"].astype(str)
+    n_output = int(output.shape[0])
+    matched_ids = set(truth_ids) & set(output_ids)
+    coverage = float(len(matched_ids) / n_truth) if n_truth else np.nan
+    base: dict[str, Any] = {
         "method": method,
-        "status": "ok",
-        "spearman_global": _safe_spearman(
-            merged["true_pseudotime"], merged["inferred_pseudotime"]
-        ),
+        "coverage": coverage,
+        "n_truth": n_truth,
+        "n_output": n_output,
+        "n_finite_pseudotime": 0,
     }
 
-    lineage_mask = merged["inferred_lineage"].notna()
-    if lineage_mask.any():
-        out["lineage_ari"] = float(
-            adjusted_rand_score(
-                merged.loc[lineage_mask, "true_lineage"].astype(str),
-                merged.loc[lineage_mask, "inferred_lineage"].astype(str),
-            )
-        )
-    else:
-        out["lineage_ari"] = np.nan
-    return out
+    def _invalid(reason: str, n_finite: int = 0) -> dict[str, Any]:
+        return {
+            **base,
+            "status": "invalid",
+            "invalid_reason": reason,
+            "spearman_global": np.nan,
+            "n_finite_pseudotime": int(n_finite),
+        }
+
+    if truth_ids.duplicated().any():
+        return _invalid("ground truth contains duplicate cell_id values")
+    if output_ids.duplicated().any():
+        return _invalid("method output contains duplicate cell_id values")
+    if n_truth != n_output or set(truth_ids) != set(output_ids):
+        return _invalid("method output cell IDs do not exactly match ground truth")
+
+    merged = truth.assign(cell_id=truth_ids).merge(
+        output.assign(cell_id=output_ids),
+        on="cell_id",
+        how="left",
+        validate="one_to_one",
+    )
+    inferred = pd.to_numeric(merged["inferred_pseudotime"], errors="coerce")
+    inferred_values = inferred.to_numpy(dtype=float)
+    n_finite = int(np.isfinite(inferred_values).sum())
+    if n_finite != n_truth:
+        return _invalid("inferred pseudotime contains NA or non-finite values", n_finite)
+    if np.unique(inferred_values).size < 2:
+        return _invalid("inferred pseudotime has fewer than two unique values", n_finite)
+
+    true_values = pd.to_numeric(
+        merged["true_pseudotime"], errors="coerce"
+    ).to_numpy(dtype=float)
+    if not np.isfinite(true_values).all() or np.unique(true_values).size < 2:
+        return _invalid("ground-truth pseudotime is non-finite or constant", n_finite)
+
+    score = _safe_spearman(
+        merged["true_pseudotime"], merged["inferred_pseudotime"]
+    )
+    if not np.isfinite(score):
+        return _invalid("global Spearman could not be computed", n_finite)
+    return {
+        **base,
+        "status": "ok",
+        "invalid_reason": "",
+        "spearman_global": float(score),
+        "n_finite_pseudotime": n_finite,
+    }
 
 
 def summarize_ti_metrics(rows: list[dict[str, Any]]) -> pd.DataFrame:
