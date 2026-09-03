@@ -16,9 +16,13 @@ from experiments.src.ti_artifacts import (
     save_map_bundle,
     validate_artifact_design,
 )
+from experiments.src.ti_direction import symmetric_direction_geometry
 from experiments.src.ti_experiment import (
+    DIRECTION_AXIS_ORDER,
+    axis_order_for_config,
     formal_sweep_settings,
     method_run_key,
+    plot_compact_ti_figure,
     plot_global_spearman,
     plot_umap_axis_panel,
     summarize_global_spearman,
@@ -35,6 +39,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _config():
     return OmegaConf.load(REPO_ROOT / "experiments/configs/benchmark_ti.yaml")
+
+
+def _direction_config():
+    return OmegaConf.load(
+        REPO_ROOT / "experiments/configs/benchmark_ti_direction.yaml"
+    )
 
 
 def test_frozen_design_counts_and_axis_isolation():
@@ -68,6 +78,94 @@ def test_frozen_design_counts_and_axis_isolation():
             int(cfg.artifacts.pool_seeds[replicate]) for _ in settings
         ]
         assert paired_pool_seeds == [int(seed)] * 15
+
+
+def test_direction_design_counts_reference_resolution_and_axis_isolation():
+    cfg = _direction_config()
+    reference = 0.15276488366758456
+    validate_formal_design(cfg, reference_direction_discrepancy=reference)
+    settings = formal_sweep_settings(
+        cfg, reference_direction_discrepancy=reference
+    )
+
+    assert axis_order_for_config(cfg) == DIRECTION_AXIS_ORDER
+    assert len(settings) == 15
+    assert len(settings) * len(cfg.benchmark.replicate_seeds) == 75
+    direction = [
+        setting for setting in settings if setting["axis"] == "direction_discrepancy"
+    ]
+    assert [setting["value"] for setting in direction] == [
+        0.0,
+        reference,
+        0.5,
+        1.0,
+        1.5,
+    ]
+    assert [setting["value_label"] for setting in direction] == [
+        "0",
+        "ref",
+        "0.5",
+        "1",
+        "1.5",
+    ]
+    for setting in settings:
+        assert setting["discrepancy_mode"] == "symmetric_direction"
+        if setting["axis"] == "direction_discrepancy":
+            assert setting["tau"] == 0.5
+            assert setting["noise_scale"] == 0.0
+        elif setting["axis"] == "tau":
+            assert setting["direction_discrepancy"] == pytest.approx(reference)
+            assert setting["noise_scale"] == 0.0
+        else:
+            assert setting["direction_discrepancy"] == pytest.approx(reference)
+            assert setting["tau"] == 0.5
+
+
+def test_symmetric_direction_geometry_realizes_requested_angle_and_fixed_covariance():
+    rng = np.random.RandomState(91)
+    W = rng.normal(scale=0.15, size=(200, 3))
+    centered_B = rng.normal(size=(180, 3)) @ np.diag([0.4, 0.7, 1.0])
+    centered_C = rng.normal(size=(160, 3)) @ np.diag([1.1, 0.5, 0.8])
+    centered_B -= centered_B.mean(axis=0)
+    centered_C -= centered_C.mean(axis=0)
+    B = centered_B + np.asarray([4.0, 0.0, 0.0])
+    C = centered_C + np.asarray([3.0, 3.0 * np.sqrt(3.0), 0.0])
+
+    reference = symmetric_direction_geometry(W, B, C, 0.0)[
+        "reference_direction_discrepancy"
+    ]
+    for value in (0.0, reference, 0.5, 1.0, 1.5):
+        result = symmetric_direction_geometry(W, B, C, value)
+        mu_W = W.mean(axis=0)
+        target_B = result["adjusted_B"].mean(axis=0) - mu_W
+        target_C = result["adjusted_C"].mean(axis=0) - mu_W
+        assert result["realized_direction_discrepancy"] == pytest.approx(
+            value, abs=1e-10
+        )
+        assert np.linalg.norm(target_B) == pytest.approx(result["shared_radius"])
+        assert np.linalg.norm(target_C) == pytest.approx(result["shared_radius"])
+        assert np.allclose(
+            np.cov(result["adjusted_B"], rowvar=False), np.cov(B, rowvar=False)
+        )
+        assert np.allclose(
+            np.cov(result["adjusted_C"], rowvar=False), np.cov(C, rowvar=False)
+        )
+    merged = symmetric_direction_geometry(W, B, C, 0.0)
+    assert np.allclose(merged["adjusted_B"].mean(0), merged["adjusted_C"].mean(0))
+    restored = symmetric_direction_geometry(W, B, C, reference)
+    observed_B = (B.mean(0) - W.mean(0)) / np.linalg.norm(B.mean(0) - W.mean(0))
+    observed_C = (C.mean(0) - W.mean(0)) / np.linalg.norm(C.mean(0) - W.mean(0))
+    assert np.allclose(restored["unit_B"], observed_B)
+    assert np.allclose(restored["unit_C"], observed_C)
+
+
+@pytest.mark.parametrize("value", [-0.01, 2.01, np.nan, np.inf])
+def test_symmetric_direction_geometry_rejects_invalid_values(value):
+    W = np.zeros((5, 2))
+    B = np.tile([1.0, 0.0], (5, 1))
+    C = np.tile([0.0, 1.0], (5, 1))
+    with pytest.raises(ValueError, match=r"\[0, 2\]"):
+        symmetric_direction_geometry(W, B, C, value)
 
 
 def test_formal_profile_rejects_model_or_grid_drift():
@@ -324,6 +422,212 @@ def test_umap_plot_is_one_by_five_with_shared_real_background(tmp_path):
     image = plt.imread(png)
     assert image.shape[1] > 4 * image.shape[0]
     assert pdf.exists()
+
+
+def test_compact_ti_plot_has_fifteen_umaps_and_three_numeric_metric_axes(
+    tmp_path, monkeypatch
+):
+    rng = np.random.RandomState(31)
+    axes = DIRECTION_AXIS_ORDER
+    values_by_axis = {
+        "direction_discrepancy": [0.0, 0.15, 0.5, 1.0, 1.5],
+        "tau": [0.0, 0.25, 0.5, 0.75, 1.0],
+        "noise_scale": [0.0, 0.5, 1.0, 2.0, 3.0],
+    }
+    labels_by_axis = {
+        axis: ["ref" if axis == "direction_discrepancy" and i == 1 else f"{v:g}"
+               for i, v in enumerate(values)]
+        for axis, values in values_by_axis.items()
+    }
+    real = pd.DataFrame(
+        {"umap_1": rng.normal(size=30), "umap_2": rng.normal(size=30)}
+    )
+    axis_frames = {}
+    metric_rows = []
+    methods = ["scanpy_dpt_paga", "slingshot", "monocle3"]
+    for axis in axes:
+        frames = []
+        for value in values_by_axis[axis]:
+            for lineage in ("trunk", "branch_B", "branch_C"):
+                frames.append(
+                    pd.DataFrame(
+                        {
+                            "axis": axis,
+                            "value": value,
+                            "true_lineage": lineage,
+                            "true_pseudotime": np.linspace(0.0, 1.0, 6),
+                            "umap_1": rng.normal(size=6),
+                            "umap_2": rng.normal(size=6),
+                        }
+                    )
+                )
+            for method_index, method in enumerate(methods):
+                for replicate in range(5):
+                    metric_rows.append(
+                        {
+                            "axis": axis,
+                            "value": value,
+                            "method": method,
+                            "replicate": replicate,
+                            "status": "ok",
+                            "spearman_global": 0.5 + 0.03 * method_index + 0.01 * replicate,
+                        }
+                    )
+        axis_frames[axis] = pd.concat(frames, ignore_index=True)
+    metrics = pd.DataFrame(metric_rows)
+    summary = summarize_global_spearman(metrics)
+    captured = []
+    monkeypatch.setattr(plt, "close", lambda fig: captured.append(fig))
+
+    png = tmp_path / "compact.png"
+    pdf = tmp_path / "compact.pdf"
+    plot_compact_ti_figure(
+        real,
+        axis_frames,
+        metrics,
+        summary,
+        axis_order=axes,
+        values_by_axis=values_by_axis,
+        value_labels_by_axis=labels_by_axis,
+        methods=methods,
+        method_colors={
+            "scanpy_dpt_paga": "#0072B2",
+            "slingshot": "#D55E00",
+            "monocle3": "#009E73",
+        },
+        lineage_colormaps={
+            "trunk": "Greens",
+            "branch_B": "Blues",
+            "branch_C": "Oranges",
+        },
+        xlim=(-4.0, 4.0),
+        ylim=(-4.0, 4.0),
+        png_path=png,
+        pdf_path=pdf,
+    )
+
+    assert png.exists() and pdf.exists()
+    assert len(captured) == 1
+    assert len(captured[0].axes) == 18
+    metric_axes = [captured[0].axes[index] for index in (5, 11, 17)]
+    for axis_name, metric_axis in zip(axes, metric_axes):
+        line = metric_axis.lines[0]
+        assert np.allclose(line.get_xdata(), values_by_axis[axis_name])
+
+
+def test_qc_only_preflight_never_invokes_ti_adapters(tmp_path, monkeypatch):
+    qc_path = tmp_path / "real_qc_reference.npz"
+    rng = np.random.RandomState(44)
+    np.savez_compressed(
+        qc_path,
+        real_pca=rng.normal(size=(20, 2)),
+        expression_total=np.full(20, 4.0),
+        detected_genes=np.full(20, 2),
+    )
+    bundle = SimpleNamespace(
+        root=tmp_path,
+        manifest={"files": {"qc_reference": qc_path.name}},
+        reference_latents=rng.normal(size=(20, 2)),
+        real_umap=pd.DataFrame(
+            {"umap_1": rng.normal(size=20), "umap_2": rng.normal(size=20)}
+        ),
+    )
+    cfg = OmegaConf.create(
+        {
+            "benchmark": {
+                "replicate_seeds": [42],
+                "discrepancy": {"mode": "symmetric_direction"},
+            },
+            "generation": {"t_values_count": 1, "n_samples_per_t": 2},
+            "plots": {
+                "dpi": 72,
+                "lineage_colormaps": {
+                    "trunk": "Greens",
+                    "branch_B": "Blues",
+                    "branch_C": "Oranges",
+                },
+            },
+        }
+    )
+    settings = []
+    for axis, values in (
+        ("direction_discrepancy", [0.0, 0.15, 0.5, 1.0, 1.5]),
+        ("tau", [0.0, 0.25, 0.5, 0.75, 1.0]),
+        ("noise_scale", [0.0, 0.5, 1.0, 2.0, 3.0]),
+    ):
+        for value in values:
+            settings.append(
+                {
+                    "axis": axis,
+                    "value": value,
+                    "value_label": f"{value:g}",
+                    "map_value": 0.15,
+                    "discrepancy": 0.15,
+                    "direction_discrepancy": 0.15,
+                    "discrepancy_mode": "symmetric_direction",
+                    "tau": 0.5,
+                    "noise_scale": 0.0,
+                    "is_reference": True,
+                }
+            )
+
+    class TransformOnly:
+        def transform(self, values):
+            return np.asarray(values)[:, :2]
+
+    def _fake_generate_dataset(**kwargs):
+        setting = kwargs["setting"]
+        shift = float(setting["value"]) * 0.01
+        expression = np.asarray(
+            [[1.0, 1.0], [1.1, 0.9], [0.9, 1.1], [1.2, 0.8]]
+        ) + shift
+        latent = expression.copy()
+        truth = pd.DataFrame(
+            {
+                "cell_id": [f"{setting['axis']}_{setting['value']}_{i}" for i in range(4)],
+                "true_pseudotime": [0.0, 0.0, 1.0, 1.0],
+                "true_lineage": ["trunk", "trunk", "branch_B", "branch_C"],
+                "true_segment": ["trunk", "trunk", "branch", "branch"],
+            }
+        )
+        dataset = SimpleNamespace(
+            adata=SimpleNamespace(
+                X=expression,
+                obsm={"X_latent": latent},
+                n_obs=4,
+            ),
+            ground_truth=truth,
+        )
+        return dataset, {"axis": setting["axis"], "value": setting["value"]}
+
+    monkeypatch.setattr(benchmark_ti, "_settings", lambda cfg, bundle: settings)
+    monkeypatch.setattr(benchmark_ti, "_generate_dataset", _fake_generate_dataset)
+    monkeypatch.setattr(
+        benchmark_ti,
+        "_run_adapter",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("TI adapters must not run during preflight")
+        ),
+    )
+    results_dir = tmp_path / "preflight"
+    benchmark_ti._run_preflight(
+        results_dir=results_dir,
+        cfg=cfg,
+        bundle=bundle,
+        config_hash="config",
+        vae=object(),
+        pca=TransformOnly(),
+        umap_model=TransformOnly(),
+        X_W=np.zeros((2, 2)),
+        X_B=np.zeros((2, 2)),
+        X_C=np.zeros((2, 2)),
+        t_values=[0.0],
+    )
+
+    qc = pd.read_csv(results_dir / "preflight_qc.csv")
+    manifest = pd.read_json(results_dir / "preflight_manifest.json", typ="series")
+    assert qc.shape[0] == 15
+    assert bool(manifest["ti_adapters_invoked"]) is False
 
 
 def test_slingshot_adapter_uses_average_pseudotime_not_row_minimum():

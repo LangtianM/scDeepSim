@@ -1,0 +1,10 @@
+defaults:
+  - benchmark_ti_direction
+  - _self_
+
+hydra:
+  run:
+    dir: ${paths.artifact_dir}_hydra
+  job:
+    chdir: false
+

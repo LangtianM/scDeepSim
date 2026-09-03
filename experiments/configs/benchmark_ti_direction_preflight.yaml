@@ -1,0 +1,9 @@
+defaults:
+  - benchmark_ti_direction
+  - _self_
+
+execution:
+  phase: preflight
+
+paths:
+  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_direction_v2_preflight

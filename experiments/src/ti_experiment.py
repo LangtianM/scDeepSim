@@ -17,8 +17,10 @@ from experiments.src.ti_artifacts import canonical_json, sha256_bytes
 
 
 AXIS_ORDER = ("discrepancy", "tau", "noise_scale")
+DIRECTION_AXIS_ORDER = ("direction_discrepancy", "tau", "noise_scale")
 AXIS_LABELS = {
-    "discrepancy": "Discrepancy (δ)",
+    "discrepancy": "Endpoint displacement (δ)",
+    "direction_discrepancy": r"Direction discrepancy ($1-\cos\theta$)",
     "tau": "Branch time (τ)",
     "noise_scale": "Noise scale",
 }
@@ -28,53 +30,123 @@ def _as_list(value) -> list:
     return list(value) if isinstance(value, (list, tuple)) else list(value)
 
 
-def formal_sweep_settings(cfg) -> list[dict[str, float | str]]:
+def discrepancy_mode(cfg) -> str:
+    """Return the explicit mode, defaulting legacy configs compatibly."""
+    spec = cfg.benchmark.discrepancy
+    return str(spec.mode) if "mode" in spec else "endpoint_displacement"
+
+
+def axis_order_for_config(cfg) -> tuple[str, str, str]:
+    """Return the three formal axes for the selected discrepancy mode."""
+    if discrepancy_mode(cfg) == "symmetric_direction":
+        return DIRECTION_AXIS_ORDER
+    return AXIS_ORDER
+
+
+def _resolve_discrepancy_value(value, reference_value: float | None) -> float:
+    if str(value) != "reference":
+        return float(value)
+    if reference_value is None:
+        raise ValueError(
+            "A frozen reference_direction_discrepancy is required to resolve "
+            "the 'reference' setting"
+        )
+    return float(reference_value)
+
+
+def formal_sweep_settings(
+    cfg, reference_direction_discrepancy: float | None = None
+) -> list[dict[str, float | str | bool]]:
     """Return the frozen fifteen settings in axis-major order."""
     settings: list[dict[str, float | str]] = []
-    for axis in AXIS_ORDER:
-        spec = cfg.benchmark[axis]
-        values = [float(value) for value in spec["values"]]
+    mode = discrepancy_mode(cfg)
+    axes = axis_order_for_config(cfg)
+    for axis in axes:
+        spec_key = "discrepancy" if axis in {
+            "discrepancy",
+            "direction_discrepancy",
+        } else axis
+        spec = cfg.benchmark[spec_key]
+        raw_values = list(spec["values"])
+        values = [
+            _resolve_discrepancy_value(value, reference_direction_discrepancy)
+            if spec_key == "discrepancy"
+            else float(value)
+            for value in raw_values
+        ]
         if len(values) != 5 or len(set(values)) != 5:
             raise ValueError(f"benchmark.{axis}.values must contain five unique values")
-        if axis == "discrepancy":
-            for value in values:
+        if spec_key == "discrepancy":
+            for raw_value, value in zip(raw_values, values):
+                base = {
+                    "axis": axis,
+                    "value": value,
+                    "value_label": "ref" if str(raw_value) == "reference" else f"{value:g}",
+                    "map_value": value,
+                    "discrepancy": value,
+                    "discrepancy_mode": mode,
+                    "tau": float(spec.fixed_tau),
+                    "noise_scale": float(spec.fixed_noise_scale),
+                }
+                if mode == "symmetric_direction":
+                    base["direction_discrepancy"] = value
+                    base["is_reference"] = str(raw_value) == "reference"
+                else:
+                    base["endpoint_displacement"] = value
                 settings.append(
-                    {
-                        "axis": axis,
-                        "value": value,
-                        "discrepancy": value,
-                        "tau": float(spec.fixed_tau),
-                        "noise_scale": float(spec.fixed_noise_scale),
-                    }
+                    base
                 )
         elif axis == "tau":
+            fixed = _resolve_discrepancy_value(
+                spec.fixed_discrepancy, reference_direction_discrepancy
+            )
             for value in values:
-                settings.append(
-                    {
-                        "axis": axis,
-                        "value": value,
-                        "discrepancy": float(spec.fixed_discrepancy),
-                        "tau": value,
-                        "noise_scale": float(spec.fixed_noise_scale),
-                    }
-                )
+                base = {
+                    "axis": axis,
+                    "value": value,
+                    "value_label": f"{value:g}",
+                    "map_value": fixed,
+                    "discrepancy": fixed,
+                    "discrepancy_mode": mode,
+                    "tau": value,
+                    "noise_scale": float(spec.fixed_noise_scale),
+                }
+                if mode == "symmetric_direction":
+                    base["direction_discrepancy"] = fixed
+                    base["is_reference"] = True
+                else:
+                    base["endpoint_displacement"] = fixed
+                settings.append(base)
         else:
+            fixed = _resolve_discrepancy_value(
+                spec.fixed_discrepancy, reference_direction_discrepancy
+            )
             for value in values:
-                settings.append(
-                    {
-                        "axis": axis,
-                        "value": value,
-                        "discrepancy": float(spec.fixed_discrepancy),
-                        "tau": float(spec.fixed_tau),
-                        "noise_scale": value,
-                    }
-                )
+                base = {
+                    "axis": axis,
+                    "value": value,
+                    "value_label": f"{value:g}",
+                    "map_value": fixed,
+                    "discrepancy": fixed,
+                    "discrepancy_mode": mode,
+                    "tau": float(spec.fixed_tau),
+                    "noise_scale": value,
+                }
+                if mode == "symmetric_direction":
+                    base["direction_discrepancy"] = fixed
+                    base["is_reference"] = True
+                else:
+                    base["endpoint_displacement"] = fixed
+                settings.append(base)
     return settings
 
 
-def validate_formal_design(cfg) -> None:
+def validate_formal_design(
+    cfg, reference_direction_discrepancy: float | None = None
+) -> None:
     """Fail early if execution selectors or paired seeds are out of scope."""
-    settings = formal_sweep_settings(cfg)
+    mode = discrepancy_mode(cfg)
+    settings = formal_sweep_settings(cfg, reference_direction_discrepancy)
     if len(settings) != 15:
         raise ValueError("Formal TI design must contain exactly 15 settings")
     seeds = [int(seed) for seed in cfg.benchmark.replicate_seeds]
@@ -85,34 +157,67 @@ def validate_formal_design(cfg) -> None:
     methods = [str(method) for method in cfg.benchmark.methods]
     if methods != ["scanpy_dpt_paga", "slingshot", "monocle3"]:
         raise ValueError("Formal TI benchmark requires the three frozen methods")
-    expected_settings = {
-        "discrepancy": {
-            "values": [0.2, 0.5, 0.8, 1.1, 1.4],
-            "fixed_tau": 0.5,
-            "fixed_noise_scale": 0.0,
-        },
-        "tau": {
-            "values": [0.0, 0.25, 0.5, 0.75, 1.0],
-            "fixed_discrepancy": 1.0,
-            "fixed_noise_scale": 0.0,
-        },
-        "noise_scale": {
-            "values": [0.0, 0.5, 1.0, 1.5, 2.0],
-            "fixed_tau": 0.5,
-            "fixed_discrepancy": 1.0,
-        },
-    }
-    for axis, expected in expected_settings.items():
-        actual = {
-            key: [float(value) for value in cfg.benchmark[axis][key]]
-            if key == "values"
-            else float(cfg.benchmark[axis][key])
-            for key in expected
+    if mode == "endpoint_displacement":
+        expected_settings = {
+            "discrepancy": {
+                "values": [0.2, 0.5, 0.8, 1.1, 1.4],
+                "fixed_tau": 0.5,
+                "fixed_noise_scale": 0.0,
+            },
+            "tau": {
+                "values": [0.0, 0.25, 0.5, 0.75, 1.0],
+                "fixed_discrepancy": 1.0,
+                "fixed_noise_scale": 0.0,
+            },
+            "noise_scale": {
+                "values": [0.0, 0.5, 1.0, 1.5, 2.0],
+                "fixed_tau": 0.5,
+                "fixed_discrepancy": 1.0,
+            },
         }
-        if actual != expected:
-            raise ValueError(
-                f"benchmark.{axis} does not match the frozen formal design"
-            )
+        for axis, expected in expected_settings.items():
+            actual = {
+                key: [float(value) for value in cfg.benchmark[axis][key]]
+                if key == "values"
+                else float(cfg.benchmark[axis][key])
+                for key in expected
+            }
+            if actual != expected:
+                raise ValueError(
+                    f"benchmark.{axis} does not match the frozen formal design"
+                )
+    elif mode == "symmetric_direction":
+        if str(cfg.execution.design_id) != "symmetric_direction_v2":
+            raise ValueError("Direction benchmark requires symmetric_direction_v2")
+        direction_values = [str(value) for value in cfg.benchmark.discrepancy["values"]]
+        if direction_values != ["0.0", "reference", "0.5", "1.0", "1.5"]:
+            raise ValueError("Direction discrepancy grid does not match the frozen design")
+        if [float(value) for value in cfg.benchmark.tau["values"]] != [
+            0.0,
+            0.25,
+            0.5,
+            0.75,
+            1.0,
+        ]:
+            raise ValueError("Tau grid does not match the frozen direction design")
+        if [float(value) for value in cfg.benchmark.noise_scale["values"]] != [
+            0.0,
+            0.5,
+            1.0,
+            2.0,
+            3.0,
+        ]:
+            raise ValueError("Noise grid does not match the frozen direction design")
+        if str(cfg.benchmark.tau.fixed_discrepancy) != "reference":
+            raise ValueError("Tau sweep must use the reference direction geometry")
+        if str(cfg.benchmark.noise_scale.fixed_discrepancy) != "reference":
+            raise ValueError("Noise sweep must use the reference direction geometry")
+        if float(cfg.benchmark.discrepancy.fixed_tau) != 0.5:
+            raise ValueError("Direction sweep must fix tau=0.5")
+        if float(cfg.benchmark.discrepancy.fixed_noise_scale) != 0.0:
+            raise ValueError("Direction sweep must fix noise=0")
+    else:
+        raise ValueError(f"Unknown discrepancy mode: {mode}")
     if str(cfg.execution.profile) == "formal":
         if int(cfg.generation.t_values_count) != 21:
             raise ValueError("Formal generation requires 21 t-values")
@@ -123,7 +228,8 @@ def validate_formal_design(cfg) -> None:
         if bool(cfg.outputs.save_generated_h5ad):
             raise ValueError("Formal output must not persist all generated h5ad files")
     selected_axes = [str(axis) for axis in cfg.benchmark.run_axes]
-    if not set(selected_axes) <= set(AXIS_ORDER):
+    axes = axis_order_for_config(cfg)
+    if not set(selected_axes) <= set(axes):
         raise ValueError(f"Unknown benchmark.run_axes: {selected_axes}")
     selected_replicates = [int(rep) for rep in cfg.benchmark.run_replicates]
     if not set(selected_replicates) <= set(range(5)):
@@ -163,6 +269,9 @@ def method_run_key(
         "artifact_hash": str(artifact_hash),
         "config_hash": str(config_hash),
     }
+    if setting.get("discrepancy_mode") == "symmetric_direction":
+        payload["discrepancy_mode"] = str(setting["discrepancy_mode"])
+        payload["map_value"] = float(setting["map_value"])
     return sha256_bytes(canonical_json(payload).encode())
 
 
@@ -224,11 +333,12 @@ def plot_global_spearman(
     png_path: Path,
     pdf_path: Path,
     dpi: int = 300,
+    axis_order: tuple[str, str, str] = AXIS_ORDER,
 ) -> None:
     """Draw the frozen 1x3 Global Spearman comparison panel."""
     fig, axes = plt.subplots(1, 3, figsize=(15, 4.6), sharey=True)
     markers = {"scanpy_dpt_paga": "o", "slingshot": "s", "monocle3": "^"}
-    for axis_name, ax in zip(AXIS_ORDER, axes):
+    for axis_name, ax in zip(axis_order, axes):
         for method_index, method in enumerate(methods):
             color = colors[method]
             raw = metrics[
@@ -284,18 +394,24 @@ def transform_synthetic_umap(dataset, pca, umap_model, setting: dict) -> pd.Data
     expression = np.asarray(dataset.adata.X, dtype=np.float32)
     coordinates = umap_model.transform(pca.transform(expression))
     truth = dataset.ground_truth.copy()
-    return pd.DataFrame(
-        {
-            "cell_id": truth["cell_id"].astype(str),
-            "axis": str(setting["axis"]),
-            "value": float(setting["value"]),
-            "true_pseudotime": truth["true_pseudotime"].to_numpy(dtype=float),
-            "true_lineage": truth["true_lineage"].astype(str),
-            "true_segment": truth["true_segment"].astype(str),
-            "umap_1": coordinates[:, 0],
-            "umap_2": coordinates[:, 1],
-        }
-    )
+    payload = {
+        "cell_id": truth["cell_id"].astype(str),
+        "axis": str(setting["axis"]),
+        "value": float(setting["value"]),
+        "value_label": str(setting.get("value_label", f"{float(setting['value']):g}")),
+        "true_pseudotime": truth["true_pseudotime"].to_numpy(dtype=float),
+        "true_lineage": truth["true_lineage"].astype(str),
+        "true_segment": truth["true_segment"].astype(str),
+        "umap_1": coordinates[:, 0],
+        "umap_2": coordinates[:, 1],
+    }
+    if "discrepancy_mode" in setting:
+        payload["discrepancy_mode"] = str(setting["discrepancy_mode"])
+    if "direction_discrepancy" in setting:
+        payload["direction_discrepancy"] = float(
+            setting["direction_discrepancy"]
+        )
+    return pd.DataFrame(payload)
 
 
 def shared_umap_limits(
@@ -329,10 +445,12 @@ def plot_umap_axis_panel(
     png_path: Path,
     pdf_path: Path,
     dpi: int = 300,
+    value_labels: list[str] | None = None,
 ) -> None:
     """Draw one fixed-coordinate 1x5 UMAP panel for formal replicate zero."""
     fig, axes = plt.subplots(1, 5, figsize=(20, 4.2), sharex=True, sharey=True)
-    for index, (ax, value) in enumerate(zip(axes, values)):
+    labels = value_labels or [f"{value:g}" for value in values]
+    for index, (ax, value, value_label) in enumerate(zip(axes, values, labels)):
         ax.scatter(
             real_umap["umap_1"],
             real_umap["umap_2"],
@@ -356,7 +474,7 @@ def plot_umap_axis_panel(
                 linewidths=0,
                 rasterized=True,
             )
-        ax.set_title(f"{AXIS_LABELS[axis_name]} = {value:g}")
+        ax.set_title(f"{AXIS_LABELS[axis_name]} = {value_label}")
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
         ax.set_aspect("equal", adjustable="box")
@@ -379,6 +497,238 @@ def plot_umap_axis_panel(
     ]
     fig.legend(handles=legend, loc="upper center", ncol=4, frameon=False)
     fig.tight_layout(rect=(0, 0, 1, 0.9))
+    png_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(png_path, dpi=dpi, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_compact_ti_figure(
+    real_umap: pd.DataFrame,
+    axis_frames: dict[str, pd.DataFrame],
+    metrics: pd.DataFrame,
+    summary: pd.DataFrame,
+    *,
+    axis_order: tuple[str, str, str],
+    values_by_axis: dict[str, list[float]],
+    value_labels_by_axis: dict[str, list[str]],
+    methods: list[str],
+    method_colors: dict[str, str],
+    lineage_colormaps: dict[str, str],
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+    png_path: Path,
+    pdf_path: Path,
+    dpi: int = 300,
+    width_inches: float = 7.4,
+    height_inches: float = 5.2,
+    left_width_ratio: float = 0.72,
+    right_width_ratio: float = 0.28,
+) -> None:
+    """Draw the paper-ready 3x5 UMAP plus aligned 3x1 metric figure."""
+    fig = plt.figure(figsize=(width_inches, height_inches))
+    outer = fig.add_gridspec(
+        3,
+        2,
+        width_ratios=[left_width_ratio, right_width_ratio],
+        left=0.055,
+        right=0.99,
+        bottom=0.075,
+        top=0.89,
+        wspace=0.12,
+        hspace=0.34,
+    )
+    markers = {"scanpy_dpt_paga": "o", "slingshot": "s", "monocle3": "^"}
+    umap_axes: list[list] = []
+    metric_axes = []
+
+    for row, axis_name in enumerate(axis_order):
+        left_grid = outer[row, 0].subgridspec(1, 5, wspace=0.025)
+        row_axes = []
+        values = values_by_axis[axis_name]
+        value_labels = value_labels_by_axis[axis_name]
+        synthetic = axis_frames[axis_name]
+        for column, (value, value_label) in enumerate(zip(values, value_labels)):
+            ax = fig.add_subplot(left_grid[0, column])
+            row_axes.append(ax)
+            ax.scatter(
+                real_umap["umap_1"],
+                real_umap["umap_2"],
+                s=1.4,
+                color="#C8C8C8",
+                alpha=0.24,
+                linewidths=0,
+                rasterized=True,
+            )
+            panel = synthetic[
+                np.isclose(synthetic["value"].to_numpy(dtype=float), value)
+            ]
+            for lineage in ("trunk", "branch_B", "branch_C"):
+                subset = panel[panel["true_lineage"] == lineage]
+                pseudotime = subset["true_pseudotime"].to_numpy(dtype=float)
+                rgba = plt.get_cmap(lineage_colormaps[lineage])(
+                    0.22 + 0.76 * pseudotime
+                )
+                ax.scatter(
+                    subset["umap_1"],
+                    subset["umap_2"],
+                    s=1.8,
+                    c=rgba,
+                    alpha=0.82,
+                    linewidths=0,
+                    rasterized=True,
+                )
+            ax.set_xlim(*xlim)
+            ax.set_ylim(*ylim)
+            ax.set_aspect("equal", adjustable="box")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(value_label, fontsize=6.4, pad=1.5)
+            for spine in ax.spines.values():
+                spine.set_linewidth(0.45)
+                spine.set_color("#777777")
+        umap_axes.append(row_axes)
+
+        ax_metric = fig.add_subplot(outer[row, 1])
+        metric_axes.append(ax_metric)
+        for method_index, method in enumerate(methods):
+            color = method_colors[method]
+            raw = metrics[
+                (metrics["axis"] == axis_name)
+                & (metrics["method"] == method)
+                & (metrics["status"] == "ok")
+            ].sort_values(["value", "replicate"])
+            span = max(values) - min(values)
+            jitter = (method_index - 1) * max(span, 1.0) * 0.006
+            ax_metric.scatter(
+                raw["value"].to_numpy(dtype=float) + jitter,
+                raw["spearman_global"].to_numpy(dtype=float),
+                color=color,
+                marker=markers[method],
+                s=8,
+                alpha=0.22,
+                linewidths=0,
+                zorder=2,
+            )
+            curve = summary[
+                (summary["axis"] == axis_name) & (summary["method"] == method)
+            ].sort_values("value")
+            x = curve["value"].to_numpy(dtype=float)
+            mean = curve["mean"].to_numpy(dtype=float)
+            sd = curve["sd"].fillna(0.0).to_numpy(dtype=float)
+            ax_metric.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.13)
+            ax_metric.plot(
+                x,
+                mean,
+                color=color,
+                marker=markers[method],
+                linewidth=1.15,
+                markersize=2.8,
+                zorder=4,
+            )
+        ax_metric.set_ylim(-1.0, 1.0)
+        ax_metric.set_xticks(values, value_labels, fontsize=5.8)
+        ax_metric.tick_params(axis="y", labelsize=5.8, width=0.5, length=2.2)
+        ax_metric.tick_params(axis="x", width=0.5, length=2.2, pad=1.5)
+        ax_metric.grid(alpha=0.2, linestyle="--", linewidth=0.45)
+        ax_metric.set_xlabel(AXIS_LABELS[axis_name], fontsize=6.2, labelpad=1.5)
+        for spine in ax_metric.spines.values():
+            spine.set_linewidth(0.55)
+
+    row_labels = {
+        "direction_discrepancy": r"$1-\cos\theta$",
+        "discrepancy": r"$\delta$",
+        "tau": r"$\tau$",
+        "noise_scale": r"$\sigma$",
+    }
+    for row, axis_name in enumerate(axis_order):
+        box = umap_axes[row][0].get_position()
+        fig.text(
+            box.x0 - 0.012,
+            0.5 * (box.y0 + box.y1),
+            row_labels[axis_name],
+            ha="right",
+            va="center",
+            fontsize=7.2,
+            fontweight="bold",
+        )
+
+    # One coordinate cue for the complete fixed-coordinate UMAP block.
+    cue_ax = umap_axes[-1][0]
+    cue_ax.annotate(
+        "",
+        xy=(0.30, 0.08),
+        xytext=(0.08, 0.08),
+        xycoords="axes fraction",
+        arrowprops={"arrowstyle": "->", "lw": 0.6, "color": "#444444"},
+    )
+    cue_ax.annotate(
+        "",
+        xy=(0.08, 0.30),
+        xytext=(0.08, 0.08),
+        xycoords="axes fraction",
+        arrowprops={"arrowstyle": "->", "lw": 0.6, "color": "#444444"},
+    )
+    cue_ax.text(0.31, 0.045, "UMAP1", transform=cue_ax.transAxes, fontsize=4.8)
+    cue_ax.text(
+        0.025,
+        0.31,
+        "UMAP2",
+        transform=cue_ax.transAxes,
+        fontsize=4.8,
+        rotation=90,
+        va="bottom",
+    )
+
+    lineage_handles = [
+        Line2D([0], [0], marker="o", linestyle="", color="#C8C8C8", label="real"),
+        *[
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                color=plt.get_cmap(lineage_colormaps[lineage])(0.68),
+                label=lineage,
+            )
+            for lineage in ("trunk", "branch_B", "branch_C")
+        ],
+        Line2D([0], [0], color="#555555", linewidth=0, label="light→dark: early→late"),
+    ]
+    method_handles = [
+        Line2D(
+            [0],
+            [0],
+            color=method_colors[method],
+            marker=markers[method],
+            linewidth=1.2,
+            markersize=3,
+            label=method,
+        )
+        for method in methods
+    ]
+    fig.legend(
+        handles=lineage_handles,
+        loc="upper left",
+        bbox_to_anchor=(0.055, 0.985),
+        ncol=5,
+        frameon=False,
+        fontsize=5.8,
+        handletextpad=0.25,
+        columnspacing=0.75,
+    )
+    fig.legend(
+        handles=method_handles,
+        loc="upper right",
+        bbox_to_anchor=(0.99, 0.985),
+        ncol=1,
+        frameon=False,
+        fontsize=5.6,
+        handlelength=1.5,
+        labelspacing=0.2,
+    )
+    fig.text(0.735, 0.50, "Global Spearman", rotation=90, fontsize=6.5, va="center")
+
     png_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(png_path, dpi=dpi, bbox_inches="tight")
     fig.savefig(pdf_path, bbox_inches="tight")
