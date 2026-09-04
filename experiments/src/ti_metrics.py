@@ -116,6 +116,8 @@ def evaluate_ti_output(
             "invalid_reason": f"ground truth is missing columns: {missing_truth}",
             "spearman_global": np.nan,
             "coverage": np.nan,
+            "id_coverage": np.nan,
+            "finite_pseudotime_fraction": np.nan,
             "n_truth": n_truth,
             "n_output": int(method_df.shape[0]),
             "n_finite_pseudotime": 0,
@@ -127,6 +129,8 @@ def evaluate_ti_output(
             "invalid_reason": f"method output is missing columns: {missing_output}",
             "spearman_global": np.nan,
             "coverage": 0.0,
+            "id_coverage": 0.0,
+            "finite_pseudotime_fraction": 0.0,
             "n_truth": n_truth,
             "n_output": int(method_df.shape[0]),
             "n_finite_pseudotime": 0,
@@ -138,6 +142,8 @@ def evaluate_ti_output(
             "invalid_reason": "empty or skipped method output",
             "spearman_global": np.nan,
             "coverage": 0.0,
+            "id_coverage": 0.0,
+            "finite_pseudotime_fraction": 0.0,
             "n_truth": n_truth,
             "n_output": 0,
             "n_finite_pseudotime": 0,
@@ -150,21 +156,34 @@ def evaluate_ti_output(
     n_output = int(output.shape[0])
     matched_ids = set(truth_ids) & set(output_ids)
     coverage = float(len(matched_ids) / n_truth) if n_truth else np.nan
+    raw_inferred = pd.to_numeric(output["inferred_pseudotime"], errors="coerce")
+    raw_n_finite = int(np.isfinite(raw_inferred.to_numpy(dtype=float)).sum())
     base: dict[str, Any] = {
         "method": method,
         "coverage": coverage,
+        "id_coverage": coverage,
+        "finite_pseudotime_fraction": (
+            float(raw_n_finite / n_output) if n_output else 0.0
+        ),
         "n_truth": n_truth,
         "n_output": n_output,
-        "n_finite_pseudotime": 0,
+        "n_finite_pseudotime": raw_n_finite,
     }
 
-    def _invalid(reason: str, n_finite: int = 0) -> dict[str, Any]:
+    def _invalid(
+        reason: str, n_finite: int | None = None
+    ) -> dict[str, Any]:
+        if n_finite is None:
+            n_finite = raw_n_finite
         return {
             **base,
             "status": "invalid",
             "invalid_reason": reason,
             "spearman_global": np.nan,
             "n_finite_pseudotime": int(n_finite),
+            "finite_pseudotime_fraction": (
+                float(n_finite / n_output) if n_output else 0.0
+            ),
         }
 
     if truth_ids.duplicated().any():
@@ -205,6 +224,9 @@ def evaluate_ti_output(
         "invalid_reason": "",
         "spearman_global": float(score),
         "n_finite_pseudotime": n_finite,
+        "finite_pseudotime_fraction": (
+            float(n_finite / n_output) if n_output else 0.0
+        ),
     }
 
 

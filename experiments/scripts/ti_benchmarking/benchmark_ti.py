@@ -2,8 +2,9 @@
 
 The script never trains a model. It requires a validated bundle produced by
 ``prepare_ti_artifacts.py``, reconstructs each synthetic expression dataset
-deterministically, resumes successful method-level runs, and publishes formal
-metrics/figures only after all 225 method runs pass strict validity checks.
+deterministically, resumes terminal method-level runs, and publishes formal
+metrics/figures after all 225 method runs reach either ``ok`` or a scientific
+``invalid`` state.
 """
 
 import os
@@ -20,8 +21,11 @@ os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matpl
 os.environ.setdefault("XDG_CACHE_HOME", os.path.join(tempfile.gettempdir(), "xdg_cache"))
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 
+import importlib.metadata
 import json
 import logging
+import platform
+import subprocess
 from pathlib import Path
 
 import hydra
@@ -69,6 +73,67 @@ from scdeepsim.control import branch_trajectory_ot
 
 
 log = logging.getLogger(__name__)
+
+
+def _benchmark_software_versions(cfg) -> dict[str, str]:
+    """Return the Python and R package versions used by the TI adapters."""
+    versions = {"python": platform.python_version()}
+    for package in ("scanpy", "anndata", "numpy", "pandas"):
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = "not-installed"
+
+    expression = (
+        'version_for <- function(pkg) {'
+        ' if (requireNamespace(pkg, quietly=TRUE))'
+        ' as.character(utils::packageVersion(pkg)) else "not-installed" }; '
+        'cat(paste0("R=", R.version.string, "\\n",'
+        ' "monocle3=", version_for("monocle3"), "\\n",'
+        ' "slingshot=", version_for("slingshot")))'
+    )
+    command = ["Rscript", "-e", expression]
+    if bool(cfg.r.use_conda_run):
+        command = ["conda", "run", "-n", str(cfg.r.conda_env), *command]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "R version query failed")
+        for line in result.stdout.splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                if key in {"R", "monocle3", "slingshot"}:
+                    versions[key] = value.strip()
+    except Exception as exc:
+        log.warning("Could not record R TI package versions: %s", exc)
+        versions.update(
+            {
+                "R": "unavailable",
+                "monocle3": "unavailable",
+                "slingshot": "unavailable",
+            }
+        )
+    return versions
+
+
+def _warn_artifact_version_drift(bundle, versions: dict[str, str]) -> None:
+    """Warn about recorded environment drift without rejecting artifact reuse."""
+    artifact_versions = bundle.manifest.get("software_versions", {})
+    for package in ("python", "scanpy"):
+        expected = artifact_versions.get(package)
+        actual = versions.get(package)
+        if expected is not None and actual is not None and expected != actual:
+            log.warning(
+                "Software version drift for %s: artifact=%s benchmark=%s; continuing",
+                package,
+                expected,
+                actual,
+            )
 
 
 def _anchor(bundle, state: str) -> np.ndarray:
@@ -175,7 +240,7 @@ def _resume_record(
     expected_key: str,
     method: str,
 ) -> dict | None:
-    """Return a revalidated successful record, or ``None`` to rerun."""
+    """Return a revalidated terminal record, or ``None`` to rerun."""
     if not record_path.exists() or not output_path.exists():
         return None
     try:
@@ -183,13 +248,18 @@ def _resume_record(
             record = json.load(handle)
         if record.get("run_key") != expected_key:
             return None
-        if record.get("status") != "ok":
+        recorded_status = str(record.get("status", ""))
+        if recorded_status not in {"ok", "invalid"}:
             return None
         if sha256_file(output_path) != record.get("method_output_sha256"):
             return None
         output = pd.read_csv(output_path)
         metrics = evaluate_ti_output(truth, output, method=method)
-        if metrics["status"] != "ok":
+        if metrics["status"] != recorded_status:
+            return None
+        if recorded_status == "invalid" and metrics.get("invalid_reason") != record.get(
+            "invalid_reason"
+        ):
             return None
         return {**record, **metrics}
     except Exception:
@@ -281,12 +351,14 @@ def _collect_records(results_dir: Path, cfg, bundle, config_hash: str):
                     )
                 if record is None:
                     stored_status = "missing"
-                    reason = "no matching valid record"
+                    reason = "no matching terminal record"
                     if record_path.exists():
                         try:
                             with record_path.open() as handle:
                                 stored = json.load(handle)
-                            stored_status = str(stored.get("status", "invalid"))
+                            recorded_status = str(stored.get("status", "unknown"))
+                            if recorded_status in {"skipped", "error"}:
+                                stored_status = recorded_status
                             reason = str(stored.get("invalid_reason", "record failed validation"))
                         except Exception as exc:
                             reason = f"unreadable record: {exc}"
@@ -311,9 +383,19 @@ def _collect_records(results_dir: Path, cfg, bundle, config_hash: str):
                             "replicate": replicate,
                             "seed": seed,
                             "method": method,
-                            "status": "ok",
-                            "reason": "",
+                            "status": str(record["status"]),
+                            "reason": str(record.get("invalid_reason", "")),
                             "run_key": expected_key,
+                            "coverage": record.get("coverage", np.nan),
+                            "id_coverage": record.get("id_coverage", np.nan),
+                            "finite_pseudotime_fraction": record.get(
+                                "finite_pseudotime_fraction", np.nan
+                            ),
+                            "n_truth": record.get("n_truth", np.nan),
+                            "n_output": record.get("n_output", np.nan),
+                            "n_finite_pseudotime": record.get(
+                                "n_finite_pseudotime", np.nan
+                            ),
                         }
                     )
     return pd.DataFrame(records), pd.DataFrame(status_rows)
@@ -592,25 +674,49 @@ def _run_preflight(
 
 
 def _publish_final_outputs(results_dir: Path, metrics: pd.DataFrame, bundle, cfg):
-    """Write formal tables and figures after complete validity is established."""
+    """Write tables and figures after every method run reaches a terminal state."""
     metrics = metrics.sort_values(["axis", "value", "replicate", "method"])
     if metrics.shape[0] != 225:
         raise RuntimeError(f"Expected 225 run metrics, got {metrics.shape[0]}")
-    if set(metrics["status"]) != {"ok"}:
-        raise RuntimeError("Formal metrics contain a non-valid method run")
+    if not set(metrics["status"]).issubset({"ok", "invalid"}):
+        raise RuntimeError("Formal metrics contain a non-terminal method run")
     if "lineage_ari" in metrics.columns:
         raise RuntimeError("lineage_ari must not appear in formal metrics")
 
     summary = summarize_global_spearman(metrics)
-    if summary.shape[0] != 45 or not (summary["n"] == 5).all():
+    if summary.shape[0] != 45 or not (summary["n_attempted"] == 5).all():
         raise RuntimeError(
-            f"Expected 45 complete summary rows with n=5, got {summary.shape[0]}"
+            "Expected 45 complete summary rows with n_attempted=5, "
+            f"got {summary.shape[0]}"
         )
     atomic_write_csv(results_dir / "metrics.csv", metrics)
     atomic_write_csv(results_dir / "metrics_summary.csv", summary)
     atomic_write_json(
         results_dir / "metrics.json",
         metrics.to_dict(orient="records"),
+    )
+    settings = _settings(cfg, bundle)
+    atomic_write_json(
+        results_dir / "experiment_settings.json",
+        {
+            "design_id": str(
+                cfg.execution.design_id
+                if "design_id" in cfg.execution
+                else "endpoint_displacement_v1"
+            ),
+            "discrepancy_mode": discrepancy_mode(cfg),
+            "settings": [_setting_metadata(setting) for setting in settings],
+            "replicate_seeds": [
+                int(seed) for seed in cfg.benchmark.replicate_seeds
+            ],
+            "methods": [str(method) for method in cfg.benchmark.methods],
+            "ti": OmegaConf.to_container(cfg.ti, resolve=True),
+            "global_spearman_definition": "simulator common-axis recovery",
+            "terminal_status_counts": {
+                "ok": int(metrics["status"].eq("ok").sum()),
+                "invalid": int(metrics["status"].eq("invalid").sum()),
+            },
+        },
     )
 
     figures_dir = results_dir / "figures"
@@ -635,7 +741,6 @@ def _publish_final_outputs(results_dir: Path, metrics: pd.DataFrame, bundle, cfg
     atomic_write_csv(plot_data_dir / "real_umap_reference.csv", bundle.real_umap)
     axis_frames: dict[str, pd.DataFrame] = {}
     all_frames: list[pd.DataFrame] = []
-    settings = _settings(cfg, bundle)
     axes = axis_order_for_config(cfg)
     for axis_name in axes:
         frames = []
@@ -737,6 +842,8 @@ def main(cfg: DictConfig) -> None:
         expected_config_hash=artifact_hash_expected,
         expected_code_hash=code_hash_expected,
     )
+    software_versions = _benchmark_software_versions(cfg)
+    _warn_artifact_version_drift(bundle, software_versions)
     reference_direction = _reference_direction_discrepancy(cfg, bundle)
     validate_formal_design(
         cfg, reference_direction_discrepancy=reference_direction
@@ -770,6 +877,8 @@ def main(cfg: DictConfig) -> None:
             "formal_method_run_count": 225,
             "global_spearman_definition": "simulator common-axis recovery",
             "lineage_fields": "audit-only; not scored or plotted",
+            "terminal_statuses": ["ok", "invalid"],
+            "software_versions": software_versions,
         },
     )
 
@@ -869,14 +978,22 @@ def main(cfg: DictConfig) -> None:
 
     metrics, status = _collect_records(results_dir, cfg, bundle, config_hash)
     atomic_write_csv(results_dir / "run_status.csv", status)
+    terminal = status["status"].isin({"ok", "invalid"})
+    n_terminal = int(terminal.sum())
     n_valid = int((status["status"] == "ok").sum())
-    complete = n_valid == 225 and status.shape[0] == 225
+    n_invalid = int((status["status"] == "invalid").sum())
+    complete = n_terminal == 225 and status.shape[0] == 225
     if complete:
         _publish_final_outputs(results_dir, metrics, bundle, cfg)
-        log.info("Formal TI benchmark complete: 225/225 valid runs")
+        log.info(
+            "Formal TI benchmark complete: 225/225 terminal runs (%d valid, %d invalid)",
+            n_valid,
+            n_invalid,
+        )
     else:
         message = (
-            f"Formal TI benchmark incomplete: {n_valid}/225 valid method runs. "
+            f"Formal TI benchmark incomplete: {n_terminal}/225 terminal method runs "
+            f"({n_valid} valid, {n_invalid} invalid). "
             "No formal metrics summary or figures were published."
         )
         if bool(cfg.outputs.require_complete):

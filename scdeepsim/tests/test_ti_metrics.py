@@ -31,6 +31,7 @@ def test_global_spearman_requires_strict_complete_finite_output():
 
     assert result["status"] == "ok"
     assert result["coverage"] == 1.0
+    assert result["finite_pseudotime_fraction"] == 1.0
     assert result["spearman_global"] == pytest.approx(1.0)
     assert "lineage_ari" not in result
 
@@ -51,6 +52,9 @@ def test_invalid_method_outputs_are_not_scored_on_subsets(output, reason):
     assert result["status"] == "invalid"
     assert reason in result["invalid_reason"]
     assert np.isnan(result["spearman_global"])
+    if "NA or non-finite" in reason:
+        assert result["n_finite_pseudotime"] == 3
+        assert result["finite_pseudotime_fraction"] == pytest.approx(0.75)
 
 
 def test_inferred_lineage_remains_in_audit_schema_but_does_not_affect_score():
@@ -62,4 +66,3 @@ def test_inferred_lineage_remains_in_audit_schema_but_does_not_affect_score():
     assert "inferred_lineage" in changed.columns
     assert first["spearman_global"] == second["spearman_global"]
     assert "lineage_ari" not in second
-

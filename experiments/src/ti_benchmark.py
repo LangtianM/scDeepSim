@@ -208,6 +208,8 @@ def ensure_common_ti_inputs(
         adata,
         n_neighbors=min(int(n_neighbors), max(2, adata.n_obs - 1)),
         n_pcs=n_comps,
+        knn=True,
+        method="umap",
         random_state=random_state,
     )
     try:

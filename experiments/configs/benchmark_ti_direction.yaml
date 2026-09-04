@@ -9,7 +9,7 @@ paths:
   root_dir: ${oc.env:PROJECT_ROOT}
   parent_artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_benchmark_full
   artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_benchmark_direction_v2
-  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_direction_v2
+  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_direction_v2_native
 
 data:
   dataset: scvelo_pancreas

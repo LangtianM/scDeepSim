@@ -44,10 +44,11 @@ cds <- monocle3::new_cell_data_set(
 cds <- monocle3::preprocess_cds(cds, num_dim = min(30, nrow(mat) - 1, ncol(mat) - 1))
 cds <- monocle3::reduce_dimension(cds)
 cds <- monocle3::cluster_cells(cds)
-# Learn one global principal graph. With the default partition-wise graph,
-# order_cells() assigns Inf outside the root partition, which violates the
-# benchmark's exact all-cell pseudotime contract.
-cds <- monocle3::learn_graph(cds, use_partition = FALSE)
+# Use Monocle3's native partition-wise principal-graph behavior. A single
+# common root is intentionally retained; cells in unreachable partitions keep
+# their native infinite pseudotime and make the benchmark run scientifically
+# invalid under the strict all-cell scoring contract.
+cds <- monocle3::learn_graph(cds, use_partition = TRUE)
 cds <- monocle3::order_cells(cds, root_cells = root_cell)
 
 pt <- as.numeric(monocle3::pseudotime(cds))

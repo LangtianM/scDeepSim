@@ -81,19 +81,6 @@ def run_scanpy_dpt_paga(
         random_state=random_state,
     )
 
-    # DPT assigns infinite pseudotime outside the root's connected component.
-    # Use Scanpy's dense Gaussian diffusion kernel for this adapter so the
-    # common-axis score covers every cell without truth-based imputation.
-    n_comps = max(1, min(int(n_pcs), work.n_obs - 1, work.n_vars - 1))
-    sc.pp.neighbors(
-        work,
-        n_neighbors=min(int(n_neighbors), max(2, work.n_obs - 1)),
-        n_pcs=n_comps,
-        knn=False,
-        method="gauss",
-        random_state=random_state,
-    )
-
     root_cell = root_cell_from_truth(work)
     work.uns["iroot"] = int(np.where(work.obs_names == root_cell)[0][0])
     n_dcs = max(1, min(10, work.n_obs - 2))
@@ -114,7 +101,7 @@ def run_scanpy_dpt_paga(
         "n_pcs": int(n_pcs),
         "n_neighbors": int(n_neighbors),
         "resolution": float(resolution),
-        "neighbor_graph": "scanpy_gaussian_knn_false",
+        "neighbor_graph": "scanpy_umap_knn_true",
     }
     out = pd.DataFrame(
         {

@@ -311,17 +311,154 @@ def _json_default(value):
 
 
 def summarize_global_spearman(metrics: pd.DataFrame) -> pd.DataFrame:
-    """Return the required 45-row axis/value/method mean-SD summary."""
-    valid = metrics.loc[metrics["status"] == "ok"].copy()
-    valid["spearman_global"] = pd.to_numeric(
-        valid["spearman_global"], errors="coerce"
+    """Summarize every attempted design cell, including terminal invalid runs."""
+    data = metrics.copy()
+    data["spearman_global"] = pd.to_numeric(
+        data["spearman_global"], errors="coerce"
     )
-    summary = (
-        valid.groupby(["axis", "value", "method"], sort=False)["spearman_global"]
-        .agg(mean="mean", sd="std", n="count")
-        .reset_index()
+    if "finite_pseudotime_fraction" not in data:
+        data["finite_pseudotime_fraction"] = np.where(
+            data["status"].eq("ok"), 1.0, np.nan
+        )
+    data["finite_pseudotime_fraction"] = pd.to_numeric(
+        data["finite_pseudotime_fraction"], errors="coerce"
     )
-    return summary
+
+    rows: list[dict] = []
+    for (axis, value, method), group in data.groupby(
+        ["axis", "value", "method"], sort=False
+    ):
+        valid = group.loc[group["status"] == "ok", "spearman_global"].dropna()
+        finite_fraction = group["finite_pseudotime_fraction"].dropna()
+        n_valid = int(valid.shape[0])
+        rows.append(
+            {
+                "axis": axis,
+                "value": float(value),
+                "method": method,
+                "mean": float(valid.mean()) if n_valid else np.nan,
+                "sd": float(valid.std()) if n_valid > 1 else np.nan,
+                # Retain ``n`` for readers of the previous summary schema.
+                "n": n_valid,
+                "n_attempted": int(group.shape[0]),
+                "n_valid": n_valid,
+                "n_invalid": int(group["status"].eq("invalid").sum()),
+                "mean_finite_pseudotime_fraction": (
+                    float(finite_fraction.mean())
+                    if not finite_fraction.empty
+                    else np.nan
+                ),
+                "min_finite_pseudotime_fraction": (
+                    float(finite_fraction.min())
+                    if not finite_fraction.empty
+                    else np.nan
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _draw_metric_method(
+    ax,
+    metrics: pd.DataFrame,
+    summary: pd.DataFrame,
+    *,
+    axis_name: str,
+    method: str,
+    method_index: int,
+    color: str,
+    marker: str,
+    raw_size: float,
+    mean_linewidth: float,
+    mean_markersize: float,
+    annotation_fontsize: float,
+    label: str | None = None,
+) -> None:
+    """Draw one method with validity-aware bands, gaps, and QC annotations."""
+    raw = metrics[
+        (metrics["axis"] == axis_name)
+        & (metrics["method"] == method)
+        & (metrics["status"] == "ok")
+    ].copy()
+    raw = raw.sort_values(["value", "replicate"])
+    curve = summary[
+        (summary["axis"] == axis_name) & (summary["method"] == method)
+    ].sort_values("value")
+    if curve.empty:
+        return
+
+    x = curve["value"].to_numpy(dtype=float)
+    mean = curve["mean"].to_numpy(dtype=float)
+    sd = curve["sd"].to_numpy(dtype=float)
+    n_valid = curve["n_valid"].to_numpy(dtype=int)
+    n_attempted = curve["n_attempted"].to_numpy(dtype=int)
+    span = max(float(np.ptp(x)), 1.0)
+    jitter = (method_index - 1) * span * 0.006
+    ax.scatter(
+        raw["value"].to_numpy(dtype=float) + jitter,
+        raw["spearman_global"].to_numpy(dtype=float),
+        color=color,
+        marker=marker,
+        s=raw_size,
+        alpha=0.25,
+        linewidths=0,
+        zorder=2,
+    )
+
+    band = (n_valid >= 2) & np.isfinite(mean) & np.isfinite(sd)
+    if band.any():
+        lower = np.where(band, mean - sd, np.nan)
+        upper = np.where(band, mean + sd, np.nan)
+        ax.fill_between(x, lower, upper, color=color, alpha=0.14)
+    ax.plot(
+        x,
+        mean,
+        color=color,
+        marker=marker,
+        linewidth=mean_linewidth,
+        markersize=mean_markersize,
+        label=label,
+        zorder=4,
+    )
+
+    for value, score, valid_count, attempted_count in zip(
+        x, mean, n_valid, n_attempted
+    ):
+        if valid_count >= attempted_count:
+            continue
+        count_label = f"{valid_count}/{attempted_count}"
+        if valid_count == 0:
+            cross_y = -0.93 + 0.07 * method_index
+            ax.scatter(
+                [value + jitter],
+                [cross_y],
+                marker="x",
+                color=color,
+                s=max(raw_size, 12),
+                linewidths=1.0,
+                zorder=5,
+            )
+            ax.annotate(
+                count_label,
+                (value + jitter, cross_y),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                color=color,
+                fontsize=annotation_fontsize,
+            )
+        elif np.isfinite(score):
+            ax.annotate(
+                count_label,
+                (value, score),
+                xytext=(0, 4 + 5 * (method_index - 1)),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                color=color,
+                fontsize=annotation_fontsize,
+            )
 
 
 def plot_global_spearman(
@@ -340,40 +477,20 @@ def plot_global_spearman(
     markers = {"scanpy_dpt_paga": "o", "slingshot": "s", "monocle3": "^"}
     for axis_name, ax in zip(axis_order, axes):
         for method_index, method in enumerate(methods):
-            color = colors[method]
-            raw = metrics[
-                (metrics["axis"] == axis_name)
-                & (metrics["method"] == method)
-                & (metrics["status"] == "ok")
-            ].copy()
-            raw = raw.sort_values(["value", "replicate"])
-            jitter = (method_index - 1) * 0.012
-            ax.scatter(
-                raw["value"].to_numpy(dtype=float) + jitter,
-                raw["spearman_global"].to_numpy(dtype=float),
-                color=color,
+            _draw_metric_method(
+                ax,
+                metrics,
+                summary,
+                axis_name=axis_name,
+                method=method,
+                method_index=method_index,
+                color=colors[method],
                 marker=markers[method],
-                s=22,
-                alpha=0.25,
-                linewidths=0,
-                zorder=2,
-            )
-            curve = summary[
-                (summary["axis"] == axis_name) & (summary["method"] == method)
-            ].sort_values("value")
-            x = curve["value"].to_numpy(dtype=float)
-            mean = curve["mean"].to_numpy(dtype=float)
-            sd = curve["sd"].fillna(0.0).to_numpy(dtype=float)
-            ax.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.14)
-            ax.plot(
-                x,
-                mean,
-                color=color,
-                marker=markers[method],
-                linewidth=2,
-                markersize=5,
+                raw_size=22,
+                mean_linewidth=2,
+                mean_markersize=5,
+                annotation_fontsize=6.5,
                 label=method,
-                zorder=4,
             )
         ax.set_title(AXIS_LABELS[axis_name])
         ax.set_xlabel(AXIS_LABELS[axis_name])
@@ -592,39 +709,19 @@ def plot_compact_ti_figure(
         ax_metric = fig.add_subplot(outer[row, 1])
         metric_axes.append(ax_metric)
         for method_index, method in enumerate(methods):
-            color = method_colors[method]
-            raw = metrics[
-                (metrics["axis"] == axis_name)
-                & (metrics["method"] == method)
-                & (metrics["status"] == "ok")
-            ].sort_values(["value", "replicate"])
-            span = max(values) - min(values)
-            jitter = (method_index - 1) * max(span, 1.0) * 0.006
-            ax_metric.scatter(
-                raw["value"].to_numpy(dtype=float) + jitter,
-                raw["spearman_global"].to_numpy(dtype=float),
-                color=color,
+            _draw_metric_method(
+                ax_metric,
+                metrics,
+                summary,
+                axis_name=axis_name,
+                method=method,
+                method_index=method_index,
+                color=method_colors[method],
                 marker=markers[method],
-                s=8,
-                alpha=0.22,
-                linewidths=0,
-                zorder=2,
-            )
-            curve = summary[
-                (summary["axis"] == axis_name) & (summary["method"] == method)
-            ].sort_values("value")
-            x = curve["value"].to_numpy(dtype=float)
-            mean = curve["mean"].to_numpy(dtype=float)
-            sd = curve["sd"].fillna(0.0).to_numpy(dtype=float)
-            ax_metric.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.13)
-            ax_metric.plot(
-                x,
-                mean,
-                color=color,
-                marker=markers[method],
-                linewidth=1.15,
-                markersize=2.8,
-                zorder=4,
+                raw_size=8,
+                mean_linewidth=1.15,
+                mean_markersize=2.8,
+                annotation_fontsize=4.2,
             )
         ax_metric.set_ylim(-1.0, 1.0)
         ax_metric.set_xticks(values, value_labels, fontsize=5.8)

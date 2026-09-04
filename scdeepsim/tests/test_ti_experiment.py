@@ -1,9 +1,11 @@
 from pathlib import Path
+import json
 import shutil
 import subprocess
 from types import SimpleNamespace
 
 import numpy as np
+import anndata as ad
 import pandas as pd
 import pytest
 import torch
@@ -30,6 +32,9 @@ from experiments.src.ti_experiment import (
     validate_formal_design,
 )
 from experiments.src.ti_metrics import standardize_method_output
+from experiments.src.ti_metrics import evaluate_ti_output, skipped_method_output
+from experiments.src import ti_benchmark as ti_benchmark_module
+from experiments.src.ti_methods import scanpy_dpt_paga
 from experiments.scripts.ti_benchmarking import benchmark_ti
 from scdeepsim.control import estimate_branch_affine_maps
 
@@ -79,6 +84,9 @@ def test_frozen_design_counts_and_axis_isolation():
         ]
         assert paired_pool_seeds == [int(seed)] * 15
 
+    assert str(cfg.paths.benchmark_dir).endswith("ti_benchmark_full_native")
+    assert "compact" in cfg.plots
+
 
 def test_direction_design_counts_reference_resolution_and_axis_isolation():
     cfg = _direction_config()
@@ -119,6 +127,114 @@ def test_direction_design_counts_reference_resolution_and_axis_isolation():
         else:
             assert setting["direction_discrepancy"] == pytest.approx(reference)
             assert setting["tau"] == 0.5
+
+    assert str(cfg.paths.benchmark_dir).endswith(
+        "ti_benchmark_direction_v2_native"
+    )
+
+
+def test_common_scanpy_graph_explicitly_uses_native_umap_knn(monkeypatch):
+    work = ad.AnnData(np.ones((5, 4), dtype=np.float32))
+    observed = []
+
+    monkeypatch.setattr(
+        ti_benchmark_module.sc.pp,
+        "pca",
+        lambda data, **kwargs: data.obsm.__setitem__(
+            "X_pca", np.ones((data.n_obs, kwargs["n_comps"]))
+        ),
+    )
+    monkeypatch.setattr(
+        ti_benchmark_module.sc.pp,
+        "neighbors",
+        lambda data, **kwargs: observed.append(kwargs),
+    )
+    monkeypatch.setattr(
+        ti_benchmark_module.sc.tl,
+        "leiden",
+        lambda data, **kwargs: data.obs.__setitem__(kwargs["key_added"], "0"),
+    )
+    monkeypatch.setattr(
+        ti_benchmark_module.sc.tl,
+        "umap",
+        lambda data, **kwargs: data.obsm.__setitem__(
+            "X_umap", np.zeros((data.n_obs, 2))
+        ),
+    )
+
+    ti_benchmark_module.ensure_common_ti_inputs(work, n_pcs=3, n_neighbors=15)
+
+    assert len(observed) == 1
+    assert observed[0]["knn"] is True
+    assert observed[0]["method"] == "umap"
+    assert observed[0]["n_neighbors"] == 4
+    assert observed[0]["n_pcs"] == 3
+
+
+def test_dpt_does_not_replace_the_common_native_neighbor_graph(monkeypatch):
+    work = ad.AnnData(np.ones((4, 3), dtype=np.float32))
+    work.obs_names = ["c0", "c1", "c2", "c3"]
+    work.obs["true_pseudotime"] = [0.0, 0.3, 0.6, 1.0]
+
+    def _common_inputs(data, **kwargs):
+        data.obs[kwargs["cluster_key"]] = ["0", "0", "1", "1"]
+        return data
+
+    monkeypatch.setattr(scanpy_dpt_paga, "ensure_common_ti_inputs", _common_inputs)
+    monkeypatch.setattr(
+        scanpy_dpt_paga.sc.pp,
+        "neighbors",
+        lambda *args, **kwargs: pytest.fail("DPT must not overwrite neighbors"),
+    )
+    monkeypatch.setattr(scanpy_dpt_paga.sc.tl, "diffmap", lambda *args, **kwargs: None)
+    def _dpt(data, **kwargs):
+        data.obs.loc[:, "dpt_pseudotime"] = [0.0, 0.2, 0.7, 1.0]
+
+    monkeypatch.setattr(scanpy_dpt_paga.sc.tl, "dpt", _dpt)
+    monkeypatch.setattr(
+        scanpy_dpt_paga.sc.tl,
+        "paga",
+        lambda data, **kwargs: data.uns.__setitem__("paga", {}),
+    )
+
+    result = scanpy_dpt_paga.run_scanpy_dpt_paga(work)
+    metadata = json.loads(result["metadata_json"].iloc[0])
+
+    assert metadata["neighbor_graph"] == "scanpy_umap_knn_true"
+
+
+def test_r_scripts_use_native_monocle_partitions_and_slingshot_average():
+    scripts = REPO_ROOT / "experiments/scripts/ti_benchmarking/R"
+    monocle = (scripts / "run_monocle3.R").read_text()
+    slingshot = (scripts / "run_slingshot.R").read_text()
+
+    assert "learn_graph(cds, use_partition = TRUE)" in monocle
+    assert "learn_graph(cds, use_partition = FALSE)" not in monocle
+    assert "pt <- slingshot::slingAvgPseudotime(fit)" in slingshot
+
+
+def test_unreachable_monocle_partition_is_terminal_invalid():
+    truth = pd.DataFrame(
+        {"cell_id": ["c0", "c1", "c2", "c3"], "true_pseudotime": [0, 0.3, 0.7, 1]}
+    )
+    output = standardize_method_output(
+        pd.DataFrame(
+            {
+                "cell_id": truth["cell_id"],
+                "inferred_pseudotime": [0.0, 0.4, np.inf, np.inf],
+                "inferred_lineage": ["1", "1", "2", "2"],
+            }
+        ),
+        method="monocle3",
+    )
+
+    result = evaluate_ti_output(truth, output, method="monocle3")
+
+    assert result["status"] == "invalid"
+    assert result["n_finite_pseudotime"] == 2
+    assert result["finite_pseudotime_fraction"] == pytest.approx(0.5)
+    assert np.isnan(result["spearman_global"])
+    assert output["inferred_lineage"].tolist() == ["1", "1", "2", "2"]
 
 
 def test_symmetric_direction_geometry_realizes_requested_angle_and_fixed_covariance():
@@ -292,6 +408,95 @@ def test_resume_reuses_a_strictly_valid_atomic_method_output(tmp_path, monkeypat
     )
 
 
+def test_resume_reuses_a_deterministic_terminal_invalid_output(tmp_path, monkeypatch):
+    truth = pd.DataFrame(
+        {"cell_id": ["c0", "c1", "c2"], "true_pseudotime": [0.0, 0.5, 1.0]}
+    )
+    output = standardize_method_output(
+        pd.DataFrame(
+            {
+                "cell_id": truth["cell_id"],
+                "inferred_pseudotime": [0.0, np.inf, np.inf],
+                "inferred_lineage": ["1", "2", "2"],
+            }
+        ),
+        method="fixture",
+    )
+    dataset = SimpleNamespace(ground_truth=truth, adata=object())
+    setting = {
+        "axis": "tau",
+        "value": 0.5,
+        "tau": 0.5,
+        "discrepancy": 1.0,
+        "noise_scale": 0.0,
+    }
+    cfg = OmegaConf.create({"outputs": {"resume": True}})
+    calls = []
+
+    def _fake_adapter(*args, **kwargs):
+        calls.append(1)
+        return output.copy()
+
+    monkeypatch.setattr(benchmark_ti, "_run_adapter", _fake_adapter)
+    kwargs = dict(
+        method="fixture",
+        dataset=dataset,
+        run_dir=tmp_path,
+        setting=setting,
+        replicate=0,
+        seed=42,
+        artifact_hash="artifact",
+        config_hash="config",
+        cfg=cfg,
+    )
+
+    first = benchmark_ti._execute_method(**kwargs)
+    second = benchmark_ti._execute_method(**kwargs)
+
+    assert first["status"] == second["status"] == "invalid"
+    assert first["invalid_reason"] == second["invalid_reason"]
+    assert len(calls) == 1
+
+
+def test_resume_retries_infrastructure_skips(tmp_path, monkeypatch):
+    truth = pd.DataFrame(
+        {"cell_id": ["c0", "c1", "c2"], "true_pseudotime": [0.0, 0.5, 1.0]}
+    )
+    dataset = SimpleNamespace(ground_truth=truth, adata=object())
+    setting = {
+        "axis": "tau",
+        "value": 0.5,
+        "tau": 0.5,
+        "discrepancy": 1.0,
+        "noise_scale": 0.0,
+    }
+    cfg = OmegaConf.create({"outputs": {"resume": True}})
+    calls = []
+
+    def _fake_adapter(*args, **kwargs):
+        calls.append(1)
+        return skipped_method_output("fixture", "dependency unavailable")
+
+    monkeypatch.setattr(benchmark_ti, "_run_adapter", _fake_adapter)
+    kwargs = dict(
+        method="fixture",
+        dataset=dataset,
+        run_dir=tmp_path,
+        setting=setting,
+        replicate=0,
+        seed=42,
+        artifact_hash="artifact",
+        config_hash="config",
+        cfg=cfg,
+    )
+
+    first = benchmark_ti._execute_method(**kwargs)
+    second = benchmark_ti._execute_method(**kwargs)
+
+    assert first["status"] == second["status"] == "skipped"
+    assert len(calls) == 2
+
+
 def test_synthetic_umap_only_calls_frozen_transforms():
     class TransformOnly:
         def __init__(self, output):
@@ -374,6 +579,78 @@ def test_global_spearman_plot_is_one_by_three_and_has_no_ari(tmp_path):
     assert summary.shape[0] == 45
     assert "lineage_ari" not in metrics.columns
     assert png.exists() and pdf.exists()
+
+
+def test_summary_and_plot_retain_zero_and_partial_valid_design_cells(
+    tmp_path, monkeypatch
+):
+    cfg = _config()
+    rows = []
+    for axis in ("discrepancy", "tau", "noise_scale"):
+        for value_index, value in enumerate(cfg.benchmark[axis]["values"]):
+            for method in cfg.benchmark.methods:
+                for replicate in range(5):
+                    status = "ok"
+                    if axis == "discrepancy" and value_index == 0 and method == "monocle3":
+                        status = "invalid"
+                    if axis == "tau" and value_index == 0 and method == "slingshot" and replicate > 0:
+                        status = "invalid"
+                    rows.append(
+                        {
+                            "axis": axis,
+                            "value": float(value),
+                            "method": str(method),
+                            "replicate": replicate,
+                            "status": status,
+                            "spearman_global": 0.5 if status == "ok" else np.nan,
+                            "finite_pseudotime_fraction": (
+                                1.0 if status == "ok" else 0.4
+                            ),
+                        }
+                    )
+    metrics = pd.DataFrame(rows)
+    summary = summarize_global_spearman(metrics)
+    zero = summary[
+        (summary["axis"] == "discrepancy")
+        & (
+            summary["value"]
+            == float(cfg.benchmark["discrepancy"]["values"][0])
+        )
+        & (summary["method"] == "monocle3")
+    ].iloc[0]
+    one = summary[
+        (summary["axis"] == "tau")
+        & (summary["value"] == float(cfg.benchmark["tau"]["values"][0]))
+        & (summary["method"] == "slingshot")
+    ].iloc[0]
+
+    assert summary.shape[0] == 45
+    assert (summary["n_attempted"] == 5).all()
+    assert zero["n_valid"] == 0 and zero["n_invalid"] == 5
+    assert np.isnan(zero["mean"])
+    assert one["n_valid"] == 1 and one["n_invalid"] == 4
+    assert np.isnan(one["sd"])
+
+    captured = []
+    monkeypatch.setattr(plt, "close", lambda fig: captured.append(fig))
+    plot_global_spearman(
+        metrics,
+        summary,
+        methods=[str(method) for method in cfg.benchmark.methods],
+        colors={
+            str(method): str(cfg.plots.method_colors[method])
+            for method in cfg.benchmark.methods
+        },
+        png_path=tmp_path / "validity.png",
+        pdf_path=tmp_path / "validity.pdf",
+    )
+
+    assert len(captured) == 1
+    labels = [text.get_text() for axis in captured[0].axes for text in axis.texts]
+    assert "0/5" in labels
+    assert "1/5" in labels
+    monocle_line = captured[0].axes[0].lines[2]
+    assert np.isnan(monocle_line.get_ydata()[0])
 
 
 def test_umap_plot_is_one_by_five_with_shared_real_background(tmp_path):

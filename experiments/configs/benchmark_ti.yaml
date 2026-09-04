@@ -6,7 +6,7 @@ execution:
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
   artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_benchmark_full
-  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_full
+  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_full_native
 
 data:
   dataset: scvelo_pancreas
@@ -121,6 +121,11 @@ plots:
     trunk: Greens
     branch_B: Blues
     branch_C: Oranges
+  compact:
+    width_inches: 7.4
+    height_inches: 5.2
+    left_width_ratio: 0.72
+    right_width_ratio: 0.28
 
 r:
   conda_env: lightning
