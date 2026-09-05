@@ -1,6 +1,6 @@
-"""Data loading, preprocessing, and fingerprinting for Figure 3.
+"""Data loading, preprocessing, and fingerprinting for simulation fidelity.
 
-The Figure 3 benchmark evaluates every method on the same selected cells and
+The simulation-fidelity benchmark evaluates every method on the same selected cells and
 genes. This module returns both raw-count and normalized log1p views of that
 selection and builds lightweight fingerprints used by the persistent sample
 cache.
@@ -100,7 +100,7 @@ def select_count_matrix(
         adata._inplace_subset_obs(valid_rows)
         matrix = adata.layers[layer] if source != "X" else adata.X
     adata.X = matrix.copy()
-    adata.uns["figure3_count_selection"] = {
+    adata.uns["simulation_fidelity_count_selection"] = {
         "n_source_cells": int(valid_rows.size),
         "n_invalid_cells_removed": n_invalid,
         "filter_invalid_cells": bool(filter_invalid_cells),
@@ -273,7 +273,7 @@ def subset_hvgs(
         score_decimals=score_decimals,
     )
     selected = adata[:, top_idx].copy()
-    selected.uns["figure3_hvg_selection"] = {
+    selected.uns["simulation_fidelity_hvg_selection"] = {
         "method": selection_method,
         "requested_n_genes": int(n_genes),
         "selected_n_genes": int(selected.n_vars),
@@ -317,7 +317,7 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
             cfg.data.get("filter_invalid_count_cells", False)
         ),
     )
-    count_selection = dict(adata.uns.pop("figure3_count_selection"))
+    count_selection = dict(adata.uns.pop("simulation_fidelity_count_selection"))
     sc.pp.filter_cells(adata, min_genes=int(cfg.data.min_genes))
     sc.pp.filter_genes(adata, min_cells=int(cfg.data.min_cells))
 
@@ -360,7 +360,7 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
             n_genes,
             score_decimals=hvg_score_decimals,
         )
-        hvg_selection = dict(adata.uns.pop("figure3_hvg_selection"))
+        hvg_selection = dict(adata.uns.pop("simulation_fidelity_hvg_selection"))
     elif n_genes is not None and n_genes > adata.n_vars:
         log.warning(
             "Requested %d genes, but only %d are available after filtering; using all genes.",
@@ -405,13 +405,13 @@ def load_and_preprocess(cfg: DictConfig) -> tuple[ad.AnnData, ad.AnnData]:
 
     adata_raw = adata.copy()
     adata_raw.X = as_dense(adata_raw.X).astype(np.float32)
-    adata_raw.uns["figure3_input"] = selection_metadata
+    adata_raw.uns["simulation_fidelity_input"] = selection_metadata
 
     adata_norm = adata_raw.copy()
     sc.pp.normalize_total(adata_norm, target_sum=1e4)
     sc.pp.log1p(adata_norm)
     adata_norm.X = as_dense(adata_norm.X).astype(np.float32)
-    adata_norm.uns["figure3_input"] = selection_metadata
+    adata_norm.uns["simulation_fidelity_input"] = selection_metadata
 
     log.info("Shared data shape: %s", adata_norm.shape)
     return adata_norm, adata_raw

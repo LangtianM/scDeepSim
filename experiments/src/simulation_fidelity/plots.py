@@ -1,4 +1,4 @@
-"""Plotting utilities for Figure 3 simulation quality outputs.
+"""Plotting utilities for simulation-fidelity outputs.
 
 Plot functions consume normalized log1p matrices and ``MethodOutput`` records
 after metrics have been computed. UMAP records are embedded in-place so the same
@@ -393,7 +393,7 @@ def plot_gene_expression_scatter(
     plt.close(fig)
 
 
-def plot_figure3(
+def plot_simulation_fidelity(
     records: list[dict[str, Any]],
     metrics: pd.DataFrame,
     x_real: np.ndarray,
@@ -401,7 +401,7 @@ def plot_figure3(
     cfg: DictConfig,
     save_path: Path,
 ) -> None:
-    """Assemble the main Figure 3 PNG from UMAP and metric panels."""
+    """Assemble the main simulation-fidelity PNG from UMAP and metric panels."""
     n = len(records)
     fig = plt.figure(figsize=(max(15, 3.0 * n), 8.8))
     outer = fig.add_gridspec(2, 1, height_ratios=[1.1, 1.0], hspace=0.35)

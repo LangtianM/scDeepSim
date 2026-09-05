@@ -7,7 +7,7 @@ paths:
 
 cache:
   enabled: true
-  dir: ${paths.root_dir}/experiments/baseline_cache/figure3_uncontrolled_quality
+  dir: ${paths.root_dir}/experiments/baseline_cache/simulation_fidelity
   reuse_samples: true
   reuse_scdeepsim: true
   reuse_scdiffusion: true
@@ -22,10 +22,10 @@ cache:
   # "scdeepsim_labels".
   #
   # Example:
-  # sample_archive: ${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz
+  # sample_archive: ${paths.root_dir}/experiments/outputs/<run>/results/samples.npz
   #
   # CLI example:
-  # cache.sample_archive=${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz
+  # cache.sample_archive=${paths.root_dir}/experiments/outputs/<run>/results/samples.npz
   sample_archive: null
   # Optional per-method overrides. These take precedence over sample_archive.
   # Values can be:
@@ -34,8 +34,8 @@ cache:
   #
   # Examples:
   # sample_paths:
-  #   scdeepsim: ${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz::scdeepsim
-  #   vae_reconstruction: ${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz::vae_reconstruction
+  #   scdeepsim: ${paths.root_dir}/experiments/outputs/<run>/results/samples.npz::scdeepsim
+  #   vae_reconstruction: ${paths.root_dir}/experiments/outputs/<run>/results/samples.npz::vae_reconstruction
   #   scdiffusion: ${paths.root_dir}/external_samples/scdiffusion_samples.npy
   sample_paths: {}
 
@@ -162,7 +162,7 @@ scdiffusion:
     decoder_activation: ReLU
     state_dict_path: ${paths.root_dir}/checkpoints/scimilarity/annotation_model_v1
   diffusion:
-    model_name: figure3_scdiffusion_diffusion
+    model_name: simulation_fidelity_scdiffusion_diffusion
     lr: 1.0e-4
     weight_decay: 1.0e-4
     lr_anneal_steps: 200000
@@ -215,8 +215,8 @@ figure:
   dpi: 300
   cmap: tab20
   title: null
-  output_name: figure3_uncontrolled_quality.png
+  output_name: simulation_fidelity.png
 
 hydra:
   run:
-    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure3_uncontrolled_quality
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_simulation_fidelity

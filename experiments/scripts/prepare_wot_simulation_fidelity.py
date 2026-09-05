@@ -1,4 +1,4 @@
-"""Create the D0-D8 Waddington-OT input used by Figure 3."""
+"""Create the D0-D8 Waddington-OT input used by simulation-fidelity evaluation."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pyrootutils
 
 pyrootutils.setup_root(__file__, indicator=".git", pythonpath=True, dotenv=True)
 
-from experiments.src.figure3_quality.wot import prepare_wot_files  # noqa: E402
+from experiments.src.simulation_fidelity.wot import prepare_wot_files  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

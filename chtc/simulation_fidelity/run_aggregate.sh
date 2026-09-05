@@ -24,7 +24,7 @@ for group in scdeepsim scvi scdiffusion scdesign3 zinbwave; do
 done
 
 conda run --no-capture-output -n lightning \
-    python "$project_root/experiments/scripts/aggregate_figure3_chtc.py" \
+    python "$project_root/experiments/scripts/aggregate_simulation_fidelity_chtc.py" \
     --parent-root "$PWD/parents" \
     --output-dir "$PWD/official" \
     --dataset-id "$dataset_id" \
@@ -33,6 +33,6 @@ conda run --no-capture-output -n lightning \
     --data-path "$PWD/$data_file" \
     --data-checksum "$data_checksum"
 
-test -s "official/figure3_${dataset_id}_learned_distribution.png"
-test -s "official/figure3_${dataset_id}_reconstruction.png"
+test -s "official/simulation_fidelity_${dataset_id}_learned_distribution.png"
+test -s "official/simulation_fidelity_${dataset_id}_reconstruction.png"
 test -s "official/aggregate_manifest.json"

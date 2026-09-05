@@ -1,4 +1,4 @@
-"""Quality metrics for Figure 3 simulation outputs.
+"""Quality metrics for simulation-fidelity outputs.
 
 Metrics compare each normalized log1p simulated matrix against the real
 evaluation matrix. The table includes real-vs-simulated discriminability,

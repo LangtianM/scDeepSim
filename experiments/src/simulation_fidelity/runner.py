@@ -1,4 +1,4 @@
-"""Experiment orchestration for Figure 3 uncontrolled simulation quality.
+"""Experiment orchestration for simulation-fidelity evaluation.
 
 The runner loads a shared data subset, dispatches enabled simulators, reuses or
 writes sample caches, computes metrics, writes run metadata, and generates the
@@ -42,7 +42,7 @@ from .metrics import build_metrics_table
 from .methods import run_scdeepsim, run_scvi_baselines, run_single_baseline
 from .plots import (
     compute_umap_embeddings,
-    plot_figure3,
+    plot_simulation_fidelity,
     plot_gene_expression_scatter,
     plot_quality_metrics_summary,
     plot_umap_comparison,
@@ -367,7 +367,7 @@ def load_available_sample_cache_outputs(
 
 
 def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
-    """Run the full Figure 3 experiment into a Hydra output directory.
+    """Run the full simulation-fidelity experiment into a Hydra output directory.
 
     The returned path is ``output_dir / "results"``. Baseline failures are
     recorded as failed ``MethodOutput`` rows only when
@@ -394,7 +394,7 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
             and include_vae_reconstruction_in_figures(cfg)
         ):
             output_methods.append("vae_reconstruction")
-    log.info("Figure 3 methods: %s", methods)
+    log.info("Simulation-fidelity methods: %s", methods)
     log.info("Output directory: %s", output_dir)
 
     adata_norm, adata_raw = load_and_preprocess(cfg)
@@ -585,7 +585,7 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
                 "n_genes": int(adata_norm.n_vars),
             },
             "split": split_metadata,
-            "data_selection": dict(adata_raw.uns.get("figure3_input", {})),
+            "data_selection": dict(adata_raw.uns.get("simulation_fidelity_input", {})),
             "celltype_key": str(cfg.data.celltype_key),
             "batch_key": str(cfg.data.batch_key),
             "scdeepsim": scdeepsim_extra,
@@ -621,9 +621,9 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
             results_dir / "gene_expression_scatter.png",
         )
         figure_name = str(
-            cfg.figure.get("output_name", "figure3_uncontrolled_quality.png")
+            cfg.figure.get("output_name", "simulation_fidelity.png")
         )
-        plot_figure3(
+        plot_simulation_fidelity(
             records,
             metrics,
             x_real,
@@ -637,5 +637,5 @@ def run_experiment(cfg: DictConfig, output_dir: Path) -> Path:
     log.info("Saved metrics CSV: %s", metrics_csv)
     log.info("Saved metrics JSON: %s", metrics_json)
     log.info("Saved baseline metadata: %s", metadata_json)
-    log.info("Figure 3 run complete: %s", results_dir)
+    log.info("Simulation-fidelity run complete: %s", results_dir)
     return results_dir

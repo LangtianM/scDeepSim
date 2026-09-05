@@ -13,34 +13,34 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 
-from experiments.src.figure3_quality.data import (
+from experiments.src.simulation_fidelity.data import (
     deterministic_top_feature_indices,
     filter_unusable_labels,
     select_count_matrix,
     stratified_subsample_indices,
 )
-from experiments.src.figure3_quality.aggregate import (
+from experiments.src.simulation_fidelity.aggregate import (
     PARENT_METHODS,
     _run_plot,
     validate_parent_results,
 )
-from experiments.src.figure3_quality.wot import prepare_wot_adata
-from experiments.scripts.submit_figure3_chtc import generate_workflow
+from experiments.src.simulation_fidelity.wot import prepare_wot_adata
+from experiments.scripts.submit_simulation_fidelity_chtc import generate_workflow
 
 
 def test_selection_probe_starts_from_archive_without_git_metadata(tmp_path):
     project_root = Path(__file__).resolve().parents[2]
     archive_root = tmp_path / "scDeepSim"
-    probe_path = archive_root / "experiments/scripts/probe_figure3_selection.py"
+    probe_path = archive_root / "experiments/scripts/probe_simulation_fidelity_selection.py"
     probe_path.parent.mkdir(parents=True)
     shutil.copy2(project_root / ".project-root", archive_root / ".project-root")
     shutil.copy2(
-        project_root / "experiments/scripts/probe_figure3_selection.py",
+        project_root / "experiments/scripts/probe_simulation_fidelity_selection.py",
         probe_path,
     )
     shutil.copytree(
-        project_root / "experiments/src/figure3_quality",
-        archive_root / "experiments/src/figure3_quality",
+        project_root / "experiments/src/simulation_fidelity",
+        archive_root / "experiments/src/simulation_fidelity",
     )
 
     completed = subprocess.run(
@@ -57,9 +57,9 @@ def test_selection_probe_starts_from_archive_without_git_metadata(tmp_path):
 @pytest.mark.parametrize(
     ("config_name", "expected_key"),
     [
-        ("figure3_chtc_pancreas", "celltype"),
-        ("figure3_chtc_immune", "final_annotation"),
-        ("figure3_chtc_lung", "cell_type"),
+        ("simulation_fidelity_chtc_pancreas", "celltype"),
+        ("simulation_fidelity_chtc_immune", "final_annotation"),
+        ("simulation_fidelity_chtc_lung", "cell_type"),
     ],
 )
 def test_scdesign3_formulas_use_the_dataset_celltype_key(config_name, expected_key):
@@ -105,7 +105,7 @@ def test_invalid_count_cells_can_be_strictly_removed():
 
     assert source == "layers['counts']"
     assert adata.obs_names.tolist() == ["valid-a", "valid-b"]
-    assert adata.uns["figure3_count_selection"]["n_invalid_cells_removed"] == 1
+    assert adata.uns["simulation_fidelity_count_selection"]["n_invalid_cells_removed"] == 1
     np.testing.assert_array_equal(adata.X, [[0.0, 2.0], [3.0, 1.0]])
 
 
@@ -278,13 +278,13 @@ def test_aggregate_plot_reconstructs_parent_cell_and_gene_selection(
         figure.write_bytes(b"png")
 
     monkeypatch.setattr(
-        "experiments.src.figure3_quality.aggregate.subprocess.run",
+        "experiments.src.simulation_fidelity.aggregate.subprocess.run",
         fake_run,
     )
 
     figure = _run_plot(
         project_root=tmp_path,
-        config_name="figure3_chtc_pancreas",
+        config_name="simulation_fidelity_chtc_pancreas",
         data_path=tmp_path / "pancreas.h5ad",
         data_checksum="md5:test",
         archive_path=tmp_path / "merged.npz",
@@ -309,10 +309,10 @@ def test_submit_matrix_has_eighteen_nodes_and_expected_resources(tmp_path):
         json.dumps(
             {
                 "container": {
-                    "transfer": "osdf:///chtc/staging/l/lma229/figure3-test.sif",
+                    "transfer": "osdf:///chtc/staging/l/lma229/simulation_fidelity-test.sif",
                     "sha256": "image",
                 },
-                "run_output_root": "osdf:///chtc/staging/l/lma229/figure3-runs",
+                "run_output_root": "osdf:///chtc/staging/l/lma229/simulation_fidelity-runs",
                 "datasets": {
                     dataset: {
                         "transfer": f"osdf:///chtc/staging/l/lma229/{dataset}.h5ad",
@@ -333,7 +333,7 @@ def test_submit_matrix_has_eighteen_nodes_and_expected_resources(tmp_path):
     )
 
     assert manifest["formal_node_count"] == 18
-    dag = (tmp_path / "batch" / "figure3.dag").read_text()
+    dag = (tmp_path / "batch" / "simulation_fidelity.dag").read_text()
     assert dag.count("JOB ") == 18
     assert dag.count("PARENT ") == 3
     scdiffusion_sub = (
@@ -343,7 +343,7 @@ def test_submit_matrix_has_eighteen_nodes_and_expected_resources(tmp_path):
     assert '+GPUJobLength = "medium"' in scdiffusion_sub
     assert "CUDAGlobalMemoryMb >= 16000" in scdiffusion_sub
     assert "transfer_output_remaps" in scdiffusion_sub
-    assert "figure3-runs/batch/pancreas/scdiffusion.tar.gz" in scdiffusion_sub
+    assert "simulation_fidelity-runs/batch/pancreas/scdiffusion.tar.gz" in scdiffusion_sub
     aggregate_sub = (
         tmp_path / "batch/nodes/pancreas/aggregate/aggregate.sub"
     ).read_text()

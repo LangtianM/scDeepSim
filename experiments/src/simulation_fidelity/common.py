@@ -1,7 +1,7 @@
-"""Shared constants and utility helpers for Figure 3 quality experiments.
+"""Shared constants and utility helpers for simulation-fidelity experiments.
 
-Figure 3 compares several simulators in a common normalized log1p expression
-space. This module defines method labels/colors, the normalized output
+The simulation-fidelity evaluation compares simulators in a common normalized
+log1p expression space. This module defines method labels/colors, the normalized output
 container, cache path helpers, executable validation, and logged subprocess
 execution used by the package.
 """
@@ -95,7 +95,7 @@ class MethodOutput:
     status
         ``"ok"`` or ``"failed"``.
     include_in_main
-        Whether the method should appear in the primary Figure 3 panels.
+        Whether the method should appear in the primary simulation-fidelity panels.
     reference_dependent
         True for diagnostics or baselines that borrow information from real
         cells at sampling time.
@@ -173,15 +173,15 @@ def config_container(value: Any) -> Any:
 
 
 def cache_root(cfg: DictConfig) -> Path:
-    """Return the configured Figure 3 cache root.
+    """Return the configured simulation-fidelity cache root.
 
     Relative paths are resolved from the repository root. When no cache
     directory is configured, caches are placed under
-    ``experiments/baseline_cache/figure3_uncontrolled_quality``.
+    ``experiments/baseline_cache/simulation_fidelity``.
     """
     cache_cfg = cfg.get("cache", {})
     configured = cache_cfg.get("dir") if cache_cfg else None
-    return resolve_path(configured) or Path(root) / "experiments" / "baseline_cache" / "figure3_uncontrolled_quality"
+    return resolve_path(configured) or Path(root) / "experiments" / "baseline_cache" / "simulation_fidelity"
 
 
 def cache_enabled(cfg: DictConfig, key: str) -> bool:
@@ -241,7 +241,7 @@ def get_eval_n_samples(cfg: DictConfig, n_obs: int) -> int:
 
 
 def method_order(method_keys: list[str], include_real: bool = True) -> list[str]:
-    """Return method keys in the paper-facing Figure 3 order."""
+    """Return method keys in the paper-facing simulation-fidelity order."""
     present = set(method_keys)
     ordered = []
     for key in MAIN_METHOD_ORDER:

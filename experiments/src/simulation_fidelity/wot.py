@@ -1,4 +1,4 @@
-"""Prepare the Waddington-OT expression matrix for Figure 3."""
+"""Prepare the Waddington-OT expression matrix for simulation fidelity."""
 
 from __future__ import annotations
 

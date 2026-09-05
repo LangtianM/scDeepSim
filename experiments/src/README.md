@@ -30,7 +30,7 @@ stable public package API.
 
 Most experiment metrics and plots compare matrices in normalized log1p space:
 raw counts are clipped to nonnegative values, rounded when needed, normalized to
-`target_sum=1e4`, and transformed with `log1p`. Figure 3 helpers keep both
+`target_sum=1e4`, and transformed with `log1p`. Simulation-fidelity helpers keep both
 representations:
 
 - `adata_raw` stores the selected raw-count matrix for count-based external
@@ -41,9 +41,9 @@ representations:
 When train/test splitting is enabled, the split preserves matched rows between
 raw and normalized `AnnData` objects and stores split fingerprints in metadata.
 
-## Figure 3 Quality Package
+## Simulation Fidelity Package
 
-`figure3_quality/` orchestrates uncontrolled simulation-quality comparisons:
+`simulation_fidelity/` orchestrates uncontrolled simulation-quality comparisons:
 
 - `data.py` loads the shared subset, normalizes counts, handles train/test
   splits, and fingerprints selected cells and genes.
@@ -54,7 +54,7 @@ raw and normalized `AnnData` objects and stores split fingerprints in metadata.
 - `cache.py` persists successful simulated sample matrices keyed by data,
   config, source-code fingerprints, and method-specific settings.
 - `metrics.py` builds the metrics table from `MethodOutput` records.
-- `plots.py` writes UMAP, summary-metric, gene-statistic, and combined Figure 3
+- `plots.py` writes UMAP, summary-metric, gene-statistic, and combined simulation-fidelity
   PNGs.
 - `runner.py` ties these pieces together and writes `results/metrics.csv`,
   `results/metrics.json`, `results/baseline_metadata.json`, optional
@@ -63,7 +63,7 @@ raw and normalized `AnnData` objects and stores split fingerprints in metadata.
 External baselines may create script-local run directories under
 `baseline_runs/` and model checkpoints under `models/` inside the Hydra output
 directory. Cache directories are configured through `cfg.cache.dir`; by default
-they live under `experiments/baseline_cache/figure3_uncontrolled_quality`.
+they live under `experiments/baseline_cache/simulation_fidelity`.
 
 ## Batch-Integration Benchmark Dependencies
 

@@ -1,8 +1,8 @@
-"""Persistent sample cache for Figure 3 simulation outputs.
+"""Persistent sample cache for simulation-fidelity outputs.
 
 Sample caches store successful ``MethodOutput`` matrices in normalized log1p
 space. Cache keys include the selected data fingerprint, relevant config
-sections, method-specific source metadata, and local Figure 3 implementation
+sections, method-specific source metadata, and local simulation-fidelity implementation
 fingerprints so stale outputs are naturally invalidated.
 """
 
@@ -67,13 +67,13 @@ def file_content_fingerprint(path: Path) -> dict[str, Any]:
     return payload
 
 
-def figure3_code_fingerprint() -> dict[str, Any]:
-    """Fingerprint local Figure 3 implementation files relevant to sample outputs."""
+def simulation_fidelity_code_fingerprint() -> dict[str, Any]:
+    """Fingerprint local simulation-fidelity files relevant to sample outputs."""
     rel_paths = [
-        "experiments/src/figure3_quality/common.py",
-        "experiments/src/figure3_quality/data.py",
-        "experiments/src/figure3_quality/methods.py",
-        "experiments/src/figure3_quality/cache.py",
+        "experiments/src/simulation_fidelity/common.py",
+        "experiments/src/simulation_fidelity/data.py",
+        "experiments/src/simulation_fidelity/methods.py",
+        "experiments/src/simulation_fidelity/cache.py",
     ]
     return {rel: file_content_fingerprint(root / rel) for rel in rel_paths}
 
@@ -152,7 +152,7 @@ def sample_cache_key_payload(
         "seed": int(cfg.seed),
         "eval": {"n_samples": resolved_n_samples},
         "method_config": method_sample_config(method_key, cfg),
-        "code": figure3_code_fingerprint(),
+        "code": simulation_fidelity_code_fingerprint(),
     }
 
 

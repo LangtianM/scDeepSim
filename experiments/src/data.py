@@ -1,8 +1,8 @@
 """Shared data-loading helpers for experiment scripts.
 
 The functions here produce small, dense, normalized ``AnnData`` objects for
-prototype VAE and batch-control workflows. More specialized Figure 3 loading
-lives in ``experiments.src.figure3_quality.data`` because that benchmark keeps a
+prototype VAE and batch-control workflows. Specialized simulation-fidelity loading
+lives in ``experiments.src.simulation_fidelity.data`` because that benchmark keeps a
 matched raw-count copy for external count-based baselines.
 """
 

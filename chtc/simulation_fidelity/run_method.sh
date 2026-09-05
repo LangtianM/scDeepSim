@@ -67,7 +67,7 @@ if [[ "$smoke" == 1 ]]; then
 fi
 
 conda run --no-capture-output -n lightning \
-    python "$project_root/experiments/scripts/figure3_uncontrolled_quality.py" \
+    python "$project_root/experiments/scripts/simulation_fidelity.py" \
     --config-name "$config_name" \
     "${overrides[@]}"
 

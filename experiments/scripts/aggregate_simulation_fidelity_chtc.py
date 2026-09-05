@@ -1,4 +1,4 @@
-"""Aggregate five CHTC parent jobs into two strict Figure 3 outputs."""
+"""Aggregate five CHTC parent jobs into two strict simulation-fidelity outputs."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ root = pyrootutils.setup_root(
     __file__, indicator=(".git", ".project-root"), pythonpath=True, dotenv=True
 )
 
-from experiments.src.figure3_quality.aggregate import aggregate_and_plot  # noqa: E402
+from experiments.src.simulation_fidelity.aggregate import aggregate_and_plot  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

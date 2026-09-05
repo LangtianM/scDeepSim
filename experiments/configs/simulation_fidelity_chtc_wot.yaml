@@ -1,5 +1,5 @@
 defaults:
-  - figure3_uncontrolled_quality
+  - simulation_fidelity
   - _self_
 
 dataset_id: wot

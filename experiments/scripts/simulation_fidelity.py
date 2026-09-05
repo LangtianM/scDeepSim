@@ -1,18 +1,18 @@
-"""Hydra entrypoint for Figure 3 uncontrolled single-cell simulation quality.
+"""Hydra entrypoint for single-cell simulation-fidelity evaluation.
 
 Usage:
-    conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py
-    conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py \
+    conda run -n lightning python experiments/scripts/simulation_fidelity.py
+    conda run -n lightning python experiments/scripts/simulation_fidelity.py \
         data.n_cells=256 data.n_genes=64 vae.epochs=1 diffusion.epochs=1 \
         diffusion.sampling_steps=10 methods=[scdeepsim]
-    conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py \
+    conda run -n lightning python experiments/scripts/simulation_fidelity.py \
         'methods=[scdeepsim,scdiffusion,scvi_prior,scdesign3]' \
-        'cache.sample_archive=${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz' \
-        'hydra.run.dir=${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure3_uncontrolled_quality_denovo'
-    conda run -n lightning python experiments/scripts/figure3_uncontrolled_quality.py \
+        'cache.sample_archive=${paths.root_dir}/experiments/outputs/<run>/results/samples.npz' \
+        'hydra.run.dir=${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_simulation_fidelity_denovo'
+    conda run -n lightning python experiments/scripts/simulation_fidelity.py \
         'methods=[vae_reconstruction,scvi_posterior,zinbwave]' \
-        'cache.sample_archive=${paths.root_dir}/experiments/outputs/2026-06-18/17-06-57_figure3_uncontrolled_quality/results/samples.npz' \
-        'hydra.run.dir=${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure3_uncontrolled_quality_reconstruction'
+        'cache.sample_archive=${paths.root_dir}/experiments/outputs/<run>/results/samples.npz' \
+        'hydra.run.dir=${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_simulation_fidelity_reconstruction'
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ root = pyrootutils.setup_root(
     __file__, indicator=(".git", ".project-root"), pythonpath=True, dotenv=True
 )
 
-from experiments.src.figure3_quality.cache import (  # noqa: E402
+from experiments.src.simulation_fidelity.cache import (  # noqa: E402
     build_sample_cache_paths,
     force_resimulate,
     load_sample_cache,
@@ -36,7 +36,7 @@ from experiments.src.figure3_quality.cache import (  # noqa: E402
     sample_cache_enabled,
     save_sample_cache,
 )
-from experiments.src.figure3_quality.common import (  # noqa: E402
+from experiments.src.simulation_fidelity.common import (  # noqa: E402
     METHOD_COLORS,
     METHOD_DISPLAY_NAMES,
     MAIN_METHOD_ORDER,
@@ -61,7 +61,7 @@ from experiments.src.figure3_quality.common import (  # noqa: E402
     run_logged_subprocess,
     stable_hash,
 )
-from experiments.src.figure3_quality.data import (  # noqa: E402
+from experiments.src.simulation_fidelity.data import (  # noqa: E402
     adata_selection_fingerprint,
     load_and_preprocess,
     load_sample_matrix,
@@ -70,7 +70,7 @@ from experiments.src.figure3_quality.data import (  # noqa: E402
     subset_hvgs,
     train_test_split_adata,
 )
-from experiments.src.figure3_quality.metrics import (  # noqa: E402
+from experiments.src.simulation_fidelity.metrics import (  # noqa: E402
     build_metrics_table,
     compute_discriminability,
     data_stats,
@@ -79,7 +79,7 @@ from experiments.src.figure3_quality.metrics import (  # noqa: E402
     safe_corr,
     subsample_rows,
 )
-from experiments.src.figure3_quality.methods import (  # noqa: E402
+from experiments.src.simulation_fidelity.methods import (  # noqa: E402
     build_scdeepsim_cache_paths,
     build_scdiffusion_cache_paths,
     build_scdiffusion_env,
@@ -112,14 +112,14 @@ from experiments.src.figure3_quality.methods import (  # noqa: E402
     zinbwave_renv_env,
     zinbwave_renv_project,
 )
-from experiments.src.figure3_quality.plots import (  # noqa: E402
+from experiments.src.simulation_fidelity.plots import (  # noqa: E402
     compute_umap_embeddings,
     label_color_dict,
     ok_main_metrics,
     plot_auc_bar,
     plot_cell_stat_bars,
     plot_embedding_panel,
-    plot_figure3,
+    plot_simulation_fidelity,
     plot_gene_expression_scatter,
     plot_gene_stat_bars,
     plot_quality_metrics_summary,
@@ -127,7 +127,7 @@ from experiments.src.figure3_quality.plots import (  # noqa: E402
     prepare_umap_records,
     set_shared_limits,
 )
-from experiments.src.figure3_quality.runner import (  # noqa: E402
+from experiments.src.simulation_fidelity.runner import (  # noqa: E402
     collect_method_metadata,
     expected_output_keys,
     load_method_outputs_from_sample_cache,
@@ -141,7 +141,7 @@ from experiments.src.figure3_quality.runner import (  # noqa: E402
 
 @hydra.main(
     config_path="../configs",
-    config_name="figure3_uncontrolled_quality",
+    config_name="simulation_fidelity",
     version_base="1.3",
 )
 def main(cfg: DictConfig) -> None:

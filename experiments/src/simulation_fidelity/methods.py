@@ -1,6 +1,6 @@
-"""Method runners for Figure 3 uncontrolled simulation quality.
+"""Method runners for simulation-fidelity evaluation.
 
-This module contains the expensive boundaries of the Figure 3 benchmark:
+This module contains the expensive boundaries of the simulation-fidelity benchmark:
 training/sampling scDeepSim, invoking R-backed count simulators, training scVI,
 and running or loading external scDiffusion outputs. Every public runner returns
 a ``MethodOutput`` whose matrix is normalized log1p expression aligned to the
@@ -947,7 +947,7 @@ def git_metadata_for_path(path: Path | None) -> dict[str, Any]:
 
 def build_scdiffusion_runner_paths(
     output_dir: Path,
-    model_name: str = "figure3_scdiffusion_diffusion",
+    model_name: str = "simulation_fidelity_scdiffusion_diffusion",
 ) -> dict[str, Path]:
     """Return deterministic input, output, checkpoint, and log paths."""
     run_dir = output_dir / "baseline_runs" / "scdiffusion"
@@ -1045,7 +1045,7 @@ def maybe_run_scdiffusion_command(cfg: DictConfig, output_dir: Path) -> Path | N
     """Run an optional external scDiffusion command and return expected output.
 
     The configured command is executed through ``conda run`` in the configured
-    work directory with ``PROJECT_ROOT`` and ``FIGURE3_OUTPUT_DIR`` set in the
+    work directory with ``PROJECT_ROOT`` and ``SIMULATION_FIDELITY_OUTPUT_DIR`` set in the
     environment.
     """
     if len(cfg.scdiffusion.command) == 0:
@@ -1067,7 +1067,7 @@ def maybe_run_scdiffusion_command(cfg: DictConfig, output_dir: Path) -> Path | N
     env.update(
         {
             "PROJECT_ROOT": str(root),
-            "FIGURE3_OUTPUT_DIR": str(output_dir),
+            "SIMULATION_FIDELITY_OUTPUT_DIR": str(output_dir),
             "SCDIFFUSION_SOURCE": str(source_path),
         }
     )

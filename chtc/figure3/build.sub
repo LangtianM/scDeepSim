@@ -1,8 +1,0 @@
-log = build.log
-transfer_input_files = figure3.def, environment-lightning.yml, environment-scdiffusion.yml, install_r_packages.R, scdiffusion-e20ee190-to-1d14c001.patch.b64, encoder.ckpt, decoder.ckpt, gene_order.tsv
-
-+IsBuildJob = True
-request_cpus = 8
-request_memory = 32GB
-request_disk = 60GB
-queue

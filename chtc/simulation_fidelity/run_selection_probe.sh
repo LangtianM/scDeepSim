@@ -16,7 +16,7 @@ export NUMBA_CACHE_DIR="$PWD/numba_cache"
 mkdir -p "$MPLCONFIGDIR" "$NUMBA_CACHE_DIR"
 
 conda run --no-capture-output -n lightning \
-    python "$project_root/experiments/scripts/probe_figure3_selection.py" \
+    python "$project_root/experiments/scripts/probe_simulation_fidelity_selection.py" \
     --config-name "$config_name" \
     --data-path "$PWD/$data_file" \
     --data-checksum "$data_checksum" \

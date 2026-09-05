@@ -1,4 +1,4 @@
-"""Generate and optionally submit the distributed CHTC Figure 3 DAG."""
+"""Generate and optionally submit the distributed CHTC simulation-fidelity DAG."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ import pyrootutils
 root = Path(pyrootutils.setup_root(__file__, indicator=".git", pythonpath=True, dotenv=True))
 
 DATASET_DEFAULTS = {
-    "pancreas": {"config": "figure3_chtc_pancreas", "title": "scIB Pancreas"},
-    "immune": {"config": "figure3_chtc_immune", "title": "scIB Immune"},
-    "lung": {"config": "figure3_chtc_lung", "title": "scIB Lung"},
-    "wot": {"config": "figure3_chtc_wot", "title": "Waddington-OT D0-D8"},
+    "pancreas": {"config": "simulation_fidelity_chtc_pancreas", "title": "scIB Pancreas"},
+    "immune": {"config": "simulation_fidelity_chtc_immune", "title": "scIB Immune"},
+    "lung": {"config": "simulation_fidelity_chtc_lung", "title": "scIB Lung"},
+    "wot": {"config": "simulation_fidelity_chtc_wot", "title": "Waddington-OT D0-D8"},
 }
 DEFAULT_DATASETS = ("pancreas", "immune", "lung")
 
@@ -213,15 +213,15 @@ def generate_workflow(
     run_output_root = str(
         assets.get(
             "run_output_root",
-            "osdf:///chtc/staging/l/lma229/scdeepsim-figure3/runs",
+            "osdf:///chtc/staging/l/lma229/scdeepsim-simulation-fidelity/runs",
         )
     ).rstrip("/")
     if not run_output_root.startswith("osdf:///"):
         raise ValueError("Run artifacts must be written through osdf:///.")
 
     batch_dir.mkdir(parents=True, exist_ok=True)
-    run_method = root / "chtc/figure3/run_method.sh"
-    run_aggregate = root / "chtc/figure3/run_aggregate.sh"
+    run_method = root / "chtc/simulation_fidelity/run_method.sh"
+    run_aggregate = root / "chtc/simulation_fidelity/run_aggregate.sh"
     source_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True
     ).strip()
@@ -293,7 +293,7 @@ def generate_workflow(
             "parent_artifacts": parent_transfers,
         }
 
-    dag_path = batch_dir / "figure3.dag"
+    dag_path = batch_dir / "simulation_fidelity.dag"
     dag_path.write_text("\n".join(dag_lines) + "\n")
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),

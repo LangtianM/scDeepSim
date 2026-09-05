@@ -1,4 +1,4 @@
-"""Materialize Figure 3 data-selection provenance without fitting a method."""
+"""Materialize simulation-fidelity selection provenance without fitting a method."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ root = Path(
     )
 )
 
-from experiments.src.figure3_quality.data import (  # noqa: E402
+from experiments.src.simulation_fidelity.data import (  # noqa: E402
     load_and_preprocess,
     train_test_split_adata,
 )
@@ -63,7 +63,7 @@ def main() -> None:
             for package in ("anndata", "numpy", "scanpy", "scipy", "scikit-learn")
         },
         "seed": int(cfg.seed),
-        "data_selection": dict(adata_raw.uns["figure3_input"]),
+        "data_selection": dict(adata_raw.uns["simulation_fidelity_input"]),
         "data_shape": {
             "selected_n_cells": int(adata_raw.n_obs),
             "n_genes": int(adata_raw.n_vars),

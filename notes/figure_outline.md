@@ -54,16 +54,16 @@ The trade-off between simulation quality and controllability is not fundamental.
 
 *Remark: Random BA is the baseline balanced accuracy by random choice, Cell type ~ Batch BA is the balanced accuracy when predicting cell type from batch labels, serving as the other baseline.*
 
-### Figure 3. Uncontrolled Simulation Quality
+### Simulation Fidelity
 
 - Problem: Does scDeepSim generate realistic single-cell data before applying any control?
-- Implementation: Compare real data, scDeepSim, scDiffusion, scVI prior sampling, scDesign3 and zinbwave simulated data using UMAP, RF real-vs-simulated discriminability, and data statistics (gene expression means, variances, zero proportions).
-- Interpretation: VAE+Diffusion gives more realistic data than baselines.
-- Status: Available. Current result uses only 5000 genes and 1000 cells considering the limited scalability of zinbwave and scDesign3. We can try designing a more comprehensive and fair comparison so that the pros and cons of different methods are more clear.
+- Implementation: Compare learned-distribution sampling by scDeepSim, scDiffusion, scVI prior, and scDesign3 separately from observation-conditioned reconstruction by the scDeepSim VAE, scVI posterior, and ZINB-WaVE. Use UMAP, RF real-vs.-simulated discriminability, and gene-expression statistics.
+- Interpretation: Quantifies how closely each method reproduces the held-out expression distribution before any control is applied.
+- Status: Completed on scIB Pancreas, Immune, and Lung using 2,500 HVGs and seed-42 stratified 50/50 train/evaluation splits.
 
-![Sim Quality 2](../experiments/outputs/2026-06-18/13-38-56_figure3_uncontrolled_quality/results/figure3_uncontrolled_quality.png)
+![Pancreas simulation fidelity](../experiments/outputs/simulation_fidelity/formal-77188a5-b0f25e-20260830-r3/figures/simulation_fidelity_pancreas_learned_distribution.png)
 
-*Experiment settings: Embryo atlas HVG data with 20,000 selected cells and 2,500 genes, split 50/50 into 10,000 train and 10,000 evaluation cells with stratification by cell type.*
+*Representative learned-distribution comparison for scIB Pancreas. The full result set contains learned-distribution and reconstruction panels for all three datasets.*
 
 *UMAP and summary metrics comparing real cells with baseline simulators. More realistic simulations have lower real-vs-simulated RF AUC and gene-wise statistics closer to the diagonal.*
 
@@ -179,7 +179,7 @@ The trade-off between simulation quality and controllability is not fundamental.
 ## Next Steps
 
 - [x] Run covariate predictability experiments to confirm disentanglement produce figure 2. 
-- [x] Compare with more baseline simulators for figure 3.
+- [x] Compare with more baseline simulators for simulation fidelity.
 - [ ] Assemble Figures 2-6 from existing outputs with consistent styling and labels.
 - [ ] Robustness experiments across an additional dataset.
 - [ ] Ablation studies to justify design choices.

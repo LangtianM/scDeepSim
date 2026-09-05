@@ -238,16 +238,16 @@ Empirical OT between finite samples and cell-type-stratified affine maps remain 
 
 Note: we haven't run many of the experiments in the full simulation pipeline. They are only applied to the encoded samples with VAE reconstruction, not the full VAE+Diffusion pipeline. We need to rerun them with the full workflow (e.g. the ti methods benchmark experiment) 
 
-### Simulation Quality Evaluation
+### Simulation Fidelity
 
 ```text
 experiments/scripts/eval_simulation_quality_scdesign3.py
 experiments/configs/eval_simulation_quality_scdesign3.yaml
-experiments/scripts/figure3_uncontrolled_quality.py
-experiments/configs/figure3_uncontrolled_quality.yaml
-experiments/configs/figure3_chtc_pancreas.yaml
-experiments/configs/figure3_chtc_immune.yaml
-experiments/configs/figure3_chtc_lung.yaml
+experiments/scripts/simulation_fidelity.py
+experiments/configs/simulation_fidelity.yaml
+experiments/configs/simulation_fidelity_chtc_pancreas.yaml
+experiments/configs/simulation_fidelity_chtc_immune.yaml
+experiments/configs/simulation_fidelity_chtc_lung.yaml
 ```
 
 We compare simulation quality using UMAP visualisation, per-gene expression statistics, and an RF-based discriminability test (real vs. simulated). The completed formal CHTC run (`formal-77188a5-b0f25e-20260830-r3`, commit `77188a5`) evaluates three scIB v8 datasets: Pancreas, Immune, and Lung; Waddington-OT was excluded from this run. Each dataset uses the raw-count matrix from `layers["counts"]`, removes invalid count cells before selection, selects 2,500 HVGs using the deterministic Seurat-v3 ranking, and applies a seed-42, label-stratified 50/50 train/evaluation split. Pancreas retains all 10,963 valid cells, Immune uses a fixed 20,000-cell subsample, and Lung retains all 9,701 valid cells. All 18 CHTC DAG nodes completed successfully, including all seven comparison methods. Hydra's resolved configs, metrics, provenance hashes, and job logs are retained with the downloaded results.
@@ -255,9 +255,9 @@ We compare simulation quality using UMAP visualisation, per-gene expression stat
 **Learned-distribution simulation methods:**
 
 - **scDeepSim(ours):** Latents are sampled from the diffusion model and decoded by the VAE. No original observation is required at generation time. This is the proposed end-to-end generative pipeline.
-- **scDiffusion:** An external VAE+diffusion baseline. In the Figure 3 run, the upstream scDiffusion VAE is trained on the selected raw-count subset, a diffusion model is trained in the upstream latent space, sampled latents are decoded, and the resulting normalised log1p expression matrix is compared against the held-out real cells.
+- **scDiffusion:** An external VAE+diffusion baseline. In the simulation-fidelity run, the upstream scDiffusion VAE is trained on the selected raw-count subset, a diffusion model is trained in the upstream latent space, sampled latents are decoded, and the resulting normalised log1p expression matrix is compared against the held-out real cells.
 - **scVI prior sampling:** Samples $z \sim \mathcal{N}(0, I)$ and then $x \sim p(x \mid z)$, while borrowing empirical library sizes and covariates from real cells. It is therefore included as an operational learned-distribution comparator but remains reference-dependent at generation time.
-- **scDesign3:** A classical statistical baseline from the R package `scDesign3`. It fits marginal negative-binomial models conditioned on cell type and a Gaussian copula over genes, then generates new count data that are normalised and log-transformed before comparison. The current Figure 3 run fits the copula on the top 1000 variance genes while keeping all 2500 selected genes in the output.
+- **scDesign3:** A classical statistical baseline from the R package `scDesign3`. It fits marginal negative-binomial models conditioned on cell type and a Gaussian copula over genes, then generates new count data that are normalised and log-transformed before comparison. The current simulation-fidelity run fits the copula on the top 1000 variance genes while keeping all 2500 selected genes in the output.
 
 **Observation-conditioned reconstruction methods:**
 
@@ -290,31 +290,31 @@ We assess discriminability via an RF classifier trained to distinguish real from
 
 **Learned-distribution simulation methods comparison**
 
-![scIB Pancreas learned-distribution simulation methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/pancreas/aggregate/official/figure3_pancreas_learned_distribution.png)
+![scIB Pancreas learned-distribution simulation methods comparison](../experiments/outputs/simulation_fidelity/formal-77188a5-b0f25e-20260830-r3/figures/simulation_fidelity_pancreas_learned_distribution.png)
 
 **Reconstruction Methods Comparison**
 
-![scIB Pancreas reconstruction methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/pancreas/aggregate/official/figure3_pancreas_reconstruction.png)
+![scIB Pancreas reconstruction methods comparison](../experiments/outputs/simulation_fidelity/formal-77188a5-b0f25e-20260830-r3/figures/simulation_fidelity_pancreas_reconstruction.png)
 
 #### scIB Immune
 
 **Learned-distribution simulation methods comparison**
 
-![scIB Immune learned-distribution simulation methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/immune/aggregate/official/figure3_immune_learned_distribution.png)
+![scIB Immune learned-distribution simulation methods comparison](../experiments/outputs/simulation_fidelity/formal-77188a5-b0f25e-20260830-r3/figures/simulation_fidelity_immune_learned_distribution.png)
 
 **Reconstruction Methods Comparison**
 
-![scIB Immune reconstruction methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/immune/aggregate/official/figure3_immune_reconstruction.png)
+![scIB Immune reconstruction methods comparison](../experiments/outputs/simulation_fidelity/formal-77188a5-b0f25e-20260830-r3/figures/simulation_fidelity_immune_reconstruction.png)
 
 #### scIB Lung
 
 **Learned-distribution simulation methods comparison**
 
-![scIB Lung learned-distribution simulation methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/lung/aggregate/official/figure3_lung_learned_distribution.png)
+![scIB Lung learned-distribution simulation methods comparison](../experiments/outputs/simulation_fidelity/formal-77188a5-b0f25e-20260830-r3/figures/simulation_fidelity_lung_learned_distribution.png)
 
 **Reconstruction Methods Comparison**
 
-![scIB Lung reconstruction methods comparison](../experiments/outputs/chtc_figure3/formal-77188a5-b0f25e-20260830-r3/nodes/lung/aggregate/official/figure3_lung_reconstruction.png)
+![scIB Lung reconstruction methods comparison](../experiments/outputs/simulation_fidelity/formal-77188a5-b0f25e-20260830-r3/figures/simulation_fidelity_lung_reconstruction.png)
 
 Caption: For each dataset, the learned-distribution panel compares scDeepSim, scDiffusion, scVI prior, and scDesign3. The reconstruction panel separately compares scDeepSim VAE reconstruction, scVI posterior, and ZINB-WaVE. Metrics are computed against the held-out evaluation split in normalised log1p gene space; lower RF AUC (closer to 0.5) indicates that simulated or reconstructed cells are harder to distinguish from held-out real cells.
 

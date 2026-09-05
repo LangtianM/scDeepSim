@@ -1,4 +1,4 @@
-"""Strictly aggregate distributed Figure 3 method jobs."""
+"""Strictly aggregate distributed simulation-fidelity method jobs."""
 
 from __future__ import annotations
 
@@ -183,7 +183,7 @@ def _run_plot(
 ) -> Path:
     command = [
         sys.executable,
-        str(project_root / "experiments/scripts/figure3_uncontrolled_quality.py"),
+        str(project_root / "experiments/scripts/simulation_fidelity.py"),
         "--config-name",
         config_name,
         f"paths.root_dir={project_root}",
@@ -237,8 +237,8 @@ def aggregate_and_plot(
     archive_path = work_dir / "merged_samples.npz"
     np.savez_compressed(archive_path, **merged)
 
-    learned_name = f"figure3_{dataset_id}_learned_distribution.png"
-    reconstruction_name = f"figure3_{dataset_id}_reconstruction.png"
+    learned_name = f"simulation_fidelity_{dataset_id}_learned_distribution.png"
+    reconstruction_name = f"simulation_fidelity_{dataset_id}_reconstruction.png"
     learned = _run_plot(
         project_root=project_root,
         config_name=config_name,
