@@ -3,8 +3,8 @@ defaults:
   - _self_
 
 paths:
-  artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_benchmark_smoke
-  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_smoke
+  artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_benchmark_endpoint_native_smoke
+  benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_endpoint_native_smoke
 
 execution:
   profile: smoke

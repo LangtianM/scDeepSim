@@ -28,6 +28,11 @@
 
 This note follows the previous simulator summary by updating the pseudo-time control component. The base model remains the same: a disentangled VAE maps log-normalized expression into latent space, and a latent diffusion model samples new latents before VAE decoding. The updated runs use whitening-recoloring affine interpolation to generate trajectories with known ground-truth pseudo-time and topology, then use those generated datasets to benchmark trajectory-inference (TI) methods.
 
+\textit{Archive note (2026-09-04): this report documents exploratory controls
+that predate the formal full VAE+diffusion native TI benchmark. Its figures are
+retained for provenance and are not additional replicates of the formal
+benchmark.}
+
 \section*{Pseudo-time Interpolation}
 
 Let \(z=(z_{\mathrm{bio}}, z_{\mathrm{tech}})\), where \(z_{\mathrm{bio}}\) contains biological and residual latent dimensions and \(z_{\mathrm{tech}}\) contains technical blocks such as batch. Given start and end state latents with empirical moments \((\mu_0,\Sigma_0)\) and \((\mu_1,\Sigma_1)\), we define an affine endpoint map in the biological subspace,
@@ -78,14 +83,14 @@ This rescaling is purely a relabelling of pseudo-time and leaves the per-segment
   \begin{minipage}[c]{0.40\linewidth}
     \begin{subfigure}[t]{\linewidth}
       \centering
-      \includegraphics[width=\linewidth]{../../../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png}
+      \includegraphics[width=\linewidth]{../../../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png}
       \caption{Direction discrepancy, \(\langle u_B, u_C \rangle = 0.789\)}
     \end{subfigure}
     \vspace{0.15em}
 
     \begin{subfigure}[t]{\linewidth}
       \centering
-      \includegraphics[width=\linewidth]{../../../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png}
+      \includegraphics[width=\linewidth]{../../../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png}
       \caption{Direction discrepancy, \(\langle u_B, u_C \rangle = 0.246\)}
     \end{subfigure}
   \end{minipage}
@@ -93,7 +98,7 @@ This rescaling is purely a relabelling of pseudo-time and leaves the per-segment
   \begin{minipage}[c]{0.40\linewidth}
     \begin{subfigure}[t]{\linewidth}
       \centering
-      \includegraphics[width=\linewidth]{figures/pt_dose_response_curve.png}
+      \includegraphics[width=\linewidth]{../../../experiments/outputs/_legacy_ti_audit_2026-09-04/reports/pseudotime_control_followup/figures/pt_dose_response_curve.png}
       \caption{Pseudo-time dose response}
     \end{subfigure}
   \end{minipage}
@@ -102,7 +107,7 @@ This rescaling is purely a relabelling of pseudo-time and leaves the per-segment
 
   \begin{subfigure}[t]{0.9\linewidth}
     \centering
-    \includegraphics[width=\linewidth]{figures/tau_comparison_umap.png}
+    \includegraphics[width=\linewidth]{../../../experiments/outputs/_legacy_ti_audit_2026-09-04/reports/pseudotime_control_followup/figures/tau_comparison_umap.png}
     \caption{Branch point \(\tau\)}
   \end{subfigure}
 
@@ -124,19 +129,19 @@ We benchmark Scanpy DPT/PAGA, Slingshot, and Monocle3 on generated trajectories 
   \centering
   \begin{subfigure}[t]{0.28\linewidth}
     \centering
-    \includegraphics[width=\linewidth]{figures/ti_discrepancy_curves.png}
+    \includegraphics[width=\linewidth]{../../../experiments/outputs/_legacy_ti_audit_2026-09-04/reports/pseudotime_control_followup/figures/ti_discrepancy_curves.png}
     \caption{Branch discrepancy}
   \end{subfigure}
   \hfill
   \begin{subfigure}[t]{0.28\linewidth}
     \centering
-    \includegraphics[width=\linewidth]{figures/ti_tau_curves.png}
+    \includegraphics[width=\linewidth]{../../../experiments/outputs/_legacy_ti_audit_2026-09-04/reports/pseudotime_control_followup/figures/ti_tau_curves.png}
     \caption{Branch point \(\tau\)}
   \end{subfigure}
   \hfill
   \begin{subfigure}[t]{0.28\linewidth}
     \centering
-    \includegraphics[width=\linewidth]{figures/ti_noise_curves.png}
+    \includegraphics[width=\linewidth]{../../../experiments/outputs/_legacy_ti_audit_2026-09-04/reports/pseudotime_control_followup/figures/ti_noise_curves.png}
     \caption{Noise scale \(\sigma\)}
   \end{subfigure}
   \caption{TI benchmark results across three difficulty axes. Each panel reports global pseudo-time Spearman correlation and lineage ARI for Scanpy DPT/PAGA, Slingshot, and Monocle3.}

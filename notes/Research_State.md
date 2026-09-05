@@ -524,31 +524,37 @@ Then $\theta_1 \leq \theta_2 \leq \dots \leq \theta_k$ are the principle angles.
 
 ### Pseudo-time Interpolation
 
+*Archive note (2026-09-04): the figures in this subsection are exploratory
+VAE-era controls retained for provenance. Their original run directories were
+reduced to a minimal audit package after the full VAE+diffusion native TI
+benchmark superseded them. They are not additional replicates of the formal
+benchmark.*
+
 Trajectory interpolation between Ductal cells and Beta cells visualization. This linear example is a sanity check for the generated ordering, not the primary TI benchmark. The June 29, 2026 rerun uses whitening-recoloring affine interpolation.
 
-![Trajectory Interpolation Preliminary Results](../experiments/outputs/2026-06-29/18-07-55_trajectory_interpolation/results/trajectory_umap.png)
+![Trajectory Interpolation Preliminary Results](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-06-29/18-07-55_trajectory_interpolation/results/trajectory_umap.png)
 
 Manipulating discrepancy between two branches. These qualitative examples motivate the benchmark setting: branch difficulty can be varied, and TI methods should be evaluated by their ordering and topology recovery across these regimes.
 
 Before:
 
-![Manipulating Discrepancy between Two Branches w = 1.0](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png)
+![Manipulating Discrepancy between Two Branches w = 1.0](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png)
 
-![Manipulating Discrepancy between Two Branches w = 1.0 PCA](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_pca.png)
+![Manipulating Discrepancy between Two Branches w = 1.0 PCA](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_pca.png)
 
 After:
 
-![Manipulating Discrepancy between Two Branches w = 2.0](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png)
+![Manipulating Discrepancy between Two Branches w = 2.0](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png)
 
-![Manipulating Discrepancy between Two Branches w = 2.0 PCA](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_pca.png)
+![Manipulating Discrepancy between Two Branches w = 2.0 PCA](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_pca.png)
 
 Branching point control:
 
-![Branching Point Control](../experiments/outputs/2026-06-29/18-09-46_branch_point_tau/results/tau_comparison_umap.png)
+![Branching Point Control](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-06-29/18-09-46_branch_point_tau/results/tau_comparison_umap.png)
 
 Pseudo-time dose-response check:
 
-![Dose-Response Evaluation Pseudo-time](../experiments/outputs/2026-06-29/18-05-49_pseudotime_dose_response/results/pt_dose_response_curve.png)
+![Dose-Response Evaluation Pseudo-time](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-06-29/18-05-49_pseudotime_dose_response/results/pt_dose_response_curve.png)
 
 With whitening-recoloring, the dose-response is monotone: ASW increases from -0.000071 at $\alpha=0$ to 0.2383 at $\alpha=1$, while LISI decreases from 1.9202 to 1.0000.
 

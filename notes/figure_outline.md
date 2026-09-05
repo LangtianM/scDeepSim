@@ -93,21 +93,21 @@ The trade-off between simulation quality and controllability is not fundamental.
 - Panel C: UMAP showing controlled branch endpoint discrepancy via branch direction/length.
 - Panel D: UMAP showing controlled branch-point timing.
 - Interpretation: The simulator can produce controlled trajectories with known pseudotime, lineage, branch difficulty, and topology.
-- Status: Mostly available; needs one assembled figure that combines trajectory, discrepancy, and tau controls.
+- Status: Archived exploratory evidence. The full VAE+diffusion native TI benchmark and its compact figure supersede these prototype panels.
 
-![Trajectory interpolation](../experiments/outputs/2026-04-14/22-14-26_trajectory_interpolation/results/trajectory_umap.png)
+![Trajectory interpolation](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-14/22-14-26_trajectory_interpolation/results/trajectory_umap.png)
 
 *Ductal-to-beta trajectory interpolation. Grey points mark simulated intermediates, and alpha provides known pseudotime along the generated path.*
 
-![Branch discrepancy low](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png)
+![Branch discrepancy low](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_1.00_umap.png)
 
 *Low-discrepancy two-branch simulation. The two branches share a similar direction from the root, producing a harder lineage-separation setting.*
 
-![Branch discrepancy high](../experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png)
+![Branch discrepancy high](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-21/15-25-00_branch_direction_knob/results/w_2.00_umap.png)
 
 *High-discrepancy two-branch simulation. Increasing the branch-direction weight separates endpoint trajectories more clearly.*
 
-![Branch-point control](../experiments/outputs/2026-04-28/20-46-33_branch_point_tau/results/tau_comparison_umap.png)
+![Branch-point control](../experiments/outputs/_legacy_ti_audit_2026-09-04/sources/experiments/outputs/2026-04-28/20-46-33_branch_point_tau/results/tau_comparison_umap.png)
 
 *Branch-point timing control. Tau shifts where the trunk splits into branches, giving synthetic datasets with known branch timing and lineage labels.*
 
