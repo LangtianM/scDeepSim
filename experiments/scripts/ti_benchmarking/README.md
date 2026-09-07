@@ -85,6 +85,9 @@ Formal results are stored under `experiments/outputs/` in
 - `figures/`: Global Spearman curves, 1×5 UMAP panels, and a compact combined figure.
 - `run_manifest.json` and `experiment_settings.json`: provenance and design.
 
+Use `experiments/notebooks/ti_benchmark_figures.ipynb` to redraw the saved
+metrics and UMAP coordinates without rerunning simulation or TI methods.
+
 Global Spearman measures recovery of the simulator's common pseudotime axis;
 it does not establish correct branch topology. Synthetic UMAPs use the frozen
 real-data embedding.

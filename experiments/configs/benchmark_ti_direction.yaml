@@ -128,8 +128,8 @@ plots:
   compact:
     width_inches: 7.4
     height_inches: 5.2
-    left_width_ratio: 0.72
-    right_width_ratio: 0.28
+    left_width_ratio: 0.78
+    right_width_ratio: 0.22
 
 r:
   conda_env: lightning

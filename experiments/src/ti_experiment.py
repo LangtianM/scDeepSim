@@ -639,8 +639,8 @@ def plot_compact_ti_figure(
     dpi: int = 300,
     width_inches: float = 7.4,
     height_inches: float = 5.2,
-    left_width_ratio: float = 0.72,
-    right_width_ratio: float = 0.28,
+    left_width_ratio: float = 0.78,
+    right_width_ratio: float = 0.22,
 ) -> None:
     """Draw the paper-ready 3x5 UMAP plus aligned 3x1 metric figure."""
     fig = plt.figure(figsize=(width_inches, height_inches))
@@ -652,7 +652,7 @@ def plot_compact_ti_figure(
         right=0.99,
         bottom=0.075,
         top=0.89,
-        wspace=0.12,
+        wspace=0.10,
         hspace=0.34,
     )
     markers = {"scanpy_dpt_paga": "o", "slingshot": "s", "monocle3": "^"}
@@ -671,9 +671,9 @@ def plot_compact_ti_figure(
             ax.scatter(
                 real_umap["umap_1"],
                 real_umap["umap_2"],
-                s=1.4,
+                s=1.9,
                 color="#C8C8C8",
-                alpha=0.24,
+                alpha=0.20,
                 linewidths=0,
                 rasterized=True,
             )
@@ -689,9 +689,9 @@ def plot_compact_ti_figure(
                 ax.scatter(
                     subset["umap_1"],
                     subset["umap_2"],
-                    s=1.8,
+                    s=2.6,
                     c=rgba,
-                    alpha=0.82,
+                    alpha=0.80,
                     linewidths=0,
                     rasterized=True,
                 )
@@ -718,9 +718,9 @@ def plot_compact_ti_figure(
                 method_index=method_index,
                 color=method_colors[method],
                 marker=markers[method],
-                raw_size=8,
+                raw_size=5.5,
                 mean_linewidth=1.15,
-                mean_markersize=2.8,
+                mean_markersize=3.0,
                 annotation_fontsize=4.2,
             )
         ax_metric.set_ylim(-1.0, 1.0)
@@ -750,48 +750,45 @@ def plot_compact_ti_figure(
             fontweight="bold",
         )
 
-    # One coordinate cue for the complete fixed-coordinate UMAP block.
-    cue_ax = umap_axes[-1][0]
-    cue_ax.annotate(
-        "",
-        xy=(0.30, 0.08),
-        xytext=(0.08, 0.08),
-        xycoords="axes fraction",
-        arrowprops={"arrowstyle": "->", "lw": 0.6, "color": "#444444"},
-    )
-    cue_ax.annotate(
-        "",
-        xy=(0.08, 0.30),
-        xytext=(0.08, 0.08),
-        xycoords="axes fraction",
-        arrowprops={"arrowstyle": "->", "lw": 0.6, "color": "#444444"},
-    )
-    cue_ax.text(0.31, 0.045, "UMAP1", transform=cue_ax.transAxes, fontsize=4.8)
-    cue_ax.text(
-        0.025,
-        0.31,
-        "UMAP2",
-        transform=cue_ax.transAxes,
-        fontsize=4.8,
-        rotation=90,
-        va="bottom",
-    )
-
     lineage_handles = [
-        Line2D([0], [0], marker="o", linestyle="", color="#C8C8C8", label="real"),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            markersize=3.8,
+            linestyle="",
+            color="#C8C8C8",
+            label="Real",
+        ),
         *[
             Line2D(
                 [0],
                 [0],
                 marker="o",
+                markersize=3.8,
                 linestyle="",
                 color=plt.get_cmap(lineage_colormaps[lineage])(0.68),
-                label=lineage,
+                label={
+                    "trunk": "Trunk",
+                    "branch_B": "Branch B",
+                    "branch_C": "Branch C",
+                }[lineage],
             )
             for lineage in ("trunk", "branch_B", "branch_C")
         ],
-        Line2D([0], [0], color="#555555", linewidth=0, label="light→dark: early→late"),
+        Line2D(
+            [0],
+            [0],
+            color="#555555",
+            linewidth=0,
+            label="Pseudotime: early → late",
+        ),
     ]
+    method_labels = {
+        "scanpy_dpt_paga": "DPT/PAGA",
+        "slingshot": "Slingshot",
+        "monocle3": "Monocle3",
+    }
     method_handles = [
         Line2D(
             [0],
@@ -799,8 +796,8 @@ def plot_compact_ti_figure(
             color=method_colors[method],
             marker=markers[method],
             linewidth=1.2,
-            markersize=3,
-            label=method,
+            markersize=2.8,
+            label=method_labels.get(method, method),
         )
         for method in methods
     ]
@@ -810,9 +807,10 @@ def plot_compact_ti_figure(
         bbox_to_anchor=(0.055, 0.985),
         ncol=5,
         frameon=False,
-        fontsize=5.8,
+        fontsize=5.2,
+        handlelength=0.8,
         handletextpad=0.25,
-        columnspacing=0.75,
+        columnspacing=0.65,
     )
     fig.legend(
         handles=method_handles,
@@ -820,11 +818,21 @@ def plot_compact_ti_figure(
         bbox_to_anchor=(0.99, 0.985),
         ncol=1,
         frameon=False,
-        fontsize=5.6,
-        handlelength=1.5,
-        labelspacing=0.2,
+        fontsize=5.1,
+        handlelength=1.25,
+        handletextpad=0.35,
+        labelspacing=0.25,
     )
-    fig.text(0.735, 0.50, "Global Spearman", rotation=90, fontsize=6.5, va="center")
+    metric_left = min(ax.get_position().x0 for ax in metric_axes)
+    fig.text(
+        metric_left - 0.028,
+        0.50,
+        "Global Spearman",
+        rotation=90,
+        fontsize=6.5,
+        ha="center",
+        va="center",
+    )
 
     png_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(png_path, dpi=dpi, bbox_inches="tight")
