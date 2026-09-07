@@ -601,29 +601,19 @@ This adapter boundary keeps method-specific dependencies isolated while making e
 
 **Ordering recovery.** Compute Spearman correlation between inferred pseudotime and `true_pseudotime`. Report it globally and per lineage. Rank correlation is preferred because TI methods are only expected to recover a monotone transformation of the true pseudo-time, not the exact scale.
 
-**Branch and topology recovery.** Compare inferred lineage labels with `true_lineage` using  or balanced accuracy after optimal label mARIatching. When a method exposes a branch point, report branch-point localization error relative to $\tau$. Also classify the inferred topology into a small set of interpretable outcomes: correct bifurcation, unresolved linear trajectory, or wrong branching structure.
+<!-- **Branch and topology recovery.** Compare inferred lineage labels with `true_lineage` using  or balanced accuracy after optimal label mARIatching. When a method exposes a branch point, report branch-point localization error relative to $\tau$. Also classify the inferred topology into a small set of interpretable outcomes: correct bifurcation, unresolved linear trajectory, or wrong branching structure. -->
 
 **Method discrimination.** Plot each metric as a function of branch difficulty. A useful benchmark is one where methods separate meaningfully across discrepancy, $\tau$, or noise settings. A dataset family where all methods score uniformly high or uniformly low is less informative, even if the simulated data look plausible.
 
 #### Results
 
-Updated June 29, 2026 reruns use whitening-recoloring affine interpolation (`generation.affine_method=whitening_recoloring`) with 3 replicates per setting, 2,000 genes, 21 pseudo-time grid values, and 100 cells per grid value.
+Updated September 7, 2026. The formal native benchmark uses the full 64-dimensional VAE + `pred_v` diffusion pipeline, fixed real-anchor whitening-recoloring maps, and five paired seeds. Each design contains 75 datasets and 225 method runs. Global Spearman is the only score; lineage outputs are retained for audit only.
 
-TI Methods Benchmarking Across Branch Endpoint Discrepancy. DPT/PAGA improves strongly as discrepancy increases: mean global Spearman rises from 0.480 at discrepancy 0.2 to 0.874 at 1.4, and lineage ARI rises from 0.002 to 0.158. Monocle3 improves at high discrepancy but keeps near-zero lineage ARI; Slingshot is strongest only at the lowest discrepancy values and is more variable.
+The main direction benchmark changes branch angle through $1-\cos\theta$. From 0 to 1.5, mean Global Spearman decreases from 0.874 to 0.749 for DPT/PAGA, 0.836 to 0.726 for Slingshot, and 0.865 to 0.798 for Monocle3. Later branching and added noise also reduce recovery; at $\tau=1$, scores are 0.700, 0.592, and 0.685, while at $\sigma=3$ they are 0.128, 0.141, and 0.261, respectively. The run completed with 222 valid and three scientifically invalid Monocle3 outputs.
 
-![TI Benchmarking Across Branch Endpoint Discrepancy](../experiments/outputs/2026-06-29/18-19-49_ti_benchmark/results/ti_metric_curves.png)
+The endpoint-displacement sensitivity analysis shows the expected increase in ordering signal: from $\delta=0.2$ to 1.4, DPT/PAGA rises from 0.686 to 0.896, Slingshot from 0.606 to 0.838, and Monocle3 from 0.610 to 0.884. This run completed with 223 valid and two scientifically invalid outputs.
 
-TI Methods Benchmarking Across Branch Point Position $\tau$.
-
-DPT/PAGA is the most stable through $\tau=0.5$, with mean Spearman 0.806, 0.852, and 0.853 at $\tau=0$, 0.25, and 0.5. At $\tau=0.75$, Slingshot slightly leads in ordering (0.751 vs. 0.749 for DPT/PAGA) but has poor lineage ARI. Topology recovery remains much harder than ordering recovery.
-
-![TI Benchmarking Across Branch Point Position](../experiments/outputs/2026-06-29/18-45-36_ti_benchmark/results/ti_metric_curves.png)
-
-TI Methods Benchmarking Across Noise Scale $\sigma$.
-
-DPT/PAGA is best through moderate noise, with mean Spearman 0.806, 0.817, and 0.725 at $\sigma=0$, 0.5, and 1.0. At $\sigma=1.5$, Monocle3 is highest (0.534), and at $\sigma=2.0$ all methods are weak and high-variance: Slingshot, DPT/PAGA, and Monocle3 average 0.239, 0.189, and 0.146, respectively.
-
-![TI Benchmarking Across Noise Scale](../experiments/outputs/2026-06-29/18-59-30_ti_benchmark/results/ti_metric_curves.png)
+![Native TI benchmark across direction discrepancy, branch time, and noise](../experiments/outputs/ti_benchmark_direction_v2_native/results/1bb61b2e7c38_5f368025a379/figures_notebook/ti_benchmark_compact.png)
 
 ---
 
