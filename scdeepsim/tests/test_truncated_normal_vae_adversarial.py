@@ -127,12 +127,12 @@ def test_adversarial_enabled_has_finite_loss_and_backprop():
     assert all(torch.isfinite(grad).all() for grad in adv_grads)
 
 
-def test_figure2_preprocessing_uses_configured_counts_layer(monkeypatch):
+def test_latent_predictability_preprocessing_uses_configured_counts_layer(monkeypatch):
     anndata = pytest.importorskip("anndata")
     omegaconf = pytest.importorskip("omegaconf")
     try:
         figure2 = importlib.import_module(
-            "experiments.scripts.figure2_latent_disentanglement"
+            "experiments.scripts.latent_predictability"
         )
     except ImportError as exc:
         pytest.skip(f"Figure 2 script dependencies unavailable: {exc}")

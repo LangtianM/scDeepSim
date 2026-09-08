@@ -1,5 +1,9 @@
 seed: 42
 
+run:
+  seeds: [42, 43, 44]
+  resume_dir: null
+
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
   data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
@@ -43,10 +47,13 @@ eval:
   rf_max_depth: 10
   test_size: 0.2
 
-figure:
-  cmap: viridis
-  dpi: 300
+training:
+  accelerator: auto
+  num_threads: 4
+
+encoding:
+  batch_size: 1024
 
 hydra:
   run:
-    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_figure2_latent_disentanglement
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_latent_predictability

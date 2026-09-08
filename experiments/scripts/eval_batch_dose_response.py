@@ -1,358 +1,295 @@
-"""Dose-response evaluation of controllable batch effects (VAE only).
-
-Sweeps alpha values and, for each, shifts real reference-batch latents by
-the alpha-scaled batch direction, decodes, then measures:
-  - Batch separation: Batch ASW, iLISI
-  - Biological preservation: cell-type ASW, cLISI, cell-type RF accuracy
-
-Produces a two-panel dose-response figure and a metrics JSON.
-
-Main inputs:
-    Hydra config experiments/configs/eval_batch_dose_response.yaml and the
-    configured dataset with batch/celltype annotations.
-
-Outputs:
-    Dose-response metrics JSON/CSV, summary plots, generated AnnData artifacts
-    where enabled, and run metadata in the Hydra output directory.
+"""Generate full-pipeline paired batch interventions from saved pancreas VAEs.
 
 Usage:
-    python experiments/scripts/eval_batch_dose_response.py
-    python experiments/scripts/eval_batch_dose_response.py evaluation.alpha_values=[0.0,0.5,1.0]
-    python experiments/scripts/eval_batch_dose_response.py generation.direction_method=gaussian_ot
+    python experiments/scripts/eval_batch_dose_response.py inputs.vae_run_dir=/absolute/latent_run
+    python experiments/scripts/eval_batch_dose_response.py inputs.vae_run_dir=/absolute/latent_run run.resume_dir=/absolute/dose_run
+
+Trains diffusion on each saved VAE's posterior samples and writes generated
+cohorts, fixed real-data PCA, batch maps, checkpoints, and dose-response metrics.
+Plotting lives in experiments/notebooks/structured_batch_intervention.ipynb.
 """
 
+import os
+from pathlib import Path
 import pyrootutils
 
-root = pyrootutils.setup_root(
-    __file__, indicator=".git", pythonpath=True, dotenv=True
-)
+root = pyrootutils.setup_root(__file__, indicator=".git", pythonpath=True, dotenv=True)
+os.environ.setdefault("PROJECT_ROOT", str(root))
+os.environ.setdefault("NUMBA_CACHE_DIR", "/private/tmp/scdeepsim_numba_cache")
 
 import json
-import os
 import logging
-import numpy as np
-import torch
-import matplotlib.pyplot as plt
 import hydra
-from hydra.core.hydra_config import HydraConfig
+import joblib
+import numpy as np
+import pandas as pd
+import pytorch_lightning as pl
+import scanpy as sc
+import torch
+from anndata import AnnData
 from omegaconf import DictConfig
+from sklearn.decomposition import PCA
 
-os.environ.setdefault("PROJECT_ROOT", str(root))
-
-from experiments.src.batch_control import (
-    apply_direction,
-    compute_batch_direction,
-)
-from experiments.src.common import (
-    as_dense,
-    decode_latents,
-    encode_adata,
-    save_git_info,
-)
+from experiments.src.batch_control import apply_direction, compute_global_direction
 from experiments.src.batch_metrics import (
-    batch_asw, ilisi, celltype_asw, clisi, celltype_rf_accuracy,
+    batch_asw_within_celltype, ilisi, celltype_asw, clisi, celltype_rf_accuracy,
 )
-from experiments.src.data import prepare_celltype_batch_data
-from experiments.src.training import (
-    resolve_control_slice,
-    selected_batch_control_model_setting,
-    selected_control_scope,
-    slice_to_metadata,
-    train_batch_control_vae,
+from experiments.src.common import decode_latents
+from experiments.src.structured_intervention import (
+    MODELS, aggregate_metrics, fit_model, inference_device, prepare_run,
+    save_table, write_json,
 )
+from experiments.src.training import sample_joint_conditioned_latents
+from scdeepsim.lightning_diffusion import LightningDiffusion
+from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
 log = logging.getLogger(__name__)
+METRICS = ["batch_asw", "ilisi", "celltype_asw", "clisi", "celltype_rf_bal_acc", "celltype_rf_acc"]
 
 
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
+def build_diffusion(latent_dim, cardinalities, cfg):
+    """Construct matched joint-conditioned diffusion models for either VAE."""
+    d = cfg.diffusion
+    return LightningDiffusion(
+        input_dim=latent_dim, condition_cardinalities=cardinalities,
+        hidden_dims=list(d.hidden_dims), dropout=float(d.dropout),
+        use_classifier_free_guidance=True, guidance_dropout=float(d.guidance_dropout),
+        num_timesteps=int(d.timesteps), beta_schedule=str(d.beta_schedule),
+        guidance_scale=float(d.guidance_scale), sampling_timesteps=int(d.sampling_steps),
+        objective=str(d.objective), ema_decay=float(d.ema_decay), lr=float(d.lr),
+        weight_decay=float(d.weight_decay), use_ema=bool(d.use_ema),
+    )
 
-def compute_batch_separation(x_combined, batch_labels, k):
-    """Batch separation metrics on the combined (ref + shifted) data."""
+
+def matched_direction_indices(adata, cfg):
+    """Select one composition-matched real contrast shared by all fitted VAEs."""
+    rng = np.random.default_rng(int(cfg.generation.direction_seed))
+    source, target, counts = [], [], {}
+    for celltype in cfg.generation.celltypes:
+        source_candidates = np.flatnonzero(
+            (adata.obs.celltype == celltype) & (adata.obs.batch == cfg.generation.source_batch))
+        target_candidates = np.flatnonzero(
+            (adata.obs.celltype == celltype) & (adata.obs.batch == cfg.generation.target_batch))
+        n = min(len(source_candidates), len(target_candidates))
+        if n < 2:
+            raise ValueError(f"Insufficient shared cells for {celltype}: {n}")
+        source.extend(rng.choice(source_candidates, n, replace=False))
+        target.extend(rng.choice(target_candidates, n, replace=False))
+        counts[str(celltype)] = n
+    return np.asarray(source), np.asarray(target), counts
+
+
+def control_slice(source_metadata, model):
+    """Control the structured batch block or the entire plain latent space."""
+    if model == "plain":
+        return slice(0, int(source_metadata["config"]["vae"]["latent_dim"]))
+    batch = source_metadata["subspace_slices"]["z_batch"]
+    return slice(batch["start"], batch["stop"])
+
+
+def sample_cohorts(diffusion, encoders, cfg, seed):
+    """Generate independent A/B source cohorts with matched composition."""
+    n = int(cfg.generation.cells_per_type)
+    source_code = encoders["batch"].index(str(cfg.generation.source_batch))
+    labels = np.repeat(np.asarray(list(cfg.generation.celltypes), dtype=str), n)
+    payload = {"celltypes": labels}
+    for cohort_index, cohort in enumerate(("A", "B")):
+        blocks = []
+        for index, celltype in enumerate(cfg.generation.celltypes):
+            code = encoders["celltype"].index(str(celltype))
+            pl.seed_everything(seed * 10000 + cohort_index * 100 + index, workers=True)
+            blocks.append(sample_joint_conditioned_latents(
+                diffusion,
+                {"celltype": np.full(n, code, dtype=np.int64),
+                 "batch": np.full(n, source_code, dtype=np.int64)},
+                batch_size=int(cfg.generation.sampling_batch_size),
+                sampling_timesteps=int(cfg.diffusion.sampling_steps),
+                guidance_scale=float(cfg.diffusion.guidance_scale),
+                use_ema=bool(cfg.diffusion.use_ema), progress=False,
+            ))
+        payload[f"latents_{cohort}"] = np.vstack(blocks).astype(np.float32)
+        payload[f"cell_ids_{cohort}"] = np.asarray(
+            [f"s{seed}-{cohort}-{i:05d}" for i in range(len(labels))])
+    return payload
+
+
+def intervene(base, direction, alpha, slc):
+    """Transform a copy and enforce unchanged non-target latent coordinates."""
+    shifted = apply_direction(base, direction, float(alpha), slc).astype(np.float32)
+    if not np.isfinite(shifted).all():
+        raise ValueError("Non-finite intervened latents.")
+    np.testing.assert_array_equal(shifted[:, :slc.start], base[:, :slc.start])
+    np.testing.assert_array_equal(shifted[:, slc.stop:], base[:, slc.stop:])
+    if float(alpha) == 0:
+        np.testing.assert_array_equal(shifted, base)
+    return shifted
+
+
+def evaluate_dose(x_a, x_b, labels, pca, cfg):
+    """Evaluate batch separation on A+B and biological separability on B."""
+    pc_a, pc_b = pca.transform(x_a), pca.transform(x_b)
+    combined = np.vstack([pc_a, pc_b])
+    batches = np.repeat(["A", "B"], len(labels))
+    ct = np.tile(labels, 2)
+    k = int(cfg.evaluation.lisi_k)
+    accuracy, balanced = celltype_rf_accuracy(x_b, labels, seed=int(cfg.evaluation.rf_seed))
     return {
-        "batch_asw": batch_asw(x_combined, batch_labels),
-        "ilisi": ilisi(x_combined, batch_labels, k=k),
+        "batch_asw": batch_asw_within_celltype(combined, batches, ct),
+        "ilisi": ilisi(combined, batches, k=k),
+        "celltype_asw": celltype_asw(pc_b, labels), "clisi": clisi(pc_b, labels, k=k),
+        "celltype_rf_acc": accuracy, "celltype_rf_bal_acc": balanced,
     }
 
 
-def compute_bio_preservation(x_shifted, ct_labels, k):
-    """Biological preservation metrics on the shifted data only."""
-    ct_asw_val = celltype_asw(x_shifted, ct_labels)
-    c_lisi = clisi(x_shifted, ct_labels, k=k)
-    ct_acc, ct_bal = celltype_rf_accuracy(x_shifted, ct_labels)
-    return {
-        "celltype_asw": ct_asw_val,
-        "clisi": c_lisi,
-        "celltype_rf_acc": ct_acc,
-        "celltype_rf_bal_acc": ct_bal,
-    }
+def decode_fixed(vae, latents, cfg, seed):
+    """Use matched decoder randomness across intervention strengths."""
+    pl.seed_everything(seed, workers=True)
+    x = decode_latents(vae, latents, batch_size=int(cfg.generation.decode_batch_size)).astype(np.float32)
+    if not np.isfinite(x).all():
+        raise ValueError("Non-finite decoded expression.")
+    return x
 
 
-# ---------------------------------------------------------------------------
-# Plotting
-# ---------------------------------------------------------------------------
-
-def plot_dose_response(
-    all_metrics,
-    save_path,
-    ref_bio=None,
-    target_bio=None,
-    axis_limits=None,
-):
-    alphas = [m["alpha"] for m in all_metrics]
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
-
-    # -- batch separation --
-    ax1.plot(alphas, [m["batch_asw"] for m in all_metrics],
-             "o-", lw=2.5, ms=8, color="#2ecc71", label="Batch ASW")
-    ax1b = ax1.twinx()
-    ax1b.plot(alphas, [m["ilisi"] for m in all_metrics],
-              "s--", lw=2.5, ms=8, color="#e74c3c", label="iLISI")
-    ax1.set_xlabel("alpha", fontsize=13, fontweight="bold")
-    ax1.set_ylabel("Batch ASW", fontsize=13, fontweight="bold", color="#2ecc71")
-    ax1b.set_ylabel("iLISI", fontsize=13, fontweight="bold", color="#e74c3c")
-    ax1.set_title("Batch Separation vs alpha", fontsize=14, fontweight="bold")
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax1b.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=10)
-    ax1.grid(True, alpha=0.3, ls="--")
-
-    # -- biological preservation --
-    ax2.plot(alphas, [m["celltype_asw"] for m in all_metrics],
-             "^-", lw=2.5, ms=8, color="#9b59b6", label="CT ASW")
-    ax2.plot(alphas, [m["celltype_rf_bal_acc"] for m in all_metrics],
-             "D-", lw=2.5, ms=8, color="#3498db", label="CT RF Bal.Acc")
-    ax2b = ax2.twinx()
-    ax2b.plot(alphas, [m["clisi"] for m in all_metrics],
-              "v--", lw=2.5, ms=8, color="#e67e22", label="cLISI")
-
-    # -- draw ref/target baselines on biological preservation panel --
-    baseline_styles = {
-        "ref": {"ls": ":", "lw": 1.5, "alpha": 0.8},
-        "target": {"ls": "-.", "lw": 1.5, "alpha": 0.8},
-    }
-    for bio, tag in [(ref_bio, "ref"), (target_bio, "target")]:
-        if bio is None:
-            continue
-        sty = baseline_styles[tag]
-        label_prefix = tag.capitalize()
-        ax2.axhline(bio["celltype_asw"], color="#9b59b6", label=f"{label_prefix} CT ASW", **sty)
-        ax2.axhline(bio["celltype_rf_bal_acc"], color="#3498db", label=f"{label_prefix} CT RF Bal.Acc", **sty)
-        ax2b.axhline(bio["clisi"], color="#e67e22", label=f"{label_prefix} cLISI", **sty)
-
-    ax2.set_xlabel("alpha", fontsize=13, fontweight="bold")
-    ax2.set_ylabel("Score", fontsize=13, fontweight="bold")
-    ax2b.set_ylabel("cLISI", fontsize=13, fontweight="bold", color="#e67e22")
-    ax2.set_title("Biological Preservation vs alpha", fontsize=14, fontweight="bold")
-    lines1, labels1 = ax2.get_legend_handles_labels()
-    lines2, labels2 = ax2b.get_legend_handles_labels()
-    ax2.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=9)
-    ax2.grid(True, alpha=0.3, ls="--")
-
-    if axis_limits is None:
-        # -- unify iLISI / cLISI y-axes: both start at 1 with the same upper bound --
-        all_ilisi = [m["ilisi"] for m in all_metrics]
-        all_clisi = [m["clisi"] for m in all_metrics]
-        lisi_vals = all_ilisi + all_clisi
-        if ref_bio is not None:
-            lisi_vals.append(ref_bio["clisi"])
-        if target_bio is not None:
-            lisi_vals.append(target_bio["clisi"])
-        lisi_upper = max(lisi_vals) * 1.1
-        ax1b.set_ylim(1, lisi_upper)
-        ax2b.set_ylim(1, lisi_upper)
+@hydra.main(config_path="../configs", config_name="eval_batch_dose_response", version_base="1.3")
+def main(cfg: DictConfig):
+    source_dir = Path(cfg.inputs.vae_run_dir).resolve()
+    source = json.loads((source_dir / "results/metadata.json").read_text())
+    seeds = [int(s) for s in cfg.run.seeds]
+    if not source["complete"] or source["seeds"] != seeds or source["models"] != list(MODELS):
+        raise ValueError("A complete paired VAE run with matching models/seeds is required.")
+    expected = {(name, seed) for name in MODELS for seed in seeds}
+    artifacts = source["artifacts"]
+    if len(artifacts) != len(expected) or {(a["model"], a["seed"]) for a in artifacts} != expected:
+        raise ValueError("Incomplete source checkpoint index.")
+    if str(cfg.generation.direction_method) != "whitening_recoloring":
+        raise ValueError("This experiment uses the frozen whitening-recoloring design.")
+    output, config = prepare_run(cfg, [
+        "experiments/scripts/eval_batch_dose_response.py", "experiments/configs/eval_batch_dose_response.yaml",
+        "experiments/src/structured_intervention.py", "experiments/src/batch_control.py",
+        "experiments/src/batch_metrics.py", "experiments/src/training.py",
+    ])
+    source_snapshot = output / "source_vae_metadata.json"
+    if source_snapshot.exists() and json.loads(source_snapshot.read_text()) != source:
+        raise ValueError("Source VAE metadata changed since this dose-response run.")
+    write_json(source_snapshot, source)
+    torch.set_num_threads(int(cfg.training.num_threads))
+    adata = sc.read_h5ad(source_dir / source["data"])
+    if adata.obs_names.tolist() != source["cell_ids"] or adata.var_names.tolist() != source["genes"]:
+        raise ValueError("Source cells or genes do not match the VAE metadata.")
+    pca_path = output / "data/real_pca.joblib"
+    pca_path.parent.mkdir(parents=True, exist_ok=True)
+    if pca_path.exists():
+        pca = joblib.load(pca_path)
     else:
-        if "batch_asw" in axis_limits:
-            ax1.set_ylim(*axis_limits["batch_asw"])
-        if "ilisi" in axis_limits:
-            ax1b.set_ylim(*axis_limits["ilisi"])
-        if "bio_score" in axis_limits:
-            ax2.set_ylim(*axis_limits["bio_score"])
-        if "clisi" in axis_limits:
-            ax2b.set_ylim(*axis_limits["clisi"])
-
-    plt.tight_layout()
-    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
-    plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    log.info(f"Dose-response plot saved to {save_path}")
-    plt.close()
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-@hydra.main(
-    config_path="../configs",
-    config_name="eval_batch_dose_response",
-    version_base="1.3",
-)
-def main(cfg: DictConfig) -> None:
-    torch.manual_seed(cfg.seed)
-    np.random.seed(cfg.seed)
-
-    output_dir = HydraConfig.get().runtime.output_dir
-    save_git_info(output_dir)
-
-    log.info("=" * 70)
-    log.info("Dose-Response Batch Effect Evaluation (VAE only)")
-    log.info("=" * 70)
-
-    # -- 1. data --
-    log.info("[1/5] Loading data...")
-    (adata, ct_le, n_celltypes, batch_le, n_batches,
-     ref_batch, target_batch) = prepare_celltype_batch_data(
-        cfg,
-        select_top_two_batches=True,
-    )
-
-    # -- 2. train VAE --
-    log.info("[2/5] Training VAE...")
-    vae = train_batch_control_vae(
-        adata,
-        n_celltypes,
-        n_batches,
-        cfg,
-        default_root_dir=output_dir,
-    )
-
-    # -- 3. encode + direction --
-    log.info("[3/5] Encoding + computing batch direction...")
-    z_all = encode_adata(vae, adata)
-    batch_slice = resolve_control_slice(vae, cfg)
-    log.info(
-        "  Control scope: %s  dims %s:%s",
-        selected_control_scope(cfg),
-        batch_slice.start,
-        batch_slice.stop,
-    )
-
-    batch_labels = np.asarray(adata.obs["batch"])
-    dir_info = compute_batch_direction(
-        z_all,
-        batch_labels=batch_labels,
-        cell_types=np.asarray(adata.obs["celltype"]),
-        batch_slice=batch_slice,
-        ref_batch=ref_batch,
-        target_batch=target_batch,
-        method=cfg.generation.direction_method,
-    )
-
-    # -- 4. alpha sweep on real reference-batch latents --
-    log.info("[4/5] Running alpha sweep...")
-    ref_mask = batch_labels == ref_batch
-    z_ref = z_all[ref_mask]
-    ref_ct_labels = np.asarray(adata.obs["celltype"])[ref_mask]
-    ref_X = as_dense(adata.X[ref_mask])
-
-    results_dir = os.path.join(output_dir, "results")
-    os.makedirs(results_dir, exist_ok=True)
-
-    all_metrics = []
-    k = cfg.evaluation.lisi_k
-
-    for alpha in list(cfg.evaluation.alpha_values):
-        log.info(f"  alpha={alpha}")
-
-        z_shifted = apply_direction(z_ref, dir_info, alpha, batch_slice)
-        x_shifted = decode_latents(
-            vae,
-            z_shifted,
-            batch_size=z_shifted.shape[0],
-        )
-
-        x_combined = np.vstack([ref_X, x_shifted])
-        combined_batch = np.array(
-            ["ref"] * ref_X.shape[0] + ["shifted"] * x_shifted.shape[0]
-        )
-
-        metrics = compute_batch_separation(x_combined, combined_batch, k=k)
-        metrics.update(compute_bio_preservation(x_shifted, ref_ct_labels, k=k))
-        metrics["alpha"] = alpha
-        all_metrics.append(metrics)
-
-        log.info(
-            f"    Batch ASW={metrics['batch_asw']:.4f}  "
-            f"iLISI={metrics['ilisi']:.4f}  "
-            f"CT ASW={metrics['celltype_asw']:.4f}  "
-            f"cLISI={metrics['clisi']:.4f}  "
-            f"CT Bal.Acc={metrics['celltype_rf_bal_acc']:.4f}"
-        )
-
-    # -- compute bio-preservation baselines on original ref / target data --
-    log.info("Computing bio-preservation baselines on original data...")
-    ref_bio = compute_bio_preservation(ref_X, ref_ct_labels, k=k)
-    log.info(f"  Ref baseline:    CT ASW={ref_bio['celltype_asw']:.4f}  "
-             f"cLISI={ref_bio['clisi']:.4f}  "
-             f"CT Bal.Acc={ref_bio['celltype_rf_bal_acc']:.4f}")
-
-    target_mask = batch_labels == target_batch
-    target_X = as_dense(adata.X[target_mask])
-    target_ct_labels = np.asarray(adata.obs["celltype"])[target_mask]
-    target_bio = compute_bio_preservation(target_X, target_ct_labels, k=k)
-    log.info(f"  Target baseline: CT ASW={target_bio['celltype_asw']:.4f}  "
-             f"cLISI={target_bio['clisi']:.4f}  "
-             f"CT Bal.Acc={target_bio['celltype_rf_bal_acc']:.4f}")
-
-    # -- save metrics --
-    metrics_output = {
-        "alpha_sweep": all_metrics,
-        "ref_baseline": ref_bio,
-        "target_baseline": target_bio,
-    }
-    metrics_path = os.path.join(results_dir, "dose_response_metrics.json")
-    with open(metrics_path, "w") as f:
-        json.dump(metrics_output, f, indent=2)
-    log.info(f"Metrics saved to {metrics_path}")
-
-    direction_summary = {
-        key: float(value)
-        for key, value in dir_info.items()
-        if isinstance(value, (int, float, np.floating))
-    }
-    if "direction" in dir_info:
-        direction_summary["direction_norm"] = float(
-            np.linalg.norm(dir_info["direction"])
-        )
+        pca = PCA(n_components=int(cfg.evaluation.pca_components), svd_solver="randomized", random_state=int(cfg.seed))
+        pca.fit(adata.X)
+        joblib.dump(pca, pca_path)
+    src, dst, counts = matched_direction_indices(adata, cfg)
+    np.savez_compressed(output / "data/direction_cells.npz", source_indices=src, target_indices=dst)
     metadata = {
-        "model_setting": selected_batch_control_model_setting(cfg),
-        "adversarial_enabled": bool(getattr(vae, "_adv_enabled", False)),
-        "control_scope": selected_control_scope(cfg),
-        "control_slice": slice_to_metadata(batch_slice),
-        "reference_batch": str(ref_batch),
-        "target_batch": str(target_batch),
-        "direction_method": str(cfg.generation.direction_method),
-        "direction_summary": direction_summary,
+        "complete": False, "config": config, "source_vae_run": str(source_dir),
+        "models": list(MODELS), "seeds": seeds, "alpha_values": list(cfg.evaluation.alpha_values),
+        "celltypes": list(cfg.generation.celltypes), "matched_counts": counts,
+        "source_cell_ids": adata.obs_names[src].tolist(), "target_cell_ids": adata.obs_names[dst].tolist(),
+        "pca": "data/real_pca.joblib", "pca_fit": "shared_real_expression_unscaled",
+        "metric_protocol": {"batch": "A+B", "biology": "B", "rf": "refit_within_each_alpha"},
+        "artifacts": [],
     }
-    metadata_path = os.path.join(results_dir, "metadata.json")
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
-    log.info(f"Metadata saved to {metadata_path}")
-
-    # -- 5. plot --
-    log.info("[5/5] Plotting dose-response curves...")
-    plot_path = os.path.join(results_dir, "dose_response_curves.png")
-    plot_dose_response(all_metrics, plot_path, ref_bio=ref_bio, target_bio=target_bio)
-
-    # -- summary table --
-    log.info("")
-    log.info("=" * 90)
-    log.info("DOSE-RESPONSE SUMMARY")
-    log.info("=" * 90)
-    log.info(f"{'alpha':<8} {'BatchASW':>10} {'iLISI':>10} {'CT_ASW':>10} "
-             f"{'cLISI':>10} {'CT_Bal':>10}")
-    log.info("-" * 68)
-    for m in all_metrics:
-        log.info(f"{m['alpha']:<8.2f} {m['batch_asw']:>10.4f} {m['ilisi']:>10.4f} "
-                 f"{m['celltype_asw']:>10.4f} {m['clisi']:>10.4f} "
-                 f"{m['celltype_rf_bal_acc']:>10.4f}")
-
-    log.info("")
-    log.info("=" * 70)
-    log.info("EXPERIMENT COMPLETE")
-    log.info("=" * 70)
+    write_json(output / "results/metadata.json", metadata)
+    all_rows = []
+    for artifact in artifacts:
+        seed, name = int(artifact["seed"]), artifact["model"]
+        log.info("Dose-response seed=%d model=%s", seed, name)
+        model_dir = output / f"models/seed_{seed}/{name}"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint = model_dir / "diffusion.ckpt"
+        with np.load(source_dir / artifact["latents"]) as z:
+            real_latents = z["sample"]
+        with np.load(source_dir / artifact["splits"]) as saved:
+            splits = saved["vae_train"], saved["vae_validation"]
+        np.savez_compressed(model_dir / "diffusion_splits.npz", train=splits[0], validation=splits[1])
+        if checkpoint.exists():
+            diffusion = LightningDiffusion.load_from_checkpoint(checkpoint, map_location="cpu", weights_only=False)
+        else:
+            pl.seed_everything(seed + 2000, workers=True)
+            diffusion = build_diffusion(real_latents.shape[1],
+                                        {k: len(v) for k, v in source["encoders"].items()}, cfg)
+            latent_adata = AnnData(X=real_latents, obs=adata.obs.copy())
+            diffusion = fit_model(diffusion, latent_adata, splits, cfg, seed + 2000, checkpoint, "diffusion")
+        slc = control_slice(source, name)
+        direction = compute_global_direction(real_latents[src], real_latents[dst], slc,
+                                             method="whitening_recoloring",
+                                             covariance_ridge=float(cfg.generation.covariance_ridge))
+        params = direction["ot_params"]
+        np.savez_compressed(model_dir / "direction.npz", A=params["A"], mu_ref=params["mu_ref"],
+                            mu_target=params["mu_target"])
+        cohort_path = model_dir / "cohorts.npz"
+        if cohort_path.exists():
+            with np.load(cohort_path) as saved:
+                cohorts = dict(saved)
+        else:
+            diffusion.to(inference_device(cfg)).eval()
+            cohorts = sample_cohorts(diffusion, source["encoders"], cfg, seed)
+            if not all(np.isfinite(cohorts[f"latents_{c}"]).all() for c in ("A", "B")):
+                raise ValueError("Non-finite diffusion samples.")
+            np.savez_compressed(cohort_path, **cohorts)
+        diffusion.cpu()
+        del diffusion
+        vae = TruncatedNormalVAE.load_from_checkpoint(source_dir / artifact["checkpoint"],
+                                                     map_location="cpu", weights_only=False)
+        vae.to(inference_device(cfg)).eval()
+        decoded_dir = output / f"generated/seed_{seed}/{name}"
+        decoded_dir.mkdir(parents=True, exist_ok=True)
+        a_path = decoded_dir / "A.npy"
+        if a_path.exists():
+            x_a = np.load(a_path)
+        else:
+            x_a = decode_fixed(vae, cohorts["latents_A"], cfg, seed + 3000)
+            np.save(a_path, x_a)
+        for cohort in ("A", "B"):
+            pd.DataFrame({"cell_id": cohorts[f"cell_ids_{cohort}"], "celltype": cohorts["celltypes"],
+                          "cohort": cohort, "model": name, "seed": seed,
+                          "source_technology": str(cfg.generation.source_batch)}).to_csv(
+                              decoded_dir / f"{cohort}_cells.csv", index=False)
+        for alpha in cfg.evaluation.alpha_values:
+            alpha = float(alpha)
+            stem = f"alpha_{alpha:g}"
+            metric_path = decoded_dir / f"{stem}_metrics.json"
+            if metric_path.exists():
+                row = json.loads(metric_path.read_text())
+            else:
+                shifted = intervene(cohorts["latents_B"], direction, alpha, slc)
+                np.save(decoded_dir / f"{stem}_latents_B.npy", shifted)
+                x_b = decode_fixed(vae, shifted, cfg, seed + 4000)
+                np.save(decoded_dir / f"{stem}_B.npy", x_b)
+                row = {"model": name, "seed": seed, "alpha": alpha,
+                       **evaluate_dose(x_a, x_b, cohorts["celltypes"], pca, cfg)}
+                if not np.isfinite([row[k] for k in METRICS]).all():
+                    raise ValueError(f"Non-finite dose metrics for {name}/{seed}/{alpha}")
+                write_json(metric_path, row)
+            all_rows.append(row)
+            save_table(pd.DataFrame(all_rows), output / "results/dose_response_metrics")
+            log.info("seed=%d model=%s alpha=%g %s", seed, name, alpha,
+                     {k: round(row[k], 4) for k in METRICS})
+        metadata["artifacts"].append({
+            "model": name, "seed": seed, "source_vae_checkpoint": artifact["checkpoint"],
+            "diffusion_checkpoint": str(checkpoint.relative_to(output)),
+            "cohorts": str(cohort_path.relative_to(output)), "generated": str(decoded_dir.relative_to(output)),
+            "control_slice": {"start": slc.start, "stop": slc.stop},
+        })
+        write_json(output / "results/metadata.json", metadata)
+        vae.cpu()
+        del vae
+    frame = pd.DataFrame(all_rows)
+    if len(frame) != len(seeds) * len(MODELS) * len(cfg.evaluation.alpha_values):
+        raise ValueError("Incomplete dose-response coverage.")
+    summary = aggregate_metrics(frame, ["model", "alpha"], METRICS)
+    if not summary.n_replicates.eq(len(seeds)).all():
+        raise ValueError("Incomplete dose-response replicate groups.")
+    save_table(summary, output / "results/dose_response_summary")
+    metadata["complete"] = True
+    write_json(output / "results/metadata.json", metadata)
+    log.info("Completed %d dose-response rows: %s", len(frame), output)
 
 
 if __name__ == "__main__":

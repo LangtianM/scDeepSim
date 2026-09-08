@@ -1,53 +1,52 @@
 seed: 42
 
+run:
+  seeds: [42, 43, 44]
+  resume_dir: null
+
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
-  data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
 
-data:
-  n_cells: 10000
-  n_genes: 2000
-  batch_key: tech
+inputs:
+  vae_run_dir: ???
 
-vae:
-  latent_dim: 128
-  enc_hidden: [512, 256]
-  dec_hidden: [256, 512]
-  input_dropout: 0.1
-  beta: 1.0
-  beta_warmup_epochs: 10
-  zero_inflated: true
-  sup_head_hidden: 64
-  max_epochs: 100
+diffusion:
+  objective: pred_v
+  hidden_dims: [512, 256, 256, 128]
+  beta_schedule: cosine
+  dropout: 0.05
+  lr: 1.0e-4
+  weight_decay: 1.0e-4
+  use_ema: true
+  ema_decay: 0.999
+  guidance_dropout: 0.1
+  guidance_scale: 1.5
+  timesteps: 1000
+  sampling_steps: 1000
+  max_epochs: 200
   batch_size: 256
 
-model:
-  setting: classifier_heads
-
-supervision:
-  celltype_weight: 5.0
-  celltype_latent_dims: 16
-  batch_weight: 5.0
-  batch_latent_dims: 16
-
-adversarial:
-  enabled: true
-  weight: 10.0
-  warmup_epochs: 0
-  head_hidden: 128
-  condition_embedding_dim: 8
-
 generation:
-  direction_method: mean_shift
-  control_scope: batch_subspace
+  source_batch: inDrop3
+  target_batch: smartseq2
+  celltypes: [acinar, activated_stellate, alpha, beta, delta, ductal]
+  cells_per_type: 500
+  direction_seed: 42
+  direction_method: whitening_recoloring
+  covariance_ridge: 1.0e-6
+  sampling_batch_size: 500
+  decode_batch_size: 1024
 
 evaluation:
   alpha_values: [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
   lisi_k: 30
+  pca_components: 30
+  rf_seed: 42
+
+training:
+  accelerator: auto
+  num_threads: 4
 
 hydra:
   run:
-    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_supervised_head_ablation
-  sweep:
-    dir: ${paths.root_dir}/experiments/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_supervised_head_ablation
-    subdir: ${hydra.job.num}
+    dir: ${paths.root_dir}/experiments/outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_batch_dose_response

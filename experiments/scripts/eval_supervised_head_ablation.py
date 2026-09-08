@@ -27,6 +27,7 @@ os.environ.setdefault("PROJECT_ROOT", str(root))
 
 import hydra
 import numpy as np
+import matplotlib.pyplot as plt
 import pandas as pd
 import pytorch_lightning as pl
 import scanpy as sc
@@ -36,10 +37,8 @@ from omegaconf import DictConfig, OmegaConf
 from sklearn.preprocessing import LabelEncoder
 from torch.utils.data import DataLoader, Dataset, random_split
 
-from experiments.scripts.eval_batch_dose_response import (
-    compute_batch_separation,
-    compute_bio_preservation,
-    plot_dose_response,
+from experiments.src.batch_metrics import (
+    batch_asw, ilisi, celltype_asw, clisi, celltype_rf_accuracy,
 )
 from experiments.src.batch_control import apply_direction, compute_batch_direction
 from experiments.src.common import (
@@ -70,6 +69,120 @@ CONTROL_SCOPES = {
     "non_celltype_latent",
     "exclude_celltype",
 }
+
+
+def compute_batch_separation(x_combined, batch_labels, k):
+    """Batch separation metrics on the combined (ref + shifted) data."""
+    return {
+        "batch_asw": batch_asw(x_combined, batch_labels),
+        "ilisi": ilisi(x_combined, batch_labels, k=k),
+    }
+
+
+def compute_bio_preservation(x_shifted, ct_labels, k):
+    """Biological preservation metrics on the shifted data only."""
+    ct_asw_val = celltype_asw(x_shifted, ct_labels)
+    c_lisi = clisi(x_shifted, ct_labels, k=k)
+    ct_acc, ct_bal = celltype_rf_accuracy(x_shifted, ct_labels)
+    return {
+        "celltype_asw": ct_asw_val,
+        "clisi": c_lisi,
+        "celltype_rf_acc": ct_acc,
+        "celltype_rf_bal_acc": ct_bal,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+def plot_dose_response(
+    all_metrics,
+    save_path,
+    ref_bio=None,
+    target_bio=None,
+    axis_limits=None,
+):
+    alphas = [m["alpha"] for m in all_metrics]
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
+
+    # -- batch separation --
+    ax1.plot(alphas, [m["batch_asw"] for m in all_metrics],
+             "o-", lw=2.5, ms=8, color="#2ecc71", label="Batch ASW")
+    ax1b = ax1.twinx()
+    ax1b.plot(alphas, [m["ilisi"] for m in all_metrics],
+              "s--", lw=2.5, ms=8, color="#e74c3c", label="iLISI")
+    ax1.set_xlabel("alpha", fontsize=13, fontweight="bold")
+    ax1.set_ylabel("Batch ASW", fontsize=13, fontweight="bold", color="#2ecc71")
+    ax1b.set_ylabel("iLISI", fontsize=13, fontweight="bold", color="#e74c3c")
+    ax1.set_title("Batch Separation vs alpha", fontsize=14, fontweight="bold")
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax1b.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=10)
+    ax1.grid(True, alpha=0.3, ls="--")
+
+    # -- biological preservation --
+    ax2.plot(alphas, [m["celltype_asw"] for m in all_metrics],
+             "^-", lw=2.5, ms=8, color="#9b59b6", label="CT ASW")
+    ax2.plot(alphas, [m["celltype_rf_bal_acc"] for m in all_metrics],
+             "D-", lw=2.5, ms=8, color="#3498db", label="CT RF Bal.Acc")
+    ax2b = ax2.twinx()
+    ax2b.plot(alphas, [m["clisi"] for m in all_metrics],
+              "v--", lw=2.5, ms=8, color="#e67e22", label="cLISI")
+
+    # -- draw ref/target baselines on biological preservation panel --
+    baseline_styles = {
+        "ref": {"ls": ":", "lw": 1.5, "alpha": 0.8},
+        "target": {"ls": "-.", "lw": 1.5, "alpha": 0.8},
+    }
+    for bio, tag in [(ref_bio, "ref"), (target_bio, "target")]:
+        if bio is None:
+            continue
+        sty = baseline_styles[tag]
+        label_prefix = tag.capitalize()
+        ax2.axhline(bio["celltype_asw"], color="#9b59b6", label=f"{label_prefix} CT ASW", **sty)
+        ax2.axhline(bio["celltype_rf_bal_acc"], color="#3498db", label=f"{label_prefix} CT RF Bal.Acc", **sty)
+        ax2b.axhline(bio["clisi"], color="#e67e22", label=f"{label_prefix} cLISI", **sty)
+
+    ax2.set_xlabel("alpha", fontsize=13, fontweight="bold")
+    ax2.set_ylabel("Score", fontsize=13, fontweight="bold")
+    ax2b.set_ylabel("cLISI", fontsize=13, fontweight="bold", color="#e67e22")
+    ax2.set_title("Biological Preservation vs alpha", fontsize=14, fontweight="bold")
+    lines1, labels1 = ax2.get_legend_handles_labels()
+    lines2, labels2 = ax2b.get_legend_handles_labels()
+    ax2.legend(lines1 + lines2, labels1 + labels2, loc="best", fontsize=9)
+    ax2.grid(True, alpha=0.3, ls="--")
+
+    if axis_limits is None:
+        # -- unify iLISI / cLISI y-axes: both start at 1 with the same upper bound --
+        all_ilisi = [m["ilisi"] for m in all_metrics]
+        all_clisi = [m["clisi"] for m in all_metrics]
+        lisi_vals = all_ilisi + all_clisi
+        if ref_bio is not None:
+            lisi_vals.append(ref_bio["clisi"])
+        if target_bio is not None:
+            lisi_vals.append(target_bio["clisi"])
+        lisi_upper = max(lisi_vals) * 1.1
+        ax1b.set_ylim(1, lisi_upper)
+        ax2b.set_ylim(1, lisi_upper)
+    else:
+        if "batch_asw" in axis_limits:
+            ax1.set_ylim(*axis_limits["batch_asw"])
+        if "ilisi" in axis_limits:
+            ax1b.set_ylim(*axis_limits["ilisi"])
+        if "bio_score" in axis_limits:
+            ax2.set_ylim(*axis_limits["bio_score"])
+        if "clisi" in axis_limits:
+            ax2b.set_ylim(*axis_limits["clisi"])
+
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) if os.path.dirname(save_path) else ".", exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    log.info(f"Dose-response plot saved to {save_path}")
+    plt.close()
+
+
 
 
 class ExpressionDataset(Dataset):

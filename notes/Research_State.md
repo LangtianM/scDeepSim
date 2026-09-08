@@ -329,6 +329,28 @@ Caption: For each dataset, the learned-distribution panel compares scDeepSim, sc
 
 ### Disentanglement Evaluation
 
+#### Shared latent-predictability and dose-response experiment (September 7, 2026)
+
+Three structured/plain VAE pairs (seeds 42, 43, and 44) and their six conditional
+diffusion models completed the shared pancreas experiment. Preprocessing uses
+all 16,382 filtered cells and 2,000 HVGs from the counts layer. Each VAE pair
+shares initial encoder/decoder weights and training splits; the structured
+latent partition is 32 cell-type, 32 batch, and 64 residual coordinates.
+
+The 36 RF measurements and 12 three-repetition summaries are complete. Mean
+balanced accuracy in the designated structured blocks is 0.880 for cell type
+and 0.959 for technology, versus 0.773 and 0.806 in matching plain coordinates.
+Both labels remain highly predictable outside their assigned structured blocks;
+these results establish predictive enrichment without full disentanglement.
+
+The [executed notebook](../experiments/notebooks/structured_batch_intervention.ipynb)
+contains the predictability figure, dose-response figure, and combined layout.
+The [experiment report](Journals/latent_predictability_report.md) provides metrics,
+run links, commands, verification, and limitations. RF test cells are held out
+from RF fitting but may have participated in VAE training.
+
+#### Earlier supervision experiments
+
 We evaluate the disentanglement of latent variables produced by the disentangled VAE by varying the supervision weight from 1.0 to 7.0. A secondary RF classifier is trained to predict cell type from (a) the cell-type latent subspace and (b) the remaining latent dimensions.
 
 ![Disentanglement Evaluation](../experiments/outputs/checkpoints/test_supervised/tn_vae/supervised_weight_comparison.png)
@@ -352,6 +374,26 @@ Caption: Latent disentanglement heatmap on `data/HVG_embryoatlas.h5ad` using 2,0
 After introducing batch effect signals via latent manipulation, we need to verify two things: (a) the batch signal is present and its strength is controllable via $\alpha$, and (b) biological signals (cell type structure) are preserved. Note that introducing batch effects is *expected* to change marginal gene-expression statistics and make the data look different from the unmanipulated simulation -- that is the whole point. Therefore, standard real-vs.-simulated discriminability tests are not directly applicable to the manipulated data (there is no "manipulated real data" to compare against).
 
 #### Dose-Response Evaluation of Batch Effect Strength
+
+The September 7 shared experiment uses `eval_batch_dose_response.py` with an
+explicit completed `latent_predictability.py` run. The six diffusion models
+generate independent source-conditioned cohorts A and B, each containing 500
+cells from each of six cell types. B receives the matched inDrop3-to-smartseq2
+whitening–recoloring map in structured coordinates [32,64) or all plain
+coordinates. The same base states and decoder seeds are reused over seven
+strengths from alpha=0 to 2, with one fixed real-data PCA for ASW/LISI.
+
+All 42 dose-response rows and 14 three-repetition summaries are complete. Mean
+batch ASW increases from 0.014 to 0.563 for structured and from 0.012 to 0.474
+for plain; iLISI decreases from about 1.94 to 1.00 in both arms. Cell-type ASW
+changes from 0.452 to 0.343 and from 0.411 to 0.230, respectively. Refitted RF
+balanced accuracy changes from 0.986 to 0.973 and from 0.973 to 0.893. The
+structured arm retains higher separability, with biological changes under
+stronger intervention in both arms. The report records the non-integer counts
+input and finite-retry decoder approximation; these experiments do not establish
+manipulated-sample realism.
+
+##### Earlier dose-response design and figures
 
 The central evaluation is a **dose-response curve**: for a range of $\alpha$ values (e.g., $\alpha \in \{0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0\}$), compute the following batch separation metrics and plot them as a function of $\alpha$.
 
@@ -384,7 +426,7 @@ These metrics should remain **stable across all $\alpha$ values**, confirming th
 
 Plot the biological metrics alongside the batch metrics as a function of $\alpha$. The key finding would be that batch metrics change continuously with $\alpha$ while biological metrics remain flat.
 
-We run the experiment `experiments/scripts/eval_batch_dose_response.py` for the evaluation for both the mean-shift and the Gaussian OT direction.
+The April runs below evaluated both the mean-shift and Gaussian OT directions.
 
 **Mean-Shift:**
 
