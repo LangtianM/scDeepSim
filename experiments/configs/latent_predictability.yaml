@@ -10,7 +10,7 @@ paths:
 
 data:
   n_cells: null
-  n_genes: 2000
+  n_genes: 2500
   min_genes: 10
   min_cells: 2
   celltype_key: celltype
@@ -22,11 +22,11 @@ vae:
   enc_hidden: [512, 256]
   dec_hidden: [256, 512]
   input_dropout: 0.1
-  beta: 5.0
-  beta_warmup_epochs: 10
+  beta: 1.0
+  beta_warmup_epochs: 0
   zero_inflated: true
   sup_head_hidden: 64
-  max_epochs: 100
+  max_epochs: 200
   batch_size: 256
 
 supervision:
@@ -38,7 +38,7 @@ supervision:
 adversarial:
   enabled: true
   weight: 5.0
-  warmup_epochs: 20
+  warmup_epochs: 0
   head_hidden: 64
   condition_embedding_dim: 8
 

@@ -32,7 +32,7 @@ supervision:
 
 generation:
   alpha_values: [0.0, 0.5, 1.0, 1.5]
-  direction_method: gaussian_ot
+  direction_method: whitening_recoloring
   control_scope: batch_subspace
 
 hydra:

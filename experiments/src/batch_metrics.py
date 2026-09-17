@@ -129,12 +129,14 @@ def celltype_rf_accuracy(X, celltype_labels, test_size=0.2, seed=42):
 # ---------------------------------------------------------------------------
 
 def batch_asw_within_celltype(X, batch_labels, celltype_labels):
-    """Compute absolute batch ASW stratified equally across cell types.
+    """Compute signed batch ASW stratified equally across cell types.
 
     Silhouette values are computed separately inside each cell type so the
     score measures technical separation without allowing biological clusters
-    to dominate. Each observed cell type contributes equal weight. Lower is
-    better and the result lies in ``[0, 1]``.
+    to dominate. Each observed cell type contributes equal weight. The result
+    lies in ``[-1, 1]``: higher values indicate stronger batch separation,
+    values near zero indicate mixing, and negative values indicate cells
+    closer on average to another batch than their own.
     """
     X = np.asarray(X, dtype=np.float64)
     batch_labels = np.asarray(batch_labels)
@@ -162,7 +164,7 @@ def batch_asw_within_celltype(X, batch_labels, celltype_labels):
                 "and more cells than batch labels."
             )
         scores = silhouette_samples(X_group, group_batches)
-        per_celltype.append(float(np.mean(np.abs(scores))))
+        per_celltype.append(float(np.mean(scores)))
     return float(np.mean(per_celltype))
 
 

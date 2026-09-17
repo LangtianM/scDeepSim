@@ -5,13 +5,13 @@ execution:
 
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
-  artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_benchmark_full
+  artifact_dir: ${paths.root_dir}/experiments/artifacts/ti_unified_20260915_base
   benchmark_dir: ${paths.root_dir}/experiments/outputs/ti_benchmark_full_native
 
 data:
   dataset: scvelo_pancreas
   expected_n_cells: 3696
-  n_genes: 2000
+  n_genes: 2500
   celltype_key: clusters
   start_state: Ductal
   waypoint_state: Ngn3 high EP
@@ -25,21 +25,21 @@ data:
     log1p: true
 
 vae:
-  latent_dim: 64
+  latent_dim: 128
   enc_hidden: [512, 256]
   dec_hidden: [256, 512]
   dropout: 0.1
   input_dropout: 0.1
   beta: 1.0
-  beta_warmup_epochs: 10
+  beta_warmup_epochs: 0
   zero_inflated: true
   sup_head_hidden: 64
-  max_epochs: 150
-  batch_size: 128
+  max_epochs: 200
+  batch_size: 256
 
 supervision:
-  celltype_weight: 3.0
-  celltype_latent_dims: 16
+  celltype_weight: 5.0
+  celltype_latent_dims: 32
 
 diffusion:
   objective: pred_v
@@ -60,10 +60,10 @@ diffusion:
 
 training:
   log_every_n_steps: 20
-  enable_progress_bar: true
+  enable_progress_bar: false
   enable_model_summary: false
   logger: false
-  sampling_progress: true
+  sampling_progress: false
 
 artifacts:
   posterior_seed: 42

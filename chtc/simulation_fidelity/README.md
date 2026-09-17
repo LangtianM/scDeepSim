@@ -31,3 +31,19 @@ They also remove missing or analytically unestimable label groups with fewer
 than six cells. Seeded subsampling reserves at least six cells per retained
 label so the 50/50 stratified split leaves at least three per side. Lung uses
 all cells remaining after these validity filters when fewer than 20,000 remain.
+
+## Unified configuration rerun
+
+The active scDeepSim defaults use 2,500 genes, a 128-dimensional VAE with
+cell-type and batch heads when available, and joint conditional diffusion.
+Both fits use 200 epochs and batch size 256; KL weight 1 and adversarial reversal
+5 are constant from epoch zero. VAE and diffusion share saved internal split
+indices. Full settings and run identities are in
+[`../../notes/Reports/unified_configuration_20260915.md`](../../notes/Reports/unified_configuration_20260915.md).
+
+Package the current working-tree Python and YAML files into a fresh source
+archive, including uncommitted changes. Runtime `PYTHONPATH` selects the bundled
+package source. Comparator archives may be reused after checking their numerical
+settings and input protocol; the aggregator must still accept their exact
+selection, split, and evaluation-reference provenance. Record reused parent
+paths in the new run manifest and mark only those parent nodes `DONE` in its DAG.

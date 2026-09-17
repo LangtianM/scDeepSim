@@ -1,4 +1,4 @@
-from torch.utils.data import Dataset, random_split, WeightedRandomSampler
+from torch.utils.data import Dataset, Subset, random_split, WeightedRandomSampler
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder 
 import scipy.sparse as sp
 import torch
@@ -131,6 +131,8 @@ class ScDataModule(pl.LightningDataModule):
         balanced_sampling: If True, use weighted sampling to balance classes.
         label_keys: Dict mapping label names to ``{"obs_key": ..., "type": ...}``
             for multi-label mode.
+        split_indices: Optional pair of train/validation row indices, reused
+            across representations of the same cells.
     """
 
     def __init__(
@@ -142,6 +144,7 @@ class ScDataModule(pl.LightningDataModule):
         val_split=0.2,
         balanced_sampling=False,
         label_keys=None,
+        split_indices=None,
     ):
         super().__init__()
         if label_key is None and label_keys is None:
@@ -156,6 +159,7 @@ class ScDataModule(pl.LightningDataModule):
         self.val_split = val_split
         self.encoder = encoder
         self.balanced_sampling = balanced_sampling
+        self.split_indices = split_indices
 
     def setup(self, stage=None):
         if self.label_keys is not None:
@@ -163,11 +167,19 @@ class ScDataModule(pl.LightningDataModule):
         else:
             full = ScDataset(self.adata, label_key=self.label_key,
                              encoder=self.encoder)
-        val_size = int(len(full) * self.val_split)
-        train_size = len(full) - val_size
-        self.train_dataset, self.val_dataset = random_split(
-            full, [train_size, val_size]
-        )
+        if self.split_indices is None:
+            val_size = int(len(full) * self.val_split)
+            train_size = len(full) - val_size
+            self.train_dataset, self.val_dataset = random_split(
+                full, [train_size, val_size]
+            )
+        else:
+            indices = np.concatenate(self.split_indices)
+            if not np.array_equal(np.sort(indices), np.arange(len(full))):
+                raise ValueError("Train/validation indices must partition all cells.")
+            self.train_dataset, self.val_dataset = (
+                Subset(full, np.asarray(part).tolist()) for part in self.split_indices
+            )
         
         # Store full dataset reference for balanced sampling
         self._full_dataset = full

@@ -159,6 +159,7 @@ def run_r_adapter(
         str(output_path),
         str(inputs["root_cell"]),
         str(inputs["root_cluster"]),
+        str(int(random_state)),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, env=r_env)
     if proc.returncode != 0:
@@ -180,7 +181,12 @@ def run_r_adapter(
         "root_cell": inputs["root_cell"],
         "root_cluster": inputs["root_cluster"],
         "adapter_script": str(script_path),
+        "random_seed": int(random_state),
     }
-    if "metadata_json" not in df:
+    if "metadata_json" in df:
+        df["metadata_json"] = df["metadata_json"].map(
+            lambda value: json.dumps({**json.loads(value), **metadata}, sort_keys=True)
+        )
+    else:
         df["metadata_json"] = json.dumps(metadata, sort_keys=True)
     return standardize_method_output(df, method=method)

@@ -84,6 +84,7 @@ integration:
   continue_on_failure: true
 
 evaluation:
+  # Batch ASW: signed silhouette within each cell type, averaged equally across types.
   lisi_k: 30
 
 cache:

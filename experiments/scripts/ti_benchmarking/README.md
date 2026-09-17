@@ -91,3 +91,19 @@ metrics and UMAP coordinates without rerunning simulation or TI methods.
 Global Spearman measures recovery of the simulator's common pseudotime axis;
 it does not establish correct branch topology. Synthetic UMAPs use the frozen
 real-data embedding.
+
+## Unified configuration
+
+The active configurations use 2,500 HVGs, 128 latent coordinates (32 cell-type
+and 96 residual), 200 epochs per model, batch size 256, and constant KL weight 1.
+There are no conditional adversaries in this cell-type-only workflow. Saved
+`arrays/training_splits.npz` indices are shared between VAE and diffusion.
+Use fresh base and direction artifact directories for these settings; old
+64-dimensional artifacts cannot supply the unified run. The base model can be
+prepared without executing the endpoint benchmark.
+
+Noise draws do not change daughter-branch membership. R adapters receive and
+record the replicate seed. Monocle3 retains its native internally fixed seed
+2016 for preprocessing/UMAP and uses the replicate seed for clustering and graph
+learning. Full settings and new run paths are documented in
+[`../../../notes/Reports/unified_configuration_20260915.md`](../../../notes/Reports/unified_configuration_20260915.md).

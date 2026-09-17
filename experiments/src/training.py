@@ -90,6 +90,7 @@ def train_supervised_vae(
     logger=True,
     adversarial_config=None,
     checkpoint_path: str | Path | None = None,
+    split_indices=None,
 ) -> TruncatedNormalVAE:
     """Train a VAE with provided supervised heads and label mapping.
 
@@ -115,6 +116,7 @@ def train_supervised_vae(
         adata,
         label_keys=label_keys,
         batch_size=cfg.vae.batch_size,
+        split_indices=split_indices,
     )
     trainer = pl.Trainer(
         max_epochs=cfg.vae.max_epochs,
@@ -405,6 +407,7 @@ def train_joint_conditioned_diffusion(
     condition_obs_keys: Mapping[str, str] | None = None,
     default_root_dir: str | None = None,
     checkpoint_path: str | Path | None = None,
+    split_indices=None,
 ) -> LightningDiffusion:
     """Train latent diffusion with multiple categorical conditions.
 
@@ -452,6 +455,7 @@ def train_joint_conditioned_diffusion(
         },
         batch_size=int(cfg.diffusion.batch_size),
         balanced_sampling=False,
+        split_indices=split_indices,
     )
     trainer = pl.Trainer(
         max_epochs=int(cfg.diffusion.max_epochs),

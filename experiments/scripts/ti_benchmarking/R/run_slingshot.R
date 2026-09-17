@@ -2,17 +2,17 @@
 #
 # This script is called by experiments/src/ti_methods/slingshot_adapter.py.
 # Positional inputs are PCA coordinates, cluster labels, benchmark metadata,
-# expression values, output CSV path, root cell id, and root cluster id.
+# expression values, output CSV path, root cell id, root cluster id, and seed.
 # It writes one CSV row per cell with inferred pseudotime, inferred lineage,
 # inferred branch point (NA for Slingshot), and adapter metadata.
 #
 # Example:
 #   Rscript run_slingshot.R pca.csv clusters.csv metadata.csv expression.csv \
-#     slingshot.csv root_cell root_cluster
+#     slingshot.csv root_cell root_cluster seed
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 7) {
-  stop("usage: run_slingshot.R pca.csv clusters.csv metadata.csv expression.csv output.csv root_cell root_cluster")
+if (length(args) < 8) {
+  stop("usage: run_slingshot.R pca.csv clusters.csv metadata.csv expression.csv output.csv root_cell root_cluster seed")
 }
 
 pca_path <- args[[1]]
@@ -20,6 +20,9 @@ clusters_path <- args[[2]]
 metadata_path <- args[[3]]
 output_path <- args[[5]]
 root_cluster <- args[[7]]
+
+seed <- as.integer(args[[8]])
+set.seed(seed)
 
 if (!requireNamespace("slingshot", quietly = TRUE)) {
   stop("R package 'slingshot' is not installed")

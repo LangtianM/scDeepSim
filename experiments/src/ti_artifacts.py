@@ -25,6 +25,7 @@ from sklearn.preprocessing import LabelEncoder
 
 from experiments.src.common import as_dense, encode_adata, set_random_seed
 from experiments.src.data import load_pancreas
+from experiments.src.structured_intervention import split_cells
 from experiments.src.training import (
     celltype_supervised_config,
     sample_joint_conditioned_latents,
@@ -39,6 +40,10 @@ from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 ARTIFACT_SCHEMA_VERSION = 1
 ARTIFACT_CODE_PATHS = (
     "scdeepsim/src/scdeepsim/control.py",
+    "scdeepsim/src/scdeepsim/dataset.py",
+    "scdeepsim/src/scdeepsim/truncated_normal_vae.py",
+    "scdeepsim/src/scdeepsim/lightning_diffusion.py",
+    "experiments/src/structured_intervention.py",
     "experiments/src/common.py",
     "experiments/src/data.py",
     "experiments/src/training.py",
@@ -231,31 +236,6 @@ def validate_artifact_design(cfg) -> None:
     checks = {
         "seed": (int(cfg.seed), 42),
         "data.expected_n_cells": (int(cfg.data.expected_n_cells), 3696),
-        "data.n_genes": (int(cfg.data.n_genes), 2000),
-        "vae.latent_dim": (int(cfg.vae.latent_dim), 64),
-        "vae.max_epochs": (int(cfg.vae.max_epochs), 150),
-        "vae.batch_size": (int(cfg.vae.batch_size), 128),
-        "supervision.celltype_latent_dims": (
-            int(cfg.supervision.celltype_latent_dims),
-            16,
-        ),
-        "supervision.celltype_weight": (
-            float(cfg.supervision.celltype_weight),
-            3.0,
-        ),
-        "diffusion.max_epochs": (int(cfg.diffusion.max_epochs), 200),
-        "diffusion.timesteps": (int(cfg.diffusion.timesteps), 1000),
-        "diffusion.sampling_steps": (int(cfg.diffusion.sampling_steps), 1000),
-        "diffusion.batch_size": (int(cfg.diffusion.batch_size), 256),
-        "diffusion.guidance_scale": (float(cfg.diffusion.guidance_scale), 1.5),
-        "diffusion.guidance_dropout": (
-            float(cfg.diffusion.guidance_dropout),
-            0.1,
-        ),
-        "diffusion.dropout": (float(cfg.diffusion.dropout), 0.05),
-        "diffusion.ema_decay": (float(cfg.diffusion.ema_decay), 0.999),
-        "diffusion.lr": (float(cfg.diffusion.lr), 1e-4),
-        "diffusion.weight_decay": (float(cfg.diffusion.weight_decay), 1e-4),
         "artifacts.posterior_seed": (int(cfg.artifacts.posterior_seed), 42),
         "artifacts.pool_size": (int(cfg.artifacts.pool_size), 916),
         "embedding.seed": (int(cfg.embedding.seed), 42),
@@ -267,10 +247,6 @@ def validate_artifact_design(cfg) -> None:
         if actual != expected
     ]
     list_checks = {
-        "diffusion.hidden_dims": (
-            [int(value) for value in cfg.diffusion.hidden_dims],
-            [512, 256, 256, 128],
-        ),
         "artifacts.pool_seeds": (
             [int(value) for value in cfg.artifacts.pool_seeds],
             [42, 43, 44, 45, 46],
@@ -282,8 +258,6 @@ def validate_artifact_design(cfg) -> None:
         if actual != expected
     )
     string_checks = {
-        "diffusion.objective": (str(cfg.diffusion.objective), "pred_v"),
-        "diffusion.beta_schedule": (str(cfg.diffusion.beta_schedule), "cosine"),
         "generation.affine_method": (
             str(cfg.generation.affine_method),
             "whitening_recoloring",
@@ -294,8 +268,10 @@ def validate_artifact_design(cfg) -> None:
         for name, (actual, expected) in string_checks.items()
         if actual != expected
     )
-    if not bool(cfg.diffusion.use_ema):
-        failures.append("diffusion.use_ema=False (expected True)")
+    if not 0 < int(cfg.supervision.celltype_latent_dims) < int(cfg.vae.latent_dim):
+        failures.append("Cell-type coordinates must leave a nonempty residual space")
+    if int(cfg.data.n_genes) < int(cfg.embedding.n_pcs):
+        failures.append("Selected genes must support the requested reference PCA")
     if failures:
         raise ValueError(
             "Frozen formal artifact design was modified:\n- " + "\n- ".join(failures)
@@ -568,6 +544,10 @@ def prepare_ti_artifacts(cfg, artifact_dir: str | Path) -> TIArtifactBundle:
     label_encoder = LabelEncoder().fit(labels)
     label_codes = label_encoder.transform(labels).astype(np.int64)
 
+    splits = split_cells(adata_real.n_obs, int(cfg.seed))
+    splits_path = arrays_dir / "training_splits.npz"
+    _atomic_npz(splits_path, train=splits[0], validation=splits[1],
+                cell_id=np.asarray(adata_real.obs_names.astype(str), dtype="U"))
     vae_checkpoint = models_dir / "vae.ckpt"
     vae = train_supervised_vae(
         adata_real,
@@ -581,6 +561,7 @@ def prepare_ti_artifacts(cfg, artifact_dir: str | Path) -> TIArtifactBundle:
         enable_checkpointing=False,
         logger=bool(cfg.training.logger),
         checkpoint_path=vae_checkpoint,
+        split_indices=splits,
     )
 
     set_random_seed(int(cfg.artifacts.posterior_seed))
@@ -621,6 +602,7 @@ def prepare_ti_artifacts(cfg, artifact_dir: str | Path) -> TIArtifactBundle:
         condition_obs_keys={"celltype": "celltype_code"},
         default_root_dir=str(artifact_root / "training_logs" / "diffusion"),
         checkpoint_path=diffusion_checkpoint,
+        split_indices=splits,
     )
 
     start_code = int(label_encoder.transform([str(cfg.data.start_state)])[0])
@@ -694,6 +676,7 @@ def prepare_ti_artifacts(cfg, artifact_dir: str | Path) -> TIArtifactBundle:
         "resolved_config": "resolved_config.yaml",
         "vae_checkpoint": str(vae_checkpoint.relative_to(artifact_root)),
         "diffusion_checkpoint": str(diffusion_checkpoint.relative_to(artifact_root)),
+        "training_splits": str(splits_path.relative_to(artifact_root)),
         "reference_latents": str(reference_path.relative_to(artifact_root)),
         "ductal_pools": str(pools_path.relative_to(artifact_root)),
         "maps": map_files,
@@ -705,6 +688,7 @@ def prepare_ti_artifacts(cfg, artifact_dir: str | Path) -> TIArtifactBundle:
         "resolved_config": files["resolved_config"],
         "vae_checkpoint": files["vae_checkpoint"],
         "diffusion_checkpoint": files["diffusion_checkpoint"],
+        "training_splits": files["training_splits"],
         "reference_latents": files["reference_latents"],
         "ductal_pools": files["ductal_pools"],
         "pca_model": files["pca_model"],
@@ -723,6 +707,12 @@ def prepare_ti_artifacts(cfg, artifact_dir: str | Path) -> TIArtifactBundle:
         "artifact_config": artifact_config_payload(cfg),
         "git": _git_provenance(Path(cfg.paths.root_dir)),
         "software_versions": _software_versions(),
+        "models": {
+            "vae": {"hyperparameters": dict(vae.hparams),
+                    "completed_epochs": int(vae.trainer.current_epoch)},
+            "diffusion": {"hyperparameters": dict(diffusion.hparams),
+                          "completed_epochs": int(diffusion.trainer.current_epoch)},
+        },
         "data": {
             "dataset": "scvelo.datasets.pancreas",
             "n_cells": int(adata_real.n_obs),

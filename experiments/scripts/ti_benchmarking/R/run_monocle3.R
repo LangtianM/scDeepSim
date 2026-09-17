@@ -2,24 +2,27 @@
 #
 # This script is called by experiments/src/ti_methods/monocle3_adapter.py.
 # Positional inputs are PCA coordinates, cluster labels, benchmark metadata,
-# expression values, output CSV path, root cell id, and root cluster id. The
+# expression values, output CSV path, root cell id, root cluster id, and seed. The
 # current Monocle3 path uses the expression matrix and metadata, then writes
 # one CSV row per cell with inferred pseudotime, inferred lineage/partition,
 # inferred branch point (NA), and adapter metadata.
 #
 # Example:
 #   Rscript run_monocle3.R pca.csv clusters.csv metadata.csv expression.csv \
-#     monocle3.csv root_cell root_cluster
+#     monocle3.csv root_cell root_cluster seed
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 7) {
-  stop("usage: run_monocle3.R pca.csv clusters.csv metadata.csv expression.csv output.csv root_cell root_cluster")
+if (length(args) < 8) {
+  stop("usage: run_monocle3.R pca.csv clusters.csv metadata.csv expression.csv output.csv root_cell root_cluster seed")
 }
 
 metadata_path <- args[[3]]
 expression_path <- args[[4]]
 output_path <- args[[5]]
 root_cell <- args[[6]]
+
+seed <- as.integer(args[[8]])
+set.seed(seed)
 
 if (!requireNamespace("monocle3", quietly = TRUE)) {
   stop("R package 'monocle3' is not installed")
@@ -42,12 +45,13 @@ cds <- monocle3::new_cell_data_set(
   gene_metadata = gene_metadata
 )
 cds <- monocle3::preprocess_cds(cds, num_dim = min(30, nrow(mat) - 1, ncol(mat) - 1))
-cds <- monocle3::reduce_dimension(cds)
-cds <- monocle3::cluster_cells(cds)
+cds <- monocle3::reduce_dimension(cds, cores = 1, umap.fast_sgd = FALSE)
+cds <- monocle3::cluster_cells(cds, random_seed = seed)
 # Use Monocle3's native partition-wise principal-graph behavior. A single
 # common root is intentionally retained; cells in unreachable partitions keep
 # their native infinite pseudotime and make the benchmark run scientifically
 # invalid under the strict all-cell scoring contract.
+set.seed(seed)
 cds <- monocle3::learn_graph(cds, use_partition = TRUE)
 cds <- monocle3::order_cells(cds, root_cells = root_cell)
 
@@ -71,6 +75,6 @@ out <- data.frame(
   inferred_pseudotime = pt,
   inferred_lineage = partitions,
   inferred_branch_point = NA_real_,
-  metadata_json = '{"status":"ok"}'
+  metadata_json = sprintf('{"status":"ok","native_pca_seed":2016,"native_umap_seed":2016,"clustering_seed":%d,"graph_seed":%d}', seed, seed)
 )
 write.csv(out, output_path, row.names = FALSE)

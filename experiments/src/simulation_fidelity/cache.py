@@ -88,10 +88,11 @@ def method_sample_config(method_key: str, cfg: DictConfig) -> dict[str, Any]:
     if method_key == "scdeepsim":
         return {
             "vae": _section(cfg, "vae"),
+            "adversarial": _section(cfg, "adversarial"),
             "diffusion": _section(cfg, "diffusion"),
         }
     if method_key == "vae_reconstruction":
-        return {"vae": _section(cfg, "vae")}
+        return {"vae": _section(cfg, "vae"), "adversarial": _section(cfg, "adversarial")}
     if method_key == "scdiffusion":
         scdiffusion = cfg.get("scdiffusion", {})
         sample_path = resolve_path(scdiffusion.get("sample_path", None))

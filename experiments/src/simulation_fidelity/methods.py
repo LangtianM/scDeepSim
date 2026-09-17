@@ -28,6 +28,8 @@ from omegaconf import DictConfig, OmegaConf
 from scipy.io import mmread, mmwrite
 from sklearn.preprocessing import LabelEncoder
 
+from experiments.src.structured_intervention import split_cells, write_json
+from experiments.src.training import selected_adversarial_config
 from scdeepsim.dataset import ScDataModule
 from scdeepsim.lightning_diffusion import LightningDiffusion
 from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
@@ -68,9 +70,9 @@ def make_celltype_encoder(adata: ad.AnnData) -> LabelEncoder:
     return encoder
 
 
-def make_supervised_config(cfg: DictConfig, n_celltypes: int) -> list[dict[str, Any]]:
-    """Build the scDeepSim supervised cell-type head config."""
-    return [
+def make_supervised_config(cfg: DictConfig, n_celltypes: int, n_batches: int | None = None) -> list[dict[str, Any]]:
+    """Build supervised heads in cell-type, then batch coordinate order."""
+    heads = [
         {
             "name": "celltype",
             "type": "categorical",
@@ -79,6 +81,22 @@ def make_supervised_config(cfg: DictConfig, n_celltypes: int) -> list[dict[str, 
             "weight": float(cfg.vae.supervision_weight),
         }
     ]
+    if n_batches is not None:
+        heads.append({
+            "name": "batch", "type": "categorical", "n_classes": int(n_batches),
+            "latent_dims": int(cfg.vae.batch_latent_dims),
+            "weight": float(cfg.vae.batch_supervision_weight),
+        })
+    return heads
+
+
+def sample_conditioning_rows(adata, encoders, n_samples, seed):
+    """Sample observed training rows to preserve joint label frequencies."""
+    rows = np.random.default_rng(seed).choice(adata.n_obs, size=n_samples)
+    return {
+        name: encoder.transform(adata.obs[name].astype(str).to_numpy()[rows])
+        for name, encoder in encoders.items()
+    }
 
 
 def build_scdeepsim_cache_paths(
@@ -97,11 +115,15 @@ def build_scdeepsim_cache_paths(
         "data": config_container(cfg.data),
         "seed": int(cfg.seed),
         "celltype_classes": np.asarray(celltype_classes).astype(str).tolist(),
+        "batch_classes": sorted(adata_norm.obs["batch"].astype(str).unique())
+        if "batch" in adata_norm.obs else None,
+        "internal_split": "seeded_unstratified_shared_80_20",
     }
     vae_payload = {
         **base_payload,
         "model": "scdeepsim_vae",
         "vae": config_container(cfg.vae),
+        "adversarial": selected_adversarial_config(cfg),
     }
     vae_key = stable_hash(vae_payload)
     diffusion_payload = {
@@ -128,6 +150,7 @@ def train_vae(
     supervised_config: list[dict[str, Any]],
     cfg: DictConfig,
     output_dir: Path,
+    split_indices=None,
 ) -> TruncatedNormalVAE:
     """Train the supervised truncated-normal VAE used by scDeepSim."""
     vae = TruncatedNormalVAE(
@@ -141,14 +164,17 @@ def train_vae(
         beta_warmup_epochs=int(cfg.vae.beta_warmup_epochs),
         zero_inflated=bool(cfg.vae.zero_inflated),
         supervised_config=supervised_config,
+        adversarial_config=selected_adversarial_config(cfg) if len(supervised_config) > 1 else None,
         sup_head_hidden=int(cfg.vae.sup_head_hidden),
         lr=float(cfg.vae.lr),
         weight_decay=float(cfg.vae.weight_decay),
     )
     data_module = ScDataModule(
         adata,
-        label_keys={"celltype": {"obs_key": "celltype", "type": "categorical"}},
+        label_keys={spec["name"]: {"obs_key": spec["name"], "type": "categorical"}
+                    for spec in supervised_config},
         batch_size=int(cfg.vae.batch_size),
+        split_indices=split_indices,
     )
     trainer = pl.Trainer(
         max_epochs=int(cfg.vae.epochs),
@@ -166,6 +192,12 @@ def train_vae(
     ckpt_path = output_dir / "models" / "scdeepsim_vae.ckpt"
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     trainer.save_checkpoint(ckpt_path)
+    write_json(output_dir / "models" / "scdeepsim_vae_training.json", {
+        "configured_epochs": int(cfg.vae.epochs),
+        "completed_epochs": int(trainer.current_epoch),
+        "global_step": int(trainer.global_step),
+        "hyperparameters": dict(vae.hparams),
+    })
     return vae
 
 
@@ -202,14 +234,15 @@ def reconstruct(vae: TruncatedNormalVAE, x: np.ndarray, cfg: DictConfig) -> tupl
 
 def train_diffusion(
     latent_adata: ad.AnnData,
-    n_celltypes: int,
+    condition_cardinalities: dict[str, int],
     cfg: DictConfig,
     output_dir: Path,
+    split_indices=None,
 ) -> LightningDiffusion:
-    """Train latent diffusion on VAE latents and cell-type labels."""
+    """Train latent diffusion conditioned on the available categorical labels."""
     diffusion = LightningDiffusion(
         input_dim=latent_adata.n_vars,
-        num_classes=int(n_celltypes),
+        condition_cardinalities=condition_cardinalities,
         hidden_dims=list(cfg.diffusion.hidden_dims),
         num_timesteps=int(cfg.diffusion.timesteps),
         sampling_timesteps=int(cfg.diffusion.sampling_steps),
@@ -226,9 +259,10 @@ def train_diffusion(
     )
     data_module = ScDataModule(
         latent_adata,
-        label_key="celltype",
-        encoder="LabelEncoder",
-        batch_size=int(cfg.vae.batch_size),
+        label_keys={name: {"obs_key": name, "type": "categorical"}
+                    for name in condition_cardinalities},
+        batch_size=int(cfg.diffusion.batch_size),
+        split_indices=split_indices,
     )
     trainer = pl.Trainer(
         max_epochs=int(cfg.diffusion.epochs),
@@ -245,13 +279,19 @@ def train_diffusion(
     ckpt_path = output_dir / "models" / "scdeepsim_diffusion.ckpt"
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     trainer.save_checkpoint(ckpt_path)
+    write_json(output_dir / "models" / "scdeepsim_diffusion_training.json", {
+        "configured_epochs": int(cfg.diffusion.epochs),
+        "completed_epochs": int(trainer.current_epoch),
+        "global_step": int(trainer.global_step),
+        "hyperparameters": dict(diffusion.hparams),
+    })
     return diffusion
 
 
 def sample_scdeepsim(
     diffusion: LightningDiffusion,
     vae: TruncatedNormalVAE,
-    sampled_labels: np.ndarray,
+    sampled_labels: dict[str, np.ndarray],
     cfg: DictConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sample scDeepSim expression from latent diffusion and VAE decoder."""
@@ -260,10 +300,11 @@ def sample_scdeepsim(
     vae = vae.to(device)
     diffusion.eval()
     vae.eval()
-    labels_t = torch.tensor(sampled_labels, dtype=torch.long, device=device)
+    labels_t = {name: torch.tensor(values, dtype=torch.long, device=device)
+                for name, values in sampled_labels.items()}
     with torch.no_grad():
         z = diffusion.sample(
-            num_samples=len(sampled_labels),
+            num_samples=len(sampled_labels["celltype"]),
             labels=labels_t,
             use_ema=bool(cfg.diffusion.use_ema),
             sampling_timesteps=int(cfg.diffusion.sampling_steps),
@@ -293,7 +334,16 @@ def run_scdeepsim(
     x_train = as_dense(adata_norm.X).astype(np.float32)
     encoder = make_celltype_encoder(adata_norm)
     n_celltypes = len(encoder.classes_)
-    supervised_config = make_supervised_config(cfg, n_celltypes)
+    encoders = {"celltype": encoder}
+    if "batch" in adata_norm.obs:
+        encoders["batch"] = LabelEncoder().fit(adata_norm.obs["batch"].astype(str))
+    cardinalities = {name: len(enc.classes_) for name, enc in encoders.items()}
+    supervised_config = make_supervised_config(cfg, n_celltypes, cardinalities.get("batch"))
+    splits = split_cells(adata_norm.n_obs, int(cfg.seed))
+    arrays_dir = output_dir / "arrays"
+    arrays_dir.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(arrays_dir / "scdeepsim_splits.npz", train=splits[0],
+                        validation=splits[1], cell_id=adata_norm.obs_names.to_numpy(dtype=str))
     cache_paths = build_scdeepsim_cache_paths(adata_norm, cfg, encoder.classes_)
     use_cache = cache_enabled(cfg, "reuse_scdeepsim") and not force_retrain(cfg)
     device = preferred_torch_device()
@@ -309,7 +359,7 @@ def run_scdeepsim(
         copy_checkpoint_to_cache(Path(cache_paths["vae_ckpt"]), run_vae_ckpt)
     else:
         log.info("Training scDeepSim VAE")
-        vae = train_vae(adata_norm, supervised_config, cfg, output_dir).to(device)
+        vae = train_vae(adata_norm, supervised_config, cfg, output_dir, split_indices=splits).to(device)
         if cache_enabled(cfg, "reuse_scdeepsim"):
             copy_checkpoint_to_cache(run_vae_ckpt, Path(cache_paths["vae_ckpt"]))
 
@@ -321,6 +371,7 @@ def run_scdeepsim(
         x_recon, z_recon = reconstruct(vae, x_eval, cfg)
     torch.manual_seed(int(cfg.seed))
     latent_vectors = encode_to_latent(vae, x_train, cfg)
+    np.savez_compressed(arrays_dir / "scdeepsim_posterior.npz", sample=latent_vectors)
     latent_adata = ad.AnnData(X=latent_vectors, obs=adata_norm.obs.copy())
 
     run_diffusion_ckpt = output_dir / "models" / "scdeepsim_diffusion.ckpt"
@@ -334,17 +385,15 @@ def run_scdeepsim(
         copy_checkpoint_to_cache(Path(cache_paths["diffusion_ckpt"]), run_diffusion_ckpt)
     else:
         log.info("Training scDeepSim latent diffusion")
-        diffusion = train_diffusion(latent_adata, n_celltypes, cfg, output_dir).to(device)
+        diffusion = train_diffusion(latent_adata, cardinalities, cfg, output_dir, split_indices=splits).to(device)
         if cache_enabled(cfg, "reuse_scdeepsim"):
             copy_checkpoint_to_cache(run_diffusion_ckpt, Path(cache_paths["diffusion_ckpt"]))
 
-    real_label_codes = encoder.transform(adata_norm.obs["celltype"].astype(str))
-    probs = np.bincount(real_label_codes, minlength=n_celltypes) / len(real_label_codes)
-    rng = np.random.default_rng(int(cfg.seed))
-    sampled_labels = rng.choice(
-        n_celltypes, size=get_eval_n_samples(cfg, adata_norm.n_obs), p=probs
+    sampled_labels = sample_conditioning_rows(
+        adata_norm, encoders, get_eval_n_samples(cfg, adata_norm.n_obs), int(cfg.seed)
     )
-    sampled_label_names = encoder.inverse_transform(sampled_labels)
+    sampled_label_names = encoder.inverse_transform(sampled_labels["celltype"])
+    np.savez_compressed(arrays_dir / "scdeepsim_conditions.npz", **sampled_labels)
 
     log.info("Sampling scDeepSim")
     torch.manual_seed(int(cfg.seed))
@@ -365,6 +414,13 @@ def run_scdeepsim(
                 "vae_epochs": int(cfg.vae.epochs),
                 "diffusion_epochs": int(cfg.diffusion.epochs),
                 "sampling_steps": int(cfg.diffusion.sampling_steps),
+                "condition_classes": {name: enc.classes_.astype(str).tolist()
+                                      for name, enc in encoders.items()},
+                "vae_hyperparameters": dict(vae.hparams),
+                "diffusion_hyperparameters": dict(diffusion.hparams),
+                "shared_split": "arrays/scdeepsim_splits.npz",
+                "posterior_samples": "arrays/scdeepsim_posterior.npz",
+                "sampled_conditions": "arrays/scdeepsim_conditions.npz",
                 "cache": {
                     "enabled": cache_enabled(cfg, "reuse_scdeepsim"),
                     "force_retrain": force_retrain(cfg),

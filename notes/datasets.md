@@ -26,6 +26,14 @@ retains their configurations, provenance, aggregate outputs, and final figures.
 
 **scIB human lung atlas.** A confounded atlas-integration stress test where donor, study, protocol, and anatomical or spatial effects may mix technical and biological variation. It should be used to test robustness, with weaker monotonicity interpreted cautiously rather than as a simple failure.
 
+Download: [official Lung_atlas_public.h5ad](https://ndownloader.figshare.com/files/24539942)
+(1,019,664,664 bytes), saved locally as `data/Lung_atlas_public.h5ad`.
+The file contains 32,472 cells and 15,148 genes. `X` contains log-transformed,
+scran-normalized expression; `layers['counts']` includes SoupX-corrected
+fractional counts. The simulation-fidelity integer filter removes all 22,771
+10x cells and retains only the 9,701 Drop-seq cells. See the
+[count provenance and full matrix audit](Journals/lung_dataset_upstream_sources.md).
+
 ### Trajectory datasets
 
 **Pancreatic endocrinogenesis.** A compact trajectory-control dataset with clear progenitor, intermediate, and terminal endocrine states such as Ductal, Ngn3 high EP, Alpha, and Beta. It is the most direct dataset for trajectory interpolation, branch discrepancy, branch-point timing, pseudotime dose response, and TI benchmarking. The [scVelo pancreas wrapper](https://scvelo.readthedocs.io/en/stable/scvelo.datasets.pancreas.html) provides the processed H5AD used here.

@@ -955,6 +955,11 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
         )
         trunk_source_rows = X_A[trunk_source_idx]
 
+        # Fix daughter membership before any noise-dependent RNG draws.
+        perm = rng.permutation(pool_size)
+        idx_B_in_pool = perm[:n_samples_per_t]
+        idx_C_in_pool = perm[n_samples_per_t:2 * n_samples_per_t]
+
         for t, sigma in zip(t_trunk, scales_trunk):
             alpha = t / tau if tau > 0.0 else 0.0
             trunk_samples[t] = _affine_rows(
@@ -1007,10 +1012,6 @@ def branch_trajectory_ot(X_A, X_W, X_B, X_C, t_values, *, tau,
     else:
         # Lineage-commit split of the trunk alpha=1 pool.
         assert pool_rows_at_alpha_1 is not None
-        perm = rng.permutation(pool_size)
-        idx_B_in_pool = perm[:n_samples_per_t]
-        idx_C_in_pool = perm[n_samples_per_t:2 * n_samples_per_t]
-
         pool_B = pool_rows_at_alpha_1[idx_B_in_pool]
         pool_C = pool_rows_at_alpha_1[idx_C_in_pool]
 

@@ -138,6 +138,9 @@ def fit_model(model, adata, splits, cfg, seed, checkpoint, section):
     trainer.save_checkpoint(checkpoint)
     write_json(checkpoint.parent / "training_metadata.json", {
         "seed": seed, "epochs": int(settings.max_epochs),
+        "completed_epochs": int(trainer.current_epoch),
+        "global_step": int(trainer.global_step),
+        "hyperparameters": dict(model.hparams),
         "device": str(trainer.strategy.root_device), "torch": torch.__version__,
         "lightning": pl.__version__, "n_train": len(splits[0]),
         "n_validation": len(splits[1]),
