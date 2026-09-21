@@ -1,5 +1,11 @@
 seed: 42
 
+inputs:
+  # Reuse the structured model's saved A/B expression and source seeds/alphas.
+  # The standalone data/model/training/generation settings below are then unused.
+  # null retains the standalone training/generation workflow configured below.
+  dose_response_run_dir: null
+
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
   data_path: ${paths.root_dir}/data/scIBPancreas.h5ad

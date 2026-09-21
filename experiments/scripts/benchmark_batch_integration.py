@@ -1,9 +1,7 @@
 """Controlled de novo batch-integration benchmark.
 
-The experiment trains one disentangled VAE and one joint-conditioned latent
-diffusion model, applies a pooled inDrop3-to-smartseq2 affine batch map to one
-of two independently sampled cohorts, and benchmarks four integration
-representations over a fixed alpha sweep.
+Benchmark four integration representations using saved structured dose-response
+cohorts, or train and generate cohorts in the standalone workflow.
 """
 
 from __future__ import annotations
@@ -802,7 +800,7 @@ def _metric_row(
         lisi_k=lisi_k,
     )
     ranges = {
-        "batch_asw": (0.0, 1.0),
+        "batch_asw": (-1.0, 1.0),
         "ilisi": (1.0, 2.0),
         "celltype_asw": (-1.0, 1.0),
         "clisi": (1.0, float(np.unique(celltype_labels).size)),
@@ -882,36 +880,153 @@ def _plot_response_curves(
         log.warning("No successful metrics; response curves were not rendered.")
         return
     panels = [
-        ("batch_asw", "Batch ASW (lower is better)"),
-        ("ilisi", "iLISI (higher is better)"),
-        ("celltype_asw", "Cell-type ASW (higher is better)"),
-        ("clisi", "cLISI (lower is better)"),
+        ("batch_asw", "Batch ASW (≈0)"),
+        ("ilisi", "iLISI ↑"),
+        ("celltype_asw", "Cell-type ASW ↑"),
+        ("clisi", "cLISI ↓"),
     ]
-    fig, axes = plt.subplots(2, 2, figsize=(11, 8), sharex=True)
     colors = {
         "unintegrated": "#4C78A8",
         "combat": "#F58518",
         "harmony": "#54A24B",
         "scanorama": "#B279A2",
     }
-    for ax, (metric, title) in zip(axes.flat, panels):
-        for method, group in successful.groupby("method", sort=False):
-            stats = group.groupby("alpha")[metric].agg(["mean", "std"]).reset_index()
-            x = stats["alpha"].to_numpy(dtype=float)
-            mean = stats["mean"].to_numpy(dtype=float)
-            std = stats["std"].fillna(0.0).to_numpy(dtype=float)
-            color = colors.get(method)
-            ax.plot(x, mean, marker="o", label=method, color=color)
-            ax.fill_between(x, mean - std, mean + std, alpha=0.18, color=color)
-        ax.set_title(title)
-        ax.set_xlabel("Batch intervention strength (alpha)")
-        ax.grid(alpha=0.25)
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=max(1, len(labels)))
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
-    fig.savefig(png_path, dpi=int(dpi), bbox_inches="tight")
-    fig.savefig(pdf_path, bbox_inches="tight")
-    plt.close(fig)
+    labels = {
+        "unintegrated": "Unintegrated PCA", "combat": "ComBat",
+        "harmony": "Harmony", "scanorama": "Scanorama",
+    }
+    with plt.rc_context({"font.size": 7, "axes.titlesize": 7,
+                         "xtick.labelsize": 6.5, "ytick.labelsize": 6.5,
+                         "pdf.fonttype": 42}):
+        fig, axes = plt.subplots(1, 4, figsize=(5.6, 1.8), sharex=True)
+        for ax, (metric, title) in zip(axes, panels):
+            for method in colors:
+                group = successful.loc[successful["method"] == method]
+                if group.empty:
+                    continue
+                stats = group.groupby("alpha")[metric].agg(["mean", "std"])
+                x = stats.index.to_numpy(dtype=float)
+                mean = stats["mean"].to_numpy(dtype=float)
+                std = stats["std"].fillna(0.0).to_numpy(dtype=float)
+                ax.plot(x, mean, marker="o", markersize=2, linewidth=1,
+                        linestyle="-",
+                        label=labels[method], color=colors[method])
+                ax.fill_between(x, mean - std, mean + std, alpha=0.15,
+                                color=colors[method], linewidth=0)
+            ax.set_title(title, pad=5)
+            ax.set_xticks([0, 1, 2])
+            ax.tick_params(length=2, pad=2)
+            ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+            ax.locator_params(axis="y", nbins=4)
+            ax.spines[["top", "right"]].set_visible(False)
+            ax.grid(alpha=0.2, linewidth=0.4)
+        handles, legend_labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, legend_labels, loc="upper center", ncol=4,
+                   frameon=False, handlelength=1.5, columnspacing=1)
+        fig.supxlabel(r"Batch intervention strength ($\alpha$)", fontsize=7, y=0.03)
+        fig.subplots_adjust(left=0.075, right=0.985, bottom=0.25, top=0.73, wspace=0.55)
+        fig.savefig(png_path, dpi=int(dpi))
+        fig.savefig(pdf_path)
+        plt.close(fig)
+
+
+def _load_dose_task(
+    generated_dir: Path,
+    alpha: float,
+    n_genes: int,
+    celltypes: list[str],
+    cells_per_type: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Read expression and labels in saved A-then-B row order."""
+    matrices, labels = [], []
+    expected_counts = {name: cells_per_type for name in celltypes}
+    for cohort, filename in [("A", "A.npy"), ("B", f"alpha_{alpha:g}_B.npy")]:
+        matrix = np.load(generated_dir / filename)
+        cells = pd.read_csv(generated_dir / f"{cohort}_cells.csv")
+        if (matrix.shape != (len(cells), n_genes)
+                or not cells["cohort"].eq(cohort).all()
+                or cells["celltype"].value_counts().to_dict() != expected_counts):
+            raise ValueError(f"Expression/label dimensions or composition mismatch: {generated_dir}/{filename}")
+        if not np.isfinite(matrix).all():
+            raise ValueError(f"Non-finite expression: {generated_dir}/{filename}")
+        matrices.append(matrix)
+        labels.append(cells["celltype"].to_numpy(dtype=str))
+    batches = np.repeat(["A", "B"], [len(x) for x in matrices])
+    return np.vstack(matrices), batches, np.concatenate(labels)
+
+
+def _run_saved_dose_benchmark(cfg: DictConfig, output_dir: Path) -> None:
+    """Evaluate the structured cohorts from a completed dose-response run."""
+    source_dir = Path(cfg.inputs.dose_response_run_dir).resolve()
+    source = json.loads((source_dir / "results/metadata.json").read_text())
+    vae_dir = Path(source["source_vae_run"])
+    vae_source = json.loads((vae_dir / "results/metadata.json").read_text())
+    if not source["complete"] or not vae_source["complete"]:
+        raise ValueError("Completed dose-response and source VAE runs are required.")
+    artifacts = [a for a in source["artifacts"] if a["model"] == "structured"]
+    if sorted(a["seed"] for a in artifacts) != sorted(source["seeds"]):
+        raise ValueError("One structured artifact per source seed is required.")
+    results_dir = output_dir / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(cfg, results_dir / "resolved_config.yaml", resolve=True)
+    methods = list(cfg.integration.methods)
+    metadata = {
+        "complete": False,
+        "source_dose_response_run": str(source_dir),
+        "source_vae_run": str(vae_dir),
+        "source_vae_config": vae_source["config"],
+        "source_dose_response_config": source["config"],
+        "artifacts": artifacts,
+        "replicates": "Independent structured model fits and their generated cohorts; sample_seed is the source model seed.",
+        "seeds": source["seeds"], "alpha_values": source["alpha_values"],
+        "methods": methods,
+        "integration": OmegaConf.to_container(cfg.integration, resolve=True),
+        "evaluation": OmegaConf.to_container(cfg.evaluation, resolve=True),
+        "metric_protocol": "All four metrics use each method's embedding of A+B, in saved CSV row order; signed within-cell-type batch ASW and equal-weight k-neighbor LISI.",
+        "dependency_versions": _dependency_versions(),
+    }
+    _write_json(results_dir / "model_metadata.json", metadata)
+    # Evaluate null and mapped endpoint first, then the remaining strengths.
+    alphas = sorted(source["alpha_values"], key=lambda a: (a not in (0, 1), a))
+    method_metadata = []
+    rows = []
+    for artifact in artifacts:
+        seed = int(artifact["seed"])
+        for alpha in alphas:
+            X, batches, celltypes = _load_dose_task(
+                source_dir / artifact["generated"], float(alpha),
+                len(vae_source["genes"]), source["celltypes"],
+                int(source["config"]["generation"]["cells_per_type"]),
+            )
+            log.info("Integration seed=%d alpha=%g shape=%s", seed, alpha, X.shape)
+            results = run_integration_methods(
+                X, batches, methods,
+                n_components=int(cfg.integration.n_components), seed=seed,
+            )
+            for result in results:
+                row = _metric_row(result, seed, alpha, batches, celltypes,
+                                  int(cfg.evaluation.lisi_k))
+                rows.append(row)
+                _upsert_metric(results_dir / "metrics_long.csv", row)
+                _cache_integration_result(output_dir, seed, alpha, result)
+                method_metadata.append({"seed": seed, "alpha": alpha,
+                                        "method": result.method, "status": result.status,
+                                        "error": result.error, "metadata": result.metadata})
+                _write_json(results_dir / "method_metadata.json", method_metadata)
+                log.info("seed=%d alpha=%g method=%s status=%s batch_asw=%g ilisi=%g celltype_asw=%g clisi=%g",
+                         seed, alpha, result.method, result.status, row["batch_asw"],
+                         row["ilisi"], row["celltype_asw"], row["clisi"])
+    metrics = pd.DataFrame(rows)
+    expected_rows = len(artifacts) * len(alphas) * len(methods)
+    if len(metrics) != expected_rows or not metrics["status"].eq("success").all():
+        raise RuntimeError("Incomplete integration benchmark; see metrics_long.csv and method_metadata.json.")
+    _write_summary(metrics, results_dir / "metrics_summary.csv")
+    _plot_response_curves(metrics, results_dir / "batch_integration_response_curves.png",
+                          results_dir / "batch_integration_response_curves.pdf", int(cfg.figure.dpi))
+    metadata["complete"] = True
+    metadata["measurement_rows"] = len(metrics)
+    _write_json(results_dir / "model_metadata.json", metadata)
+    log.info("Benchmark complete: %d rows in %s", len(metrics), results_dir)
 
 
 @hydra.main(
@@ -920,6 +1035,9 @@ def _plot_response_curves(
     version_base="1.3",
 )
 def main(cfg: DictConfig) -> None:
+    if cfg.inputs.dose_response_run_dir is not None:
+        _run_saved_dose_benchmark(cfg, Path(HydraConfig.get().runtime.output_dir))
+        return
     _apply_smoke_overrides(cfg)
     if str(cfg.model.setting) != "classifier_plus_adversarial":
         raise ValueError(

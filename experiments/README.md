@@ -1,6 +1,9 @@
 # experiments/
 
 This directory contains all experiments for the scDeepSim project.
+<!-- 
+For the linked pancreas workflow, see [predictability, batch dose response, and
+batch correction](docs/structured_batch_experiments.md). -->
 
 ## Directory Structure
 
