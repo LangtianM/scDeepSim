@@ -1,7 +1,7 @@
 """Controlled de novo batch-integration benchmark.
 
 Benchmark four integration representations using saved structured dose-response
-cohorts, or train and generate cohorts in the standalone workflow.
+cohorts, fresh cohorts from a fixed simulator, or standalone training/generation.
 """
 
 from __future__ import annotations
@@ -955,6 +955,73 @@ def _load_dose_task(
     return np.vstack(matrices), batches, np.concatenate(labels)
 
 
+def _generate_fixed_cohorts(
+    source_dir: Path, source: dict, vae_source: dict, output_dir: Path,
+    model_seed: int, sample_seeds: list[int],
+) -> tuple[list[dict], dict]:
+    """Sample fresh datasets from one saved structured pair and batch map."""
+    from experiments.scripts.eval_batch_dose_response import (
+        decode_fixed, intervene, sample_cohorts,
+    )
+    from experiments.src.structured_intervention import inference_device
+
+    artifact = next(a for a in source["artifacts"]
+                    if a["model"] == "structured" and a["seed"] == model_seed)
+    source_cfg = OmegaConf.create(source["config"])
+    vae_path = Path(source["source_vae_run"]) / artifact["source_vae_checkpoint"]
+    diffusion_path = source_dir / artifact["diffusion_checkpoint"]
+    direction_path = diffusion_path.parent / "direction.npz"
+    with np.load(direction_path) as saved:
+        params = {key: saved[key] for key in ("A", "mu_ref", "mu_target")}
+    direction = {"method": str(source_cfg.generation.direction_method), "ot_params": params}
+    block = artifact["control_slice"]
+    slc = slice(block["start"], block["stop"])
+    np.savez_compressed(output_dir / "fixed_direction.npz", **params)
+    device = inference_device(source_cfg)
+    torch.set_num_threads(int(source_cfg.training.num_threads))
+    diffusion = LightningDiffusion.load_from_checkpoint(
+        diffusion_path, map_location="cpu", weights_only=False).to(device).eval()
+    vae = TruncatedNormalVAE.load_from_checkpoint(
+        vae_path, map_location="cpu", weights_only=False).to(device).eval()
+    fixed = {
+        "training_seed": model_seed, "vae_checkpoint": str(vae_path),
+        "diffusion_checkpoint": str(diffusion_path),
+        "source_direction": str(direction_path), "saved_direction": "fixed_direction.npz",
+        "control_slice": block, "device": str(device),
+        "sampling_seed_rule": "sample_seed * 10000 + cohort_index * 100 + celltype_index",
+        "decoder_seed_A": "sample_seed + 3000",
+        "decoder_seed_B": "sample_seed + 4000, reset before every alpha",
+    }
+    _write_json(output_dir / "results/fixed_simulator.json", fixed)
+    artifacts = []
+    for seed in sample_seeds:
+        generated = output_dir / f"generated/seed_{seed}/structured"
+        generated.mkdir(parents=True, exist_ok=True)
+        log.info("Sampling A/B: fixed training seed=%d, sampling seed=%d", model_seed, seed)
+        cohorts = sample_cohorts(diffusion, vae_source["encoders"], source_cfg, seed)
+        if not all(np.isfinite(cohorts[f"latents_{c}"]).all() for c in ("A", "B")):
+            raise ValueError(f"Non-finite fixed-simulator cohorts for sampling seed {seed}")
+        np.savez_compressed(generated / "cohorts.npz", **cohorts)
+        np.save(generated / "A.npy", decode_fixed(vae, cohorts["latents_A"], source_cfg, seed + 3000))
+        for cohort in ("A", "B"):
+            pd.DataFrame({
+                "cell_id": cohorts[f"cell_ids_{cohort}"], "celltype": cohorts["celltypes"],
+                "cohort": cohort, "model": "structured", "sample_seed": seed,
+                "training_seed": model_seed,
+            }).to_csv(generated / f"{cohort}_cells.csv", index=False)
+        for alpha in source["alpha_values"]:
+            shifted = intervene(cohorts["latents_B"], direction, float(alpha), slc)
+            np.save(generated / f"alpha_{alpha:g}_latents_B.npy", shifted)
+            np.save(generated / f"alpha_{alpha:g}_B.npy",
+                    decode_fixed(vae, shifted, source_cfg, seed + 4000))
+        artifacts.append({**artifact, "seed": seed, "training_seed": model_seed,
+                          "generated": str(generated.relative_to(output_dir)),
+                          "cohorts": str((generated / "cohorts.npz").relative_to(output_dir))})
+    diffusion.cpu()
+    vae.cpu()
+    return artifacts, fixed
+
+
 def _run_saved_dose_benchmark(cfg: DictConfig, output_dir: Path) -> None:
     """Evaluate the structured cohorts from a completed dose-response run."""
     source_dir = Path(cfg.inputs.dose_response_run_dir).resolve()
@@ -969,6 +1036,14 @@ def _run_saved_dose_benchmark(cfg: DictConfig, output_dir: Path) -> None:
     results_dir = output_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(cfg, results_dir / "resolved_config.yaml", resolve=True)
+    fixed = None
+    generated_root = source_dir
+    if cfg.inputs.fixed_model_seed is not None:
+        artifacts, fixed = _generate_fixed_cohorts(
+            source_dir, source, vae_source, output_dir,
+            int(cfg.inputs.fixed_model_seed), list(cfg.generation.sample_seeds),
+        )
+        generated_root = output_dir
     methods = list(cfg.integration.methods)
     metadata = {
         "complete": False,
@@ -977,8 +1052,13 @@ def _run_saved_dose_benchmark(cfg: DictConfig, output_dir: Path) -> None:
         "source_vae_config": vae_source["config"],
         "source_dose_response_config": source["config"],
         "artifacts": artifacts,
-        "replicates": "Independent structured model fits and their generated cohorts; sample_seed is the source model seed.",
-        "seeds": source["seeds"], "alpha_values": source["alpha_values"],
+        "replicates": (
+            "Independent generated datasets conditional on one fixed structured VAE/diffusion pair and map; sample_seed is the generation seed."
+            if fixed else "Independent structured model fits and their generated cohorts; sample_seed is the source model seed."
+        ),
+        "fixed_simulator": fixed,
+        "integration_seed": int(cfg.seed) if fixed else "sample_seed",
+        "seeds": [a["seed"] for a in artifacts], "alpha_values": source["alpha_values"],
         "methods": methods,
         "integration": OmegaConf.to_container(cfg.integration, resolve=True),
         "evaluation": OmegaConf.to_container(cfg.evaluation, resolve=True),
@@ -994,14 +1074,15 @@ def _run_saved_dose_benchmark(cfg: DictConfig, output_dir: Path) -> None:
         seed = int(artifact["seed"])
         for alpha in alphas:
             X, batches, celltypes = _load_dose_task(
-                source_dir / artifact["generated"], float(alpha),
+                generated_root / artifact["generated"], float(alpha),
                 len(vae_source["genes"]), source["celltypes"],
                 int(source["config"]["generation"]["cells_per_type"]),
             )
             log.info("Integration seed=%d alpha=%g shape=%s", seed, alpha, X.shape)
             results = run_integration_methods(
                 X, batches, methods,
-                n_components=int(cfg.integration.n_components), seed=seed,
+                n_components=int(cfg.integration.n_components),
+                seed=int(cfg.seed) if fixed else seed,
             )
             for result in results:
                 row = _metric_row(result, seed, alpha, batches, celltypes,
@@ -1035,6 +1116,8 @@ def _run_saved_dose_benchmark(cfg: DictConfig, output_dir: Path) -> None:
     version_base="1.3",
 )
 def main(cfg: DictConfig) -> None:
+    if cfg.inputs.fixed_model_seed is not None and cfg.inputs.dose_response_run_dir is None:
+        raise ValueError("inputs.fixed_model_seed requires inputs.dose_response_run_dir.")
     if cfg.inputs.dose_response_run_dir is not None:
         _run_saved_dose_benchmark(cfg, Path(HydraConfig.get().runtime.output_dir))
         return

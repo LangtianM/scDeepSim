@@ -2,9 +2,13 @@ seed: 42
 
 inputs:
   # Reuse the structured model's saved A/B expression and source seeds/alphas.
-  # The standalone data/model/training/generation settings below are then unused.
+  # Standalone settings below are unused except generation.sample_seeds when
+  # fixed_model_seed is set; integration/evaluation/figure settings stay active.
   # null retains the standalone training/generation workflow configured below.
   dose_response_run_dir: null
+  # With a dose-response source, freeze this training seed's structured pair/map
+  # and generate fresh cohorts using generation.sample_seeds. null reuses saved cohorts.
+  fixed_model_seed: null
 
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}

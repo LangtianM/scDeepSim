@@ -1,9 +1,9 @@
 # Predictability, batch dose response, and batch correction
 
 Run the stages in order: **paired VAEs and latent probes → conditional diffusion
-and dose response → integration benchmark on saved generated cells**.
+and dose response → integration benchmark with a fixed simulator**.
 The first two stages evaluate structured and plain models; the third uses the
-structured model's saved cohorts.
+structured VAE/diffusion pair and batch map from training seed 42.
 
 ## Setup
 
@@ -47,21 +47,33 @@ python experiments/scripts/eval_batch_dose_response.py \
 
 ### 3. Batch correction benchmark
 
-Run unintegrated PCA, ComBat, Harmony, and Scanorama on stage 2's saved structured
-A/B expression matrices. The source run supplies the models, genes, seeds, and
-strengths; standalone training/generation settings in the benchmark YAML are
-unused with this input. This stage performs no model training or generation.
+Freeze stage 2's structured VAE/diffusion pair and saved intervention map from
+training seed 42. Generate three independent A/B cohort pairs with sampling seeds
+42/43/44. Reuse each pair across all seven strengths, resetting decoder randomness
+to the same seed before each B decode. All four methods receive the same expression
+matrix at each replicate/strength; integration and PCA use `seed=42` throughout.
+The source run supplies the gene set, composition, sampling configuration, and
+strengths. This stage generates new cells without training or fitting another map.
 
 ```bash
 python experiments/scripts/benchmark_batch_integration.py \
   inputs.dose_response_run_dir="$SERIES_DIR/dose_response" \
-  hydra.run.dir="$SERIES_DIR/batch_integration"
+  inputs.fixed_model_seed=42 \
+  'generation.sample_seeds=[42,43,44]' seed=42 \
+  hydra.run.dir="$SERIES_DIR/batch_integration_fixed_seed42"
 ```
 
 To run only stage 3 on the completed unified experiment, set
 `SERIES_DIR="$PWD/experiments/outputs/structured_batch_intervention_unified_20260915"`
-and execute the stage 3 command. The completed September 21 benchmark is in
-`experiments/outputs/batch_integration_unified_20260921/`.
+and execute the stage 3 command with a fresh output directory. The completed
+fixed-simulator run is in `experiments/outputs/batch_integration_fixed_seed42_20260921/`;
+its [results summary](../outputs/batch_integration_fixed_seed42_20260921/results/paper_results.md)
+contains the numerical results and figure caption.
+
+The previous three-training-seed results remain in
+`experiments/outputs/batch_integration_unified_20260921/`. To use those source cohorts
+instead of generating from one fixed pair, omit `inputs.fixed_model_seed` and
+`generation.sample_seeds`; the source's model seeds then define the replicates.
 
 ## Resume, outputs, and figures
 
@@ -70,8 +82,8 @@ For stages 1 and 2, rerun the original command with
 `run.resume_dir="$SERIES_DIR/dose_response"`, respectively. Keep all original
 configuration overrides unchanged. Completed fits and saved measurements are
 reused; a fit interrupted before its final checkpoint is trained again.
-Stage 3 recomputes integration when rerun; use a new output directory when
-changing its source or settings. If changing training seeds, pass the same
+Stage 3 regenerates the fixed-pair cohorts and recomputes integration when rerun;
+use a new output directory to preserve an earlier result. If changing training seeds, pass the same
 `'run.seeds=[...]'` override to both stages 1 and 2.
 
 With the defaults, successful completion produces:
@@ -84,7 +96,10 @@ With the defaults, successful completion produces:
 
 Stages 1 and 2 set `complete: true` in `results/metadata.json`; stage 3 records
 completion in `results/model_metadata.json`. Each summary group has three
-replicates. Full model/data configurations are saved with the source runs.
+replicates. Stage 3 also saves checkpoint/map references and the decoder seed rule
+in `results/fixed_simulator.json`, the frozen map in `fixed_direction.npz`, and
+base latents, labels, intervened latents, and decoded expression under `generated/`.
+Full model/data configurations are saved with the source runs.
 
 For predictability and dose-response plots, open
 [`structured_batch_intervention.ipynb`](../notebooks/structured_batch_intervention.ipynb),
@@ -97,5 +112,7 @@ to export them. Stage 3 automatically writes the compact 1×4 figure as
 Dose-response ASW/LISI use fixed real-data PCA, with cell-type metrics on B only.
 The correction benchmark evaluates all four metrics on each method's 30-dimensional
 embedding of combined A+B. Batch ASW is signed (near zero indicates mixing).
-Benchmark bands show ±1 sample SD across the three model/cohort pairs;
-α > 1 extrapolates the fitted batch intervention.
+Fixed-simulator benchmark bands show ±1 sample SD across the three generated
+datasets, conditional on training seed 42's checkpoints and map. They measure
+generation variability, not variation across model fits. α > 1 extrapolates the
+fitted batch intervention.
