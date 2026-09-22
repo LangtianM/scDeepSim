@@ -53,7 +53,9 @@ training seed 42. Generate three independent A/B cohort pairs with sampling seed
 to the same seed before each B decode. All four methods receive the same expression
 matrix at each replicate/strength; integration and PCA use `seed=42` throughout.
 The source run supplies the gene set, composition, sampling configuration, and
-strengths. This stage generates new cells without training or fitting another map.
+strengths. This stage requires a completed dose-response run and always generates
+new cells from one fixed pair and map. The default training seed is 42, with
+sampling seeds 42/43/44.
 
 ```bash
 python experiments/scripts/benchmark_batch_integration.py \
@@ -70,10 +72,7 @@ fixed-simulator run is in `experiments/outputs/batch_integration_fixed_seed42_20
 its [results summary](../outputs/batch_integration_fixed_seed42_20260921/results/paper_results.md)
 contains the numerical results and figure caption.
 
-The previous three-training-seed results remain in
-`experiments/outputs/batch_integration_unified_20260921/`. To use those source cohorts
-instead of generating from one fixed pair, omit `inputs.fixed_model_seed` and
-`generation.sample_seeds`; the source's model seeds then define the replicates.
+Historical results remain in `experiments/outputs/batch_integration_unified_20260921/`.
 
 ## Resume, outputs, and figures
 

@@ -82,12 +82,17 @@ corrected-matrix orientation. Each adapter reports a structured failure instead
 of stopping the remaining benchmark tasks when an optional dependency is
 unavailable.
 
-Run the full benchmark or its reduced acceptance path with:
+Run the benchmark from a completed dose-response run. It fixes one structured
+VAE/diffusion pair and batch map (training seed 42), then generates three datasets
+with sampling seeds 42/43/44:
 
 ```bash
-python experiments/scripts/benchmark_batch_integration.py
-python experiments/scripts/benchmark_batch_integration.py smoke_test.enabled=true
+python experiments/scripts/benchmark_batch_integration.py \
+  inputs.dose_response_run_dir="$PWD/experiments/outputs/structured_batch_intervention_unified_20260915/dose_response"
 ```
+
+See the [experiment run guide](../docs/structured_batch_experiments.md) for the
+three-stage workflow and output conventions.
 
 ## Trajectory-Inference Benchmarking
 

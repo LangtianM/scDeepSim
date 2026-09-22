@@ -1,9 +1,12 @@
-"""Saved-cohort alignment and signed metrics for the integration benchmark."""
+"""Fixed-simulator generation, integration inputs, and metrics."""
+
+import json
 
 import numpy as np
 import pandas as pd
 import pytest
 import torch
+from hydra import compose, initialize_config_dir
 
 from experiments.scripts import benchmark_batch_integration as benchmark
 from experiments.scripts.benchmark_batch_integration import _load_dose_task, _metric_row
@@ -41,7 +44,7 @@ def test_metric_row_accepts_negative_signed_batch_asw():
     assert row["status"] == "success"
 
 
-def test_fixed_pair_reuses_map_and_matches_decoder_randomness(tmp_path, monkeypatch):
+def test_fixed_benchmark_reuses_pair_map_and_decoder_randomness(tmp_path, monkeypatch):
     class Diffusion(torch.nn.Module):
         def sample(self, num_samples, **kwargs):
             return torch.randn(num_samples, 4)
@@ -73,6 +76,9 @@ def test_fixed_pair_reuses_map_and_matches_decoder_randomness(tmp_path, monkeypa
     params = {"A": np.eye(2) * 2, "mu_ref": np.zeros(2), "mu_target": np.ones(2)}
     np.savez_compressed(model_dir / "direction.npz", **params)
     source = {
+        "complete": True,
+        "seeds": [42, 43, 44],
+        "celltypes": ["alpha", "beta"],
         "source_vae_run": str(source_dir / "vae"),
         "alpha_values": [0, 0.25, 0.5, 0.75, 1, 1.5, 2],
         "config": {
@@ -87,9 +93,48 @@ def test_fixed_pair_reuses_map_and_matches_decoder_randomness(tmp_path, monkeypa
                        "diffusion_checkpoint": "models/seed_42/structured/diffusion.ckpt",
                        "control_slice": {"start": 1, "stop": 3}}],
     }
-    vae_source = {"encoders": {"celltype": ["alpha", "beta"], "batch": ["inDrop3"]}}
-    artifacts, fixed = benchmark._generate_fixed_cohorts(
-        source_dir, source, vae_source, output, 42, [42, 43, 44])
+    vae_source = {
+        "complete": True, "config": {}, "genes": ["g1", "g2", "g3", "g4"],
+        "encoders": {"celltype": ["alpha", "beta"], "batch": ["inDrop3"]},
+    }
+    benchmark._write_json(source_dir / "results/metadata.json", source)
+    benchmark._write_json(source_dir / "vae/results/metadata.json", vae_source)
+    with initialize_config_dir(config_dir=str(benchmark.root / "experiments/configs"), version_base="1.3"):
+        cfg = compose(config_name="benchmark_batch_integration")
+    cfg.inputs.dose_response_run_dir = str(source_dir)
+    cfg.evaluation.lisi_k = 3
+
+    inputs = []
+
+    def adapter(method):
+        def run(X, batches, **kwargs):
+            inputs.append((method, X, batches, kwargs["seed"]))
+            return IntegrationResult(method, X[:, :2], "success", 0, {}, None)
+        return run
+
+    for method, name in [("unintegrated", "run_unintegrated_pca"),
+                         ("combat", "run_combat"), ("harmony", "run_harmony"),
+                         ("scanorama", "run_scanorama")]:
+        monkeypatch.setattr(benchmark, name, adapter(method))
+
+    benchmark._run_fixed_benchmark(cfg, output)
+    metadata = json.loads((output / "results/model_metadata.json").read_text())
+    artifacts, fixed = metadata["artifacts"], metadata["fixed_simulator"]
+    assert metadata["complete"] and metadata["measurement_rows"] == 84
+    assert metadata["integration_seed"] == 42
+    assert len(inputs) == 84
+    for i in range(0, len(inputs), 4):
+        group = inputs[i:i + 4]
+        assert [entry[0] for entry in group] == list(cfg.integration.methods)
+        assert all(entry[1] is group[0][1] and entry[2] is group[0][2] for entry in group)
+        assert all(entry[3] == 42 for entry in group)
+    metrics = pd.read_csv(output / "results/metrics_long.csv")
+    summary = pd.read_csv(output / "results/metrics_summary.csv")
+    assert len(metrics) == 84 and len(summary) == 28
+    assert summary["batch_asw_count"].eq(3).all()
+    for row in summary.itertuples():
+        values = metrics.loc[(metrics.alpha == row.alpha) & (metrics.method == row.method), "batch_asw"]
+        assert row.batch_asw_std == pytest.approx(np.std(values, ddof=1))
     assert len(loaded) == 2 and all("seed_42/structured" in path for path in loaded)
     assert fixed["training_seed"] == 42
     assert [a["seed"] for a in artifacts] == [42, 43, 44]
