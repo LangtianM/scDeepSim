@@ -1,4 +1,4 @@
-"""Train paired pancreas VAEs and measure within-dataset latent predictability.
+"""Train paired VAEs and measure within-dataset latent predictability.
 
 Usage:
     python experiments/scripts/latent_predictability.py
@@ -70,6 +70,9 @@ def load_and_preprocess(cfg):
             raise ValueError(f"Missing counts layer: {counts_layer}")
         adata.X = adata.layers[counts_layer].copy()
 
+    adata.layers.clear()
+    adata.raw = None
+
     sc.pp.filter_cells(adata, min_genes=cfg.data.min_genes)
     sc.pp.filter_genes(adata, min_cells=cfg.data.min_cells)
 
@@ -106,6 +109,17 @@ def load_and_preprocess(cfg):
     log.info("Loaded data shape: %s", adata.shape)
     log.info("Cell type classes: %d", adata.obs["celltype"].nunique())
     log.info("Batch classes: %d", adata.obs["batch"].nunique())
+    return adata
+
+
+def training_data(loaded, cfg):
+    """Retain model labels and the observations needed for matched contrasts."""
+    columns = list(dict.fromkeys(["celltype", "batch", *cfg.data.get("obs_columns", [])]))
+    adata = AnnData(X=as_dense(loaded.X).astype(np.float32, copy=False),
+                    obs=loaded.obs[columns].copy(), var=loaded.var.copy())
+    for target in ("celltype", "batch"):
+        encoder = LabelEncoder().fit(adata.obs[target])
+        adata.obs[f"{target}_code"] = encoder.transform(adata.obs[target])
     return adata
 
 
@@ -240,11 +254,8 @@ def main(cfg: DictConfig):
         adata = sc.read_h5ad(data_path)
     else:
         loaded = load_and_preprocess(cfg)
-        adata = AnnData(X=as_dense(loaded.X).astype(np.float32),
-                        obs=loaded.obs[["celltype", "batch"]].copy(), var=loaded.var.copy())
-        for target in ("celltype", "batch"):
-            encoder = LabelEncoder().fit(adata.obs[target])
-            adata.obs[f"{target}_code"] = encoder.transform(adata.obs[target])
+        adata = training_data(loaded, cfg)
+        del loaded
         data_path.parent.mkdir(parents=True, exist_ok=True)
         adata.write_h5ad(data_path, compression="gzip")
     encoders = {name: sorted(adata.obs[name].astype(str).unique().tolist())

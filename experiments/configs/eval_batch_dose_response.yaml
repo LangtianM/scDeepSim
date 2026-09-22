@@ -30,6 +30,8 @@ generation:
   source_batch: inDrop3
   target_batch: smartseq2
   celltypes: [acinar, activated_stellate, alpha, beta, delta, ductal]
+  match_obs_keys: []
+  min_matched_cells: 2
   cells_per_type: 500
   direction_seed: 42
   direction_method: whitening_recoloring
@@ -38,6 +40,7 @@ generation:
   decode_batch_size: 1024
 
 evaluation:
+  per_celltype: false
   # Batch ASW: signed silhouette within each cell type, averaged equally across types.
   alpha_values: [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
   lisi_k: 30

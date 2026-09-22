@@ -16,6 +16,7 @@ data:
   celltype_key: celltype
   batch_key: tech
   counts_layer: counts
+  obs_columns: []
 
 vae:
   latent_dim: 128

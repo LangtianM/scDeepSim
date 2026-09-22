@@ -14,10 +14,6 @@ columns `celltype` and `tech`. The benchmark also needs `harmonypy==0.0.10` and
 
 ```bash
 conda activate lightning
-export NUMBA_CACHE_DIR="${TMPDIR:-/tmp}/scdeepsim_numba_cache"
-export MPLCONFIGDIR="${TMPDIR:-/tmp}/scdeepsim_matplotlib"
-export OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4 MKL_NUM_THREADS=4
-export NUMBA_NUM_THREADS=4 VECLIB_MAXIMUM_THREADS=4
 SERIES_DIR="$PWD/experiments/outputs/structured_batch_intervention_$(date +%Y%m%d_%H%M%S)"
 ```
 

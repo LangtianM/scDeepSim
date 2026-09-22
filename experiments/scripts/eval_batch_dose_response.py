@@ -1,4 +1,4 @@
-"""Generate full-pipeline paired batch interventions from saved pancreas VAEs.
+"""Generate full-pipeline paired batch interventions from saved paired VAEs.
 
 Usage:
     python experiments/scripts/eval_batch_dose_response.py inputs.vae_run_dir=/absolute/latent_run
@@ -29,6 +29,7 @@ import torch
 from anndata import AnnData
 from omegaconf import DictConfig
 from sklearn.decomposition import PCA
+from sklearn.metrics import silhouette_samples
 
 from experiments.src.batch_control import apply_direction, compute_global_direction
 from experiments.src.batch_metrics import (
@@ -45,6 +46,7 @@ from scdeepsim.truncated_normal_vae import TruncatedNormalVAE
 
 log = logging.getLogger(__name__)
 METRICS = ["batch_asw", "ilisi", "celltype_asw", "clisi", "celltype_rf_bal_acc", "celltype_rf_acc"]
+PER_TYPE_METRICS = ["batch_asw", "ilisi_within_celltype", "celltype_asw"]
 
 
 def build_diffusion(latent_dim, cardinalities, cfg):
@@ -61,21 +63,64 @@ def build_diffusion(latent_dim, cardinalities, cfg):
     )
 
 
+def direction_strata(adata, cfg):
+    """List real source/target indices within cell type and optional covariates."""
+    keys = ["celltype", *cfg.generation.get("match_obs_keys", [])]
+    observations = adata.obs[keys].astype(str)
+    batches = adata.obs.batch.astype(str).to_numpy()
+    groups = observations.groupby(keys, observed=True, sort=True).indices
+    strata = []
+    for values, indices in groups.items():
+        values = values if isinstance(values, tuple) else (values,)
+        source = indices[batches[indices] == str(cfg.generation.source_batch)]
+        target = indices[batches[indices] == str(cfg.generation.target_batch)]
+        strata.append((dict(zip(keys, values)), source, target))
+    return strata
+
+
+def direction_support(adata, cfg):
+    """Count available and composition-matched real cells for every stratum."""
+    return pd.DataFrame([
+        {**labels, "source_count": len(source), "target_count": len(target),
+         "matched_count": min(len(source), len(target))}
+        for labels, source, target in direction_strata(adata, cfg)
+    ])
+
+
+def resolve_celltypes(adata, cfg):
+    """Resolve uncapped shared cell types using post-QC matched support."""
+    support = direction_support(adata, cfg)
+    counts = support.groupby("celltype", sort=True).matched_count.sum()
+    minimum = int(cfg.generation.get("min_matched_cells", 2))
+    if cfg.generation.celltypes is None:
+        cfg.generation.celltypes = counts[counts >= minimum].index.tolist()
+    if len(cfg.generation.celltypes) < 2:
+        raise ValueError("Dose response requires at least two shared cell types.")
+    for celltype in cfg.generation.celltypes:
+        if counts.get(str(celltype), 0) < minimum:
+            raise ValueError(f"Insufficient shared cells for {celltype}")
+    support["included"] = support.celltype.isin(list(cfg.generation.celltypes))
+    return support
+
+
 def matched_direction_indices(adata, cfg):
-    """Select one composition-matched real contrast shared by all fitted VAEs."""
+    """Select a real contrast with identical composition in every stratum."""
     rng = np.random.default_rng(int(cfg.generation.direction_seed))
     source, target, counts = [], [], {}
+    strata = direction_strata(adata, cfg)
     for celltype in cfg.generation.celltypes:
-        source_candidates = np.flatnonzero(
-            (adata.obs.celltype == celltype) & (adata.obs.batch == cfg.generation.source_batch))
-        target_candidates = np.flatnonzero(
-            (adata.obs.celltype == celltype) & (adata.obs.batch == cfg.generation.target_batch))
-        n = min(len(source_candidates), len(target_candidates))
-        if n < 2:
-            raise ValueError(f"Insufficient shared cells for {celltype}: {n}")
-        source.extend(rng.choice(source_candidates, n, replace=False))
-        target.extend(rng.choice(target_candidates, n, replace=False))
-        counts[str(celltype)] = n
+        count = 0
+        for labels, source_candidates, target_candidates in strata:
+            if labels["celltype"] != str(celltype):
+                continue
+            n = min(len(source_candidates), len(target_candidates))
+            if n:
+                source.extend(rng.choice(source_candidates, n, replace=False))
+                target.extend(rng.choice(target_candidates, n, replace=False))
+                count += n
+        if count < int(cfg.generation.get("min_matched_cells", 2)):
+            raise ValueError(f"Insufficient shared cells for {celltype}: {count}")
+        counts[str(celltype)] = count
     return np.asarray(source), np.asarray(target), counts
 
 
@@ -150,6 +195,25 @@ def decode_fixed(vae, latents, cfg, seed):
     return x
 
 
+def evaluate_celltypes(x_a, x_b, labels, pca, cfg):
+    """Report within-type batch mixing and each type's global biological ASW."""
+    pc_a, pc_b = pca.transform(x_a), pca.transform(x_b)
+    biology = silhouette_samples(pc_b, labels)
+    rows = []
+    for celltype in sorted(np.unique(labels)):
+        mask = labels == celltype
+        combined = np.vstack([pc_a[mask], pc_b[mask]])
+        batches = np.repeat(["A", "B"], int(mask.sum()))
+        rows.append({
+            "celltype": str(celltype), "cells_per_cohort": int(mask.sum()),
+            "batch_asw": batch_asw_within_celltype(
+                combined, batches, np.repeat(celltype, len(combined))),
+            "ilisi_within_celltype": ilisi(combined, batches, k=int(cfg.evaluation.lisi_k)),
+            "celltype_asw": float(biology[mask].mean()),
+        })
+    return rows
+
+
 @hydra.main(config_path="../configs", config_name="eval_batch_dose_response", version_base="1.3")
 def main(cfg: DictConfig):
     source_dir = Path(cfg.inputs.vae_run_dir).resolve()
@@ -163,6 +227,8 @@ def main(cfg: DictConfig):
         raise ValueError("Incomplete source checkpoint index.")
     if str(cfg.generation.direction_method) != "whitening_recoloring":
         raise ValueError("This experiment uses the frozen whitening-recoloring design.")
+    adata = sc.read_h5ad(source_dir / source["data"])
+    support = resolve_celltypes(adata, cfg)
     output, config = prepare_run(cfg, [
         "experiments/scripts/eval_batch_dose_response.py", "experiments/configs/eval_batch_dose_response.yaml",
         "experiments/src/structured_intervention.py", "experiments/src/batch_control.py",
@@ -173,7 +239,7 @@ def main(cfg: DictConfig):
         raise ValueError("Source VAE metadata changed since this dose-response run.")
     write_json(source_snapshot, source)
     torch.set_num_threads(int(cfg.training.num_threads))
-    adata = sc.read_h5ad(source_dir / source["data"])
+    save_table(support, output / "results/direction_support")
     if adata.obs_names.tolist() != source["cell_ids"] or adata.var_names.tolist() != source["genes"]:
         raise ValueError("Source cells or genes do not match the VAE metadata.")
     pca_path = output / "data/real_pca.joblib"
@@ -190,6 +256,7 @@ def main(cfg: DictConfig):
         "complete": False, "config": config, "source_vae_run": str(source_dir),
         "models": list(MODELS), "seeds": seeds, "alpha_values": list(cfg.evaluation.alpha_values),
         "celltypes": list(cfg.generation.celltypes), "matched_counts": counts,
+        "match_obs_keys": list(cfg.generation.get("match_obs_keys", [])),
         "source_cell_ids": adata.obs_names[src].tolist(), "target_cell_ids": adata.obs_names[dst].tolist(),
         "pca": "data/real_pca.joblib", "pca_fit": "shared_real_expression_unscaled",
         "metric_protocol": {"batch": "A+B", "biology": "B", "rf": "refit_within_each_alpha"},
@@ -197,6 +264,7 @@ def main(cfg: DictConfig):
     }
     write_json(output / "results/metadata.json", metadata)
     all_rows = []
+    all_type_rows = []
     for artifact in artifacts:
         seed, name = int(artifact["seed"]), artifact["model"]
         log.info("Dose-response seed=%d model=%s", seed, name)
@@ -268,6 +336,19 @@ def main(cfg: DictConfig):
                     raise ValueError(f"Non-finite dose metrics for {name}/{seed}/{alpha}")
                 write_json(metric_path, row)
             all_rows.append(row)
+            if cfg.evaluation.get("per_celltype", False):
+                type_path = decoded_dir / f"{stem}_celltype_metrics.json"
+                if type_path.exists():
+                    type_rows = json.loads(type_path.read_text())
+                else:
+                    x_b = np.load(decoded_dir / f"{stem}_B.npy", mmap_mode="r")
+                    type_rows = [{"model": name, "seed": seed, "alpha": alpha, **values}
+                                 for values in evaluate_celltypes(x_a, x_b, cohorts["celltypes"], pca, cfg)]
+                    if not np.isfinite(pd.DataFrame(type_rows)[PER_TYPE_METRICS].to_numpy()).all():
+                        raise ValueError("Non-finite per-cell-type dose metrics.")
+                    write_json(type_path, type_rows)
+                all_type_rows.extend(type_rows)
+                save_table(pd.DataFrame(all_type_rows), output / "results/dose_response_celltype_metrics")
             save_table(pd.DataFrame(all_rows), output / "results/dose_response_metrics")
             log.info("seed=%d model=%s alpha=%g %s", seed, name, alpha,
                      {k: round(row[k], 4) for k in METRICS})
@@ -287,6 +368,10 @@ def main(cfg: DictConfig):
     if not summary.n_replicates.eq(len(seeds)).all():
         raise ValueError("Incomplete dose-response replicate groups.")
     save_table(summary, output / "results/dose_response_summary")
+    if all_type_rows:
+        per_type = aggregate_metrics(pd.DataFrame(all_type_rows),
+                                     ["model", "alpha", "celltype"], PER_TYPE_METRICS)
+        save_table(per_type, output / "results/dose_response_celltype_summary")
     metadata["complete"] = True
     write_json(output / "results/metadata.json", metadata)
     log.info("Completed %d dose-response rows: %s", len(frame), output)

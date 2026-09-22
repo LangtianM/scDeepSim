@@ -1,0 +1,26 @@
+training:
+  accelerator: mps
+  num_threads: 4
+
+datasets:
+  immune:
+    data_path: data/Immune_ALL_human.h5ad
+    celltype_key: final_annotation
+    batch_key: batch
+    source_batch: '10X'
+    target_batch: Freytag
+    match_obs_keys: []
+  lung:
+    data_path: data/Lung_atlas_public.h5ad
+    celltype_key: cell_type
+    batch_key: batch
+    source_batch: '4'
+    target_batch: '5'
+    match_obs_keys: []
+  embryo:
+    data_path: data/HVG_embryoatlas.h5ad
+    celltype_key: celltype
+    batch_key: sequencing.batch
+    source_batch: '2'
+    target_batch: '3'
+    match_obs_keys: [stage]
