@@ -54,8 +54,27 @@ record post-QC populations and real matched support.
 
 Successful completion requires 36 predictability rows and 42 aggregate
 dose-response rows per dataset, with three replicates per summary group, finite
-metrics, and completed 200-epoch fits. PNG/PDF figures are produced per dataset
-and for the combined dose-response comparison.
+metrics, and completed 200-epoch fits. Each dataset produces two separate figures:
+latent predictability and dose response, each saved as PNG and PDF.
+
+Regenerate figures from saved measurements without retraining:
+
+```bash
+python experiments/scripts/plot_structured_batch_datasets.py \
+  experiments/outputs/structured_batch_multidataset_unified_20260921/immune
+```
+
+The input is one dataset directory containing `latent_predictability/` and
+`dose_response/`. Outputs are `figures/latent_predictability.{png,pdf}` and
+`figures/dose_response.{png,pdf}` inside that directory. Run the command separately
+for `immune`, `lung`, and `embryo` to produce six figures in total. Use
+`--batch-label "Technology batch"` to customize the heatmap's batch label.
+
+The figures use the layout, sizes, fonts, colors, markers, legends,
+replicate points, and sample-SD bands from
+`experiments/notebooks/structured_batch_intervention.ipynb`. Predictability uses
+a structured-model heatmap with plain-model annotations and random baselines;
+dose response uses two panels with secondary LISI axes.
 
 Per-type outputs report signed batch ASW, iLISI computed within that type, and
 the mean of its cells' silhouettes in the full B cell-type comparison. Global

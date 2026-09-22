@@ -1,108 +1,173 @@
-"""Render completed unified dataset runs with mean and sample SD across seeds."""
+"""Render predictability and dose response for one dataset in the notebook format."""
 
 import argparse
+import json
 from pathlib import Path
 
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
-COLORS = {"structured": "#286FAD", "plain": "#D97A32"}
-METRICS = {"batch_asw": "Signed within-cell-type batch ASW", "ilisi": "iLISI",
-           "celltype_asw": "Cell-type ASW", "clisi": "cLISI",
-           "celltype_rf_bal_acc": "Cell-type RF balanced accuracy",
-           "celltype_rf_acc": "Cell-type RF accuracy"}
+HEATMAP_SIZE = (10, 5.5)
+DOSE_SIZE = (13, 5.5)
+FONT_SIZE = 10
+plt.rcParams.update({"font.size": FONT_SIZE, "axes.spines.top": False})
 
 
 def save(fig, directory, name):
     directory.mkdir(parents=True, exist_ok=True)
-    fig.savefig(directory / f"{name}.png", dpi=180, bbox_inches="tight")
-    fig.savefig(directory / f"{name}.pdf", bbox_inches="tight")
+    fig.savefig(directory / f"{name}.png", dpi=180)
+    fig.savefig(directory / f"{name}.pdf")
     plt.close(fig)
 
 
-def curve(ax, summary, metric):
-    for model, color in COLORS.items():
-        rows = summary[summary.model == model].sort_values("alpha")
-        x, y, sd = (rows[column].to_numpy() for column in
-                    ("alpha", f"{metric}_mean", f"{metric}_sd"))
-        ax.plot(x, y, marker="o", markersize=3, label=model, color=color)
-        ax.fill_between(x, y - sd, y + sd, alpha=0.16, color=color)
-    ax.set(xlabel="Intervention strength α", ylabel=METRICS[metric])
-    ax.spines[["top", "right"]].set_visible(False)
+BLOCKS = ['z_celltype', 'z_batch', 'z_residual']
+BLOCK_NAMES = ['Cell-type', 'Batch', 'Residual block']
+TARGETS = ['celltype', 'batch']
+BLOCK_COLORS = ['#8dd3c7', '#bebada', '#fb8072']
 
 
-def render_dataset(directory):
+def mean_sd(mean, sd):
+    return f'{mean:.3f}' if pd.isna(sd) else f'{mean:.3f} ± {sd:.3f}'
+
+
+def draw_predictability(fig, predictability_summary, batch_label='Batch'):
+    heat_stats = predictability_summary.set_index(['model', 'label', 'subspace'])
+    target_names = ['Cell type', batch_label]
+    grid = fig.add_gridspec(2, 2, height_ratios=[0.65, 2], width_ratios=[1, 0.04],
+                           left=0.29, right=0.91, bottom=0.13, top=0.85,
+                           hspace=0.10, wspace=0.07)
+    schematic = fig.add_subplot(grid[0, 0])
+    ax = fig.add_subplot(grid[1, 0])
+    for column, block in enumerate(BLOCKS):
+        schematic.add_patch(plt.Rectangle((column, 0), 1, 1, color=BLOCK_COLORS[column]))
+        schematic.text(column + 0.5, 0.5, f'{BLOCK_NAMES[column]}',
+                       ha='center', va='center', fontsize=FONT_SIZE)
+    schematic.set(xlim=(0, 3), ylim=(0, 1))
+    schematic.axis('off')
+    matrix = np.array([[heat_stats.loc[('structured', target, block), 'balanced_accuracy_mean']
+                        for block in BLOCKS] for target in TARGETS])
+    mesh = ax.pcolormesh(np.arange(4), np.arange(3), matrix, vmin=0, vmax=1,
+                         cmap='viridis', edgecolors='white', linewidth=1)
+    row_labels = []
+    for row, target in enumerate(TARGETS):
+        reference = heat_stats.loc[('structured', target, BLOCKS[0])]
+        row_labels.append(f"{target_names[row]}\nRandom: {reference['random_ba_mean']:.3f}\n"
+                          )
+        for column, block in enumerate(BLOCKS):
+            structured = heat_stats.loc[('structured', target, block)]
+            plain = heat_stats.loc[('plain', target, block)]
+            annotation = mean_sd(structured['balanced_accuracy_mean'], structured['balanced_accuracy_sd'])
+            annotation += '\nPlain: ' + mean_sd(plain['balanced_accuracy_mean'], plain['balanced_accuracy_sd'])
+            color = 'white' if matrix[row, column] < 0.55 else 'black'
+            ax.text(column + 0.5, row + 0.5, annotation, ha='center', va='center',
+                    color=color, fontsize=FONT_SIZE - 1)
+    ax.set(xticks=np.arange(3) + 0.5, xticklabels=['Cell type', 'Batch', 'Residual'],
+           yticks=np.arange(2) + 0.5, yticklabels=row_labels, xlabel='Latent coordinate block')
+    ax.invert_yaxis()
+    ax.tick_params(length=0)
+    cbar = fig.colorbar(mesh, cax=fig.add_subplot(grid[1, 1]))
+    cbar.set_label('Structured mean balanced accuracy')
+
+
+METRIC_STYLES = {
+    'batch_asw': ('Batch ASW', '#009E73', 'o'),
+    'ilisi': ('iLISI', '#D55E00', 's'),
+    'celltype_asw': ('CT ASW', '#8E44AD', '^'),
+    'celltype_rf_bal_acc': ('CT RF balanced accuracy', '#0072B2', 'D'),
+    'clisi': ('cLISI', '#E69F00', 'v'),
+}
+MODEL_STYLES = {'structured': ('Structured VAE + diffusion', '-'),
+                'plain': ('Plain VAE + diffusion', '--')}
+
+
+def draw_curve(ax, metric, dose, dose_summary):
+    label, color, marker = METRIC_STYLES[metric]
+    for model, (_, line_style) in MODEL_STYLES.items():
+        summary = dose_summary[dose_summary['model'] == model].sort_values('alpha')
+        x = summary['alpha'].to_numpy()
+        mean = summary[f'{metric}_mean'].to_numpy()
+        sd = summary[f'{metric}_sd'].to_numpy()
+        ax.plot(x, mean, color=color, linestyle=line_style, marker=marker,
+                markersize=4, linewidth=1.7,
+                markerfacecolor=color if model == 'structured' else 'white')
+        if np.isfinite(sd).all():
+            ax.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.09)
+        raw = dose[dose['model'] == model]
+        ax.scatter(raw['alpha'], raw[metric], s=13, marker=marker,
+                   facecolors=color if model == 'structured' else 'none',
+                   edgecolors=color, alpha=0.45, linewidths=0.7)
+
+
+def draw_dose_response(fig, dose, dose_summary, dose_metadata):
+    grid = fig.add_gridspec(1, 2, left=0.09, right=0.91, bottom=0.25, top=0.82, wspace=0.65)
+    batch_ax, bio_ax = fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1])
+    ilisi_ax, clisi_ax = batch_ax.twinx(), bio_ax.twinx()
+    for axis, metric in [(batch_ax, 'batch_asw'), (ilisi_ax, 'ilisi'),
+                         (bio_ax, 'celltype_asw'), (bio_ax, 'celltype_rf_bal_acc'),
+                         (clisi_ax, 'clisi')]:
+        draw_curve(axis, metric, dose, dose_summary)
+    batch_ax.set(title='Batch separation', ylabel='Batch ASW')
+    ilisi_ax.set_ylabel('iLISI', color=METRIC_STYLES['ilisi'][1])
+    bio_ax.set(title='Biological preservation', ylabel='CT ASW / RF balanced accuracy')
+    clisi_ax.set_ylabel('cLISI', color=METRIC_STYLES['clisi'][1])
+    for axis in (batch_ax, bio_ax):
+        axis.set_xlabel(r'Intervention strength $\alpha$')
+        axis.set_xticks(dose_metadata['alpha_values'])
+        axis.axvline(1, color='0.5', linewidth=0.8, linestyle=':')
+        axis.grid(alpha=0.15)
+    for axis, metrics in [(batch_ax, ['batch_asw', 'ilisi']),
+                          (bio_ax, ['celltype_asw', 'celltype_rf_bal_acc', 'clisi'])]:
+        handles = [Line2D([], [], color=METRIC_STYLES[m][1], marker=METRIC_STYLES[m][2],
+                          linestyle='', label=METRIC_STYLES[m][0]) for m in metrics]
+        axis.legend(handles=handles, loc='upper center', bbox_to_anchor=(0.5, -0.23),
+                    ncol=1, frameon=False, fontsize=FONT_SIZE - 1, handletextpad=0.4)
+    handles = [Line2D([], [], color='0.2', linestyle=style, label=label)
+               for label, style in MODEL_STYLES.values()]
+    fig.legend(handles=handles, loc='upper center', bbox_to_anchor=(0.5, 0.97), ncol=2, frameon=False)
+
+
+def load_results(directory):
+    vae_run = directory / "latent_predictability"
+    dose_run = directory / "dose_response"
+    vae_metadata = json.loads((vae_run / "results/metadata.json").read_text())
+    dose_metadata = json.loads((dose_run / "results/metadata.json").read_text())
+    latent = pd.read_csv(vae_run / "results/latent_predictability_summary.csv")
+    dose = pd.read_csv(dose_run / "results/dose_response_metrics.csv")
+    summary = pd.read_csv(dose_run / "results/dose_response_summary.csv")
+    assert vae_metadata["complete"] and dose_metadata["complete"]
+    assert Path(dose_metadata["source_vae_run"]).resolve() == vae_run.resolve()
+    assert vae_metadata["seeds"] == dose_metadata["seeds"]
+    assert latent["n_replicates"].eq(len(vae_metadata["seeds"])).all()
+    assert summary["n_replicates"].eq(len(vae_metadata["seeds"])).all()
+    return latent, vae_metadata, dose, summary, dose_metadata
+
+
+def render_dataset(directory, results, batch_label="Batch"):
+    latent, vae_metadata, dose, summary, dose_metadata = results
     figures = directory / "figures"
-    latent = pd.read_csv(directory / "latent_predictability/results/latent_predictability_summary.csv")
-    fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), constrained_layout=True)
-    order = pd.MultiIndex.from_product([COLORS, ["z_celltype", "z_batch", "z_residual"]],
-                                       names=["model", "subspace"])
-    for ax, target in zip(axes, ["celltype", "batch"]):
-        rows = latent[latent.label == target].set_index(["model", "subspace"]).reindex(order)
-        means = rows.balanced_accuracy_mean.to_numpy().reshape(2, 3)
-        sd = rows.balanced_accuracy_sd.to_numpy().reshape(2, 3)
-        im = ax.imshow(means, vmin=0, vmax=1, cmap="Blues", aspect="auto")
-        for i, j in np.ndindex(means.shape):
-            ax.text(j, i, f"{means[i, j]:.3f}\n±{sd[i, j]:.3f}", ha="center", va="center",
-                    color="white" if means[i, j] > 0.6 else "black", fontsize=9)
-        ax.set(xticks=range(3), xticklabels=["Cell type", "Batch", "Residual"],
-               yticks=range(2), yticklabels=list(COLORS), title=f"{target} predictability",
-               xlabel="Latent subspace")
-    fig.colorbar(im, ax=axes, label="RF balanced accuracy")
-    fig.suptitle(f"{directory.name}: within-dataset latent predictability (mean ± SD, n=3)")
+    fig = plt.figure(figsize=HEATMAP_SIZE)
+    draw_predictability(fig, latent, batch_label)
+    fig.suptitle("Covariate predictability from latent blocks", y=0.97)
     save(fig, figures, "latent_predictability")
 
-    summary = pd.read_csv(directory / "dose_response/results/dose_response_summary.csv")
-    fig, axes = plt.subplots(2, 3, figsize=(13, 7), constrained_layout=True)
-    for ax, metric in zip(axes.flat, METRICS):
-        curve(ax, summary, metric)
-    axes[0, 0].legend(frameon=False)
-    fig.suptitle(f"{directory.name}: batch dose response (mean ± SD, n=3)")
+    fig = plt.figure(figsize=DOSE_SIZE)
+    draw_dose_response(fig, dose, summary, dose_metadata)
     save(fig, figures, "dose_response")
 
-    per_type = pd.read_csv(directory / "dose_response/results/dose_response_celltype_summary.csv")
-    support = pd.read_csv(directory / "dose_response/results/direction_support.csv")
-    counts = support.groupby("celltype").matched_count.sum()
-    types = sorted(per_type.celltype.unique())
-    metrics = ["batch_asw", "ilisi_within_celltype", "celltype_asw"]
-    fig, axes = plt.subplots(1, 6, figsize=(20, max(5, len(types) * 0.32)), constrained_layout=True)
-    for ax, (model, metric) in zip(axes, [(m, k) for m in COLORS for k in metrics]):
-        rows = per_type[per_type.model == model]
-        matrix = rows.pivot(index="celltype", columns="alpha", values=f"{metric}_mean").reindex(types)
-        limits = (1, 2) if metric == "ilisi_within_celltype" else (-1, 1)
-        im = ax.imshow(matrix, aspect="auto", vmin=limits[0], vmax=limits[1],
-                       cmap="viridis" if metric == "ilisi_within_celltype" else "RdBu_r")
-        ax.set(xticks=range(len(matrix.columns)), xticklabels=matrix.columns,
-               title=f"{model}\n{metric}", xlabel="α", yticks=range(len(types)),
-               yticklabels=[f"{t} (n={counts[t]})" for t in types] if ax is axes[0] else [])
-        ax.tick_params(axis="x", labelrotation=90)
-        fig.colorbar(im, ax=ax, shrink=0.5)
-    fig.suptitle(f"{directory.name}: per-type means; n is matched real cells per batch")
-    save(fig, figures, "dose_response_celltypes")
-    return summary
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("output", type=Path)
-    output = parser.parse_args().output.resolve()
-    completed = {}
-    for name in ["immune", "lung", "embryo"]:
-        directory = output / name
-        if (directory / "dose_response/results/dose_response_summary.csv").exists():
-            completed[name] = render_dataset(directory)
-    if completed:
-        fig, axes = plt.subplots(len(completed), 4, figsize=(16, 3.4 * len(completed)),
-                                 squeeze=False, constrained_layout=True)
-        for row, (name, summary) in zip(axes, completed.items()):
-            for ax, metric in zip(row, list(METRICS)[:4]):
-                curve(ax, summary, metric)
-                ax.set_title(name)
-        axes[0, 0].legend(frameon=False)
-        save(fig, output / "figures", "dose_response_across_datasets")
+    parser.add_argument("dataset_results", type=Path,
+                        help="Dataset directory containing latent_predictability/ and dose_response/.")
+    parser.add_argument("--batch-label", default="Batch", help="Batch label for the predictability heatmap.")
+    args = parser.parse_args()
+    directory = args.dataset_results.resolve()
+    render_dataset(directory, load_results(directory), args.batch_label)
 
 
 if __name__ == "__main__":

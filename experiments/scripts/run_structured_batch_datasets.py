@@ -156,7 +156,7 @@ def main():
                 validate_stage(directory, stage)
                 status["completed"].append(f"{dataset}/{stage}")
             subprocess.run([sys.executable, str(ROOT / "experiments/scripts/plot_structured_batch_datasets.py"),
-                            str(output)], cwd=ROOT, check=True)
+                            str(directory)], cwd=ROOT, check=True)
         status.update(complete=True, stage="complete", updated_at=datetime.now(timezone.utc).isoformat())
     except Exception as exc:
         status.update(error=str(exc), updated_at=datetime.now(timezone.utc).isoformat())
