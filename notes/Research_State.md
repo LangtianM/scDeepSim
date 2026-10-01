@@ -508,33 +508,44 @@ UMAP visualization of batch interpolation and extrapolation along the Gaussian O
 
 The VAE+Diffusion model fails to generate synthetic data that they have never seen before.
 
-**scGen Style Held-out Batch Validation:**
+#### scGen-style Held-out Batch Transfer
 
-This experiment follows a scGen-style held-out cell-type transfer setup. We
-selected a reference and target batch (`inDrop3 -> smartseq2`) and held out one
-cell type (`alpha`) from the target batch. The supervised VAE was trained on all
-cells except real `smartseq2 alpha` cells. A pooled latent batch transform was
-then estimated from all non-alpha cells shared between `inDrop3` and
-`smartseq2` using whitening-recoloring in the batch-supervised latent subspace
-(`alpha = 1`). Finally, the transform was applied to `inDrop3 alpha` cells,
-decoded, and evaluated against the held-out real `smartseq2 alpha` cells.
+The completed experiment evaluates whether a batch transform learned from other
+cell types can recover expression characteristics of a withheld cell-type–batch
+combination. For the `inDrop3 → smartseq2` direction, we separately withheld
+smartseq2 acinar, activated stellate, alpha, beta, delta, and ductal cells before
+feature selection and VAE fitting. Each holdout used 2,500 training-selected
+HVGs on the normalized-log expression scale and fresh VAEs with seeds 42, 43,
+and 44; all 18 fits completed 200 epochs.
 
-In this run, the model predicted 671 transferred alpha cells and compared them
-with 619 held-out real target cells across 2,000 genes. Mean-expression
-agreement was high across all genes ($r = 0.983$, $R^2 = 0.966$) and remained
-high for the top 100 reference-vs-target DE genes ($r = 0.962$,
-$R^2 = 0.922$). Gene-wise standard deviation agreement was also strong
-($r = 0.932$, $R^2 = 0.856$).
+For each holdout, a whitening–recoloring affine map was estimated from the other
+five selected cell types, with matched source/target counts within each type
+and fixed map-population membership across seeds. The map used covariance ridge
+$10^{-6}$ and was applied at $\alpha=1$ only to the batch coordinates of encoded
+real source cells, followed by sampling the decoder distribution. Predictions
+were compared with the withheld real target cells using per-gene means,
+standard deviations, and source-to-target mean changes. The 100 largest
+observed mean differences were retained as a secondary diagnostic.
 
-![scGen-style UMAP prediction](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/umap_prediction.png)
+**Result:** Predictions recovered target expression summaries across all six
+holdouts, with strongest agreement for alpha and beta and weaker agreement for
+activated stellate and delta. Across holdouts, the three-seed mean correlation
+between observed and predicted expression changes ranged from 0.725 to 0.948.
+Validation passed for held-out exclusion, matched map populations, finite
+predictions, cell/gene alignment, and unchanged non-batch latent coordinates.
 
-![scGen-style UMAP all cell types](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/umap_all_celltypes.png)
+**Interpretation:** This supports observation-conditioned transfer for one
+technology contrast at $\alpha=1$. The target technology remains represented by
+other cell types during training, and the contrast may contain biological as
+well as technical differences. The experiment does not establish full
+distributional fidelity, fidelity of diffusion-generated interventions or
+extrapolation, or improvement over reconstruction or other transfer methods.
 
-![Predicted vs. real mean, all genes](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/predicted_vs_real_mean_all_genes.png)
+- Experiment: [runner](../experiments/scripts/eval_scgen_style_batch_transfer.py) and [configuration](../experiments/configs/eval_scgen_style_batch_transfer.yaml).
+- Figure regeneration: [plotting script](../experiments/scripts/plot_scgen_style_batch_transfer.py), called with `RUN_DIR --celltype alpha --seed 42`, produces one UMAP/mean/standard-deviation figure from saved artifacts.
+- Saved checkpoints, predictions, memberships, and figures: [run directory](../experiments/outputs/heldout_batch_transfer_20260930/). Complete numerical results are in [metrics.csv](../experiments/outputs/heldout_batch_transfer_20260930/results/metrics.csv), with three-seed summaries in [summary.csv](../experiments/outputs/heldout_batch_transfer_20260930/results/summary.csv).
 
-![Predicted vs. real mean, top DE genes](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/predicted_vs_real_mean_top_de_genes.png)
-
-![Predicted vs. real standard deviation, all genes](../experiments/outputs/2026-06-17/20-21-06_scgen_style_batch_transfer/results/predicted_vs_real_std_all_genes.png)
+![Held-out Batch Transfer](../experiments/outputs/heldout_batch_transfer_20260930/figures/alpha/seed_42.png)
 
 ### Checking Assumptions of Gaussian OT
 
