@@ -1,20 +1,23 @@
-seed: 42
+run:
+  seeds: [42, 43, 44]
+  resume_dir: null
 
 paths:
   root_dir: ${oc.env:PROJECT_ROOT}
   data_path: ${paths.root_dir}/data/scIBPancreas.h5ad
 
 data:
-  n_cells: 10000
-  n_genes: 2000
+  counts_layer: counts
+  n_genes: 2500
+  min_genes: 10
+  min_cells: 2
   celltype_key: celltype
   batch_key: tech
 
 split:
-  reference_batch: null
-  target_batch: null
-  heldout_celltype: null
-  min_cells_per_group: 20
+  reference_batch: inDrop3
+  target_batch: smartseq2
+  heldout_celltypes: ${direction.celltypes}
 
 vae:
   latent_dim: 128
@@ -22,22 +25,22 @@ vae:
   dec_hidden: [256, 512]
   input_dropout: 0.1
   beta: 1.0
-  beta_warmup_epochs: 10
+  beta_warmup_epochs: 0
   zero_inflated: true
   sup_head_hidden: 64
-  max_epochs: 100
+  max_epochs: 200
   batch_size: 256
 
 supervision:
   celltype_weight: 5.0
-  celltype_latent_dims: 8
+  celltype_latent_dims: 32
   batch_weight: 5.0
-  batch_latent_dims: 8
+  batch_latent_dims: 32
 
 adversarial:
   enabled: true
   weight: 5.0
-  warmup_epochs: 20
+  warmup_epochs: 0
   head_hidden: 64
   condition_embedding_dim: 8
 
@@ -45,13 +48,19 @@ direction:
   method: whitening_recoloring
   alpha: 1.0
   covariance_ridge: 1.0e-6
+  seed: 42
+  celltypes: [acinar, activated_stellate, alpha, beta, delta, ductal]
+
+training:
+  accelerator: auto
+  num_threads: 4
 
 generation:
   encode_batch_size: 1024
   decode_batch_size: 1024
 
 evaluation:
-  top_de_genes: 100
+  top_mean_difference_genes: 100
   umap_n_neighbors: 15
   umap_min_dist: 0.5
 
