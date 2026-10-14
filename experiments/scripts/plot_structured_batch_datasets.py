@@ -1,4 +1,4 @@
-"""Render predictability and dose response for one dataset in the notebook format."""
+"""Plot saved results for one dataset in the manuscript's structured-intervention style."""
 
 import argparse
 import json
@@ -11,77 +11,78 @@ from matplotlib.lines import Line2D
 import numpy as np
 import pandas as pd
 
-HEATMAP_SIZE = (10, 5.5)
+HEATMAP_SIZE = (13, 4.5)
 DOSE_SIZE = (13, 5.5)
+COMPOSITE_SIZE = (13, 8.8)
+ROW_GAP = 0.07
 FONT_SIZE = 10
-plt.rcParams.update({"font.size": FONT_SIZE, "axes.spines.top": False})
+MARKER_SIZE = 4
+SEED_SIZE = 13
+LINE_WIDTH = 1.7
+SEED_ALPHA = 0.45
+BAND_ALPHA = 0.09
+HEATMAP_CMAP = 'viridis'
+DOSE_LAYOUT = dict(left=0.09, right=0.91, bottom=0.25, top=0.82, wspace=0.45)
+BLOCKS = ['z_celltype', 'z_batch', 'z_residual']
+BLOCK_NAMES = ['Cell-type', 'Batch', 'Residual']
+MODEL_STYLES = {'structured': ('Structured', '-'), 'plain': ('Plain', '--')}
+METRIC_STYLES = {
+    'batch_asw': ('Batch ASW', '#009E73', 'o'),
+    'ilisi': ('iLISI', '#D55E00', 's'),
+    'celltype_asw': ('Cell-type ASW', '#8E44AD', '^'),
+    'clisi': ('cLISI', '#E69F00', 'v'),
+}
+plt.rcParams.update({'font.size': FONT_SIZE, 'axes.titlesize': FONT_SIZE + 2,
+                     'axes.labelsize': FONT_SIZE, 'axes.spines.top': False,
+                     'pdf.fonttype': 42})
 
 
 def save(fig, directory, name):
     directory.mkdir(parents=True, exist_ok=True)
-    fig.savefig(directory / f"{name}.png", dpi=180)
-    fig.savefig(directory / f"{name}.pdf")
+    fig.savefig(directory / f"{name}.png", dpi=300, facecolor='white')
+    fig.savefig(directory / f"{name}.pdf", facecolor='white')
     plt.close(fig)
 
 
-BLOCKS = ['z_celltype', 'z_batch', 'z_residual']
-BLOCK_NAMES = ['Cell-type', 'Batch', 'Residual block']
-TARGETS = ['celltype', 'batch']
-BLOCK_COLORS = ['#8dd3c7', '#bebada', '#fb8072']
-
-
-def mean_sd(mean, sd):
-    return f'{mean:.3f}' if pd.isna(sd) else f'{mean:.3f} ± {sd:.3f}'
-
-
 def draw_predictability(fig, predictability_summary, batch_label='Batch'):
-    heat_stats = predictability_summary.set_index(['model', 'label', 'subspace'])
-    target_names = ['Cell type', batch_label]
-    grid = fig.add_gridspec(2, 2, height_ratios=[0.65, 2], width_ratios=[1, 0.04],
-                           left=0.29, right=0.91, bottom=0.13, top=0.85,
-                           hspace=0.10, wspace=0.07)
-    schematic = fig.add_subplot(grid[0, 0])
-    ax = fig.add_subplot(grid[1, 0])
-    for column, block in enumerate(BLOCKS):
-        schematic.add_patch(plt.Rectangle((column, 0), 1, 1, color=BLOCK_COLORS[column]))
-        schematic.text(column + 0.5, 0.5, f'{BLOCK_NAMES[column]}',
-                       ha='center', va='center', fontsize=FONT_SIZE)
-    schematic.set(xlim=(0, 3), ylim=(0, 1))
-    schematic.axis('off')
-    matrix = np.array([[heat_stats.loc[('structured', target, block), 'balanced_accuracy_mean']
-                        for block in BLOCKS] for target in TARGETS])
-    mesh = ax.pcolormesh(np.arange(4), np.arange(3), matrix, vmin=0, vmax=1,
-                         cmap='viridis', edgecolors='white', linewidth=1)
-    row_labels = []
-    for row, target in enumerate(TARGETS):
-        reference = heat_stats.loc[('structured', target, BLOCKS[0])]
-        row_labels.append(f"{target_names[row]}\nRandom: {reference['random_ba_mean']:.3f}\n"
-                          )
-        for column, block in enumerate(BLOCKS):
-            structured = heat_stats.loc[('structured', target, block)]
-            plain = heat_stats.loc[('plain', target, block)]
-            annotation = mean_sd(structured['balanced_accuracy_mean'], structured['balanced_accuracy_sd'])
-            annotation += '\nPlain: ' + mean_sd(plain['balanced_accuracy_mean'], plain['balanced_accuracy_sd'])
-            color = 'white' if matrix[row, column] < 0.55 else 'black'
-            ax.text(column + 0.5, row + 0.5, annotation, ha='center', va='center',
-                    color=color, fontsize=FONT_SIZE - 1)
-    ax.set(xticks=np.arange(3) + 0.5, xticklabels=['Cell type', 'Batch', 'Residual'],
-           yticks=np.arange(2) + 0.5, yticklabels=row_labels, xlabel='Latent coordinate block')
-    ax.invert_yaxis()
-    ax.tick_params(length=0)
-    cbar = fig.colorbar(mesh, cax=fig.add_subplot(grid[1, 1]))
-    cbar.set_label('Structured mean balanced accuracy')
+    latent_stats = predictability_summary.set_index(['model', 'label', 'subspace'])
+    grid = fig.add_gridspec(
+        1, 2, left=0.09, right=0.85,
+        bottom=0.15, top=0.85, wspace=0.2,
+    )
+    for col, (model, (label, _)) in enumerate(MODEL_STYLES.items()):
+        ax = fig.add_subplot(grid[0, col])
+        values = np.array([
+            [latent_stats.loc[(model, target, block), 'balanced_accuracy_mean']
+             for block in BLOCKS] for target in ['celltype', 'batch']
+        ])
+        mesh = ax.imshow(values, cmap=HEATMAP_CMAP, vmin=0, vmax=1, aspect='auto')
+        for (row, column), value in np.ndenumerate(values):
+            ax.text(column, row, f'{value:.2f}', ha='center', va='center',
+                    color='white' if value < 0.55 else 'black', fontsize=FONT_SIZE + 1)
+        ax.set(
+            title=label + ' VAE',
+            xlabel='Latent coordinate block',
+            ylabel='Predicted label' if col == 0 else '',
+            xticks=range(3),
+            xticklabels=BLOCK_NAMES,
+            yticks=range(2),
+            yticklabels=['Cell\ntype', batch_label] if col == 0 else ['', ''],
+        )
+        ax.set_xticks(np.arange(0.5, 2.5), minor=True)
+        ax.set_yticks([0.5], minor=True)
+        ax.grid(which='minor', color='white', linewidth=2)
+        ax.tick_params(which='both', length=0)
+        ax.spines[:].set_visible(False)
 
-
-METRIC_STYLES = {
-    'batch_asw': ('Batch ASW', '#009E73', 'o'),
-    'ilisi': ('iLISI', '#D55E00', 's'),
-    'celltype_asw': ('CT ASW', '#8E44AD', '^'),
-    'celltype_rf_bal_acc': ('CT RF balanced accuracy', '#0072B2', 'D'),
-    'clisi': ('cLISI', '#E69F00', 'v'),
-}
-MODEL_STYLES = {'structured': ('Structured VAE + diffusion', '-'),
-                'plain': ('Plain VAE + diffusion', '--')}
+    cbar = fig.colorbar(
+        mesh,
+        cax=fig.add_axes([0.9, 0.15, 0.02, 0.70]),
+        orientation='vertical',
+        ticks=np.linspace(0, 1, 6),
+    )
+    cbar.ax.set_xlabel('Mean balanced\naccuracy', labelpad=10)
+    cbar.outline.set_visible(False)
 
 
 def draw_curve(ax, metric, dose, dose_summary):
@@ -92,40 +93,39 @@ def draw_curve(ax, metric, dose, dose_summary):
         mean = summary[f'{metric}_mean'].to_numpy()
         sd = summary[f'{metric}_sd'].to_numpy()
         ax.plot(x, mean, color=color, linestyle=line_style, marker=marker,
-                markersize=4, linewidth=1.7,
+                markersize=MARKER_SIZE, linewidth=LINE_WIDTH,
                 markerfacecolor=color if model == 'structured' else 'white')
-        if np.isfinite(sd).all():
-            ax.fill_between(x, mean - sd, mean + sd, color=color, alpha=0.09)
+        ax.fill_between(x, mean - sd, mean + sd, color=color, alpha=BAND_ALPHA)
         raw = dose[dose['model'] == model]
-        ax.scatter(raw['alpha'], raw[metric], s=13, marker=marker,
+        ax.scatter(raw['alpha'], raw[metric], s=SEED_SIZE, marker=marker,
                    facecolors=color if model == 'structured' else 'none',
-                   edgecolors=color, alpha=0.45, linewidths=0.7)
+                   edgecolors=color, alpha=SEED_ALPHA, linewidths=0.7)
 
 
 def draw_dose_response(fig, dose, dose_summary, dose_metadata):
-    grid = fig.add_gridspec(1, 2, left=0.09, right=0.91, bottom=0.25, top=0.82, wspace=0.65)
+    grid = fig.add_gridspec(1, 2, **DOSE_LAYOUT)
     batch_ax, bio_ax = fig.add_subplot(grid[0, 0]), fig.add_subplot(grid[0, 1])
     ilisi_ax, clisi_ax = batch_ax.twinx(), bio_ax.twinx()
     for axis, metric in [(batch_ax, 'batch_asw'), (ilisi_ax, 'ilisi'),
-                         (bio_ax, 'celltype_asw'), (bio_ax, 'celltype_rf_bal_acc'),
+                         (bio_ax, 'celltype_asw'),
                          (clisi_ax, 'clisi')]:
         draw_curve(axis, metric, dose, dose_summary)
     batch_ax.set(title='Batch separation', ylabel='Batch ASW')
-    ilisi_ax.set_ylabel('iLISI', color=METRIC_STYLES['ilisi'][1])
-    bio_ax.set(title='Biological preservation', ylabel='CT ASW / RF balanced accuracy')
-    clisi_ax.set_ylabel('cLISI', color=METRIC_STYLES['clisi'][1])
+    ilisi_ax.set_ylabel('iLISI')
+    bio_ax.set(title='Cell type structure preservation', ylabel='Cell-type ASW')
+    clisi_ax.set_ylabel('cLISI')
     for axis in (batch_ax, bio_ax):
         axis.set_xlabel(r'Intervention strength $\alpha$')
         axis.set_xticks(dose_metadata['alpha_values'])
         axis.axvline(1, color='0.5', linewidth=0.8, linestyle=':')
         axis.grid(alpha=0.15)
     for axis, metrics in [(batch_ax, ['batch_asw', 'ilisi']),
-                          (bio_ax, ['celltype_asw', 'celltype_rf_bal_acc', 'clisi'])]:
+                          (bio_ax, ['celltype_asw', 'clisi'])]:
         handles = [Line2D([], [], color=METRIC_STYLES[m][1], marker=METRIC_STYLES[m][2],
                           linestyle='', label=METRIC_STYLES[m][0]) for m in metrics]
         axis.legend(handles=handles, loc='upper center', bbox_to_anchor=(0.5, -0.23),
-                    ncol=1, frameon=False, fontsize=FONT_SIZE - 1, handletextpad=0.4)
-    handles = [Line2D([], [], color='0.2', linestyle=style, label=label)
+                    ncol=2, frameon=False, fontsize=FONT_SIZE - 1, handletextpad=0.4)
+    handles = [Line2D([], [], color='0.2', linestyle=style, label=label + ' VAE + diffusion')
                for label, style in MODEL_STYLES.values()]
     fig.legend(handles=handles, loc='upper center', bbox_to_anchor=(0.5, 0.97), ncol=2, frameon=False)
 
@@ -151,13 +151,21 @@ def render_dataset(directory, results, batch_label="Batch"):
     figures = directory / "figures"
     fig = plt.figure(figsize=HEATMAP_SIZE)
     draw_predictability(fig, latent, batch_label)
-    fig.suptitle("Covariate predictability from latent blocks", y=0.97)
     save(fig, figures, "latent_predictability")
 
     fig = plt.figure(figsize=DOSE_SIZE)
     draw_dose_response(fig, dose, summary, dose_metadata)
     save(fig, figures, "dose_response")
 
+    fig = plt.figure(figsize=COMPOSITE_SIZE)
+    latent_row, dose_row = fig.subfigures(2, 1, height_ratios=[4, 5.5], hspace=ROW_GAP)
+    draw_predictability(latent_row, latent, batch_label)
+    draw_dose_response(dose_row, dose, summary, dose_metadata)
+    latent_row.text(0.5, -0.035, '(a) Latent-subspace predictability',
+                    ha='center', va='bottom', fontsize=FONT_SIZE + 1)
+    dose_row.text(0.5, 0.015, '(b) Batch-intervention dose response',
+                  ha='center', va='bottom', fontsize=FONT_SIZE + 1)
+    save(fig, figures, "structured_batch_intervention")
 
 
 def main():
