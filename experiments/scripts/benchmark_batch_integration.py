@@ -271,7 +271,7 @@ def _plot_response_curves(
                          "xtick.labelsize": 6.5, "ytick.labelsize": 6.5,
                          "pdf.fonttype": 42}):
         fig, axes = plt.subplots(1, 4, figsize=(5.6, 1.8), sharex=True)
-        for ax, (metric, title) in zip(axes, panels):
+        for panel_label, ax, (metric, title) in zip("abcd", axes, panels):
             for method in colors:
                 group = successful.loc[successful["method"] == method]
                 if group.empty:
@@ -285,7 +285,7 @@ def _plot_response_curves(
                         label=labels[method], color=colors[method])
                 ax.fill_between(x, mean - std, mean + std, alpha=0.15,
                                 color=colors[method], linewidth=0)
-            ax.set_title(title, pad=5)
+            ax.set_xlabel(f"({panel_label}) {title}", fontsize=7, labelpad=5)
             ax.set_xticks([0, 1, 2])
             ax.tick_params(length=2, pad=2)
             ax.ticklabel_format(axis="y", style="plain", useOffset=False)
@@ -296,7 +296,7 @@ def _plot_response_curves(
         fig.legend(handles, legend_labels, loc="upper center", ncol=4,
                    frameon=False, handlelength=1.5, columnspacing=1)
         fig.supxlabel(r"Batch intervention strength ($\alpha$)", fontsize=7, y=0.03)
-        fig.subplots_adjust(left=0.075, right=0.985, bottom=0.25, top=0.73, wspace=0.55)
+        fig.subplots_adjust(left=0.075, right=0.985, bottom=0.33, top=0.81, wspace=0.55)
         fig.savefig(png_path, dpi=int(dpi))
         fig.savefig(pdf_path)
         plt.close(fig)
