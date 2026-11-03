@@ -136,8 +136,7 @@ scdesign3:
   parallelization: mcmapply
 
 zinbwave:
-  rscript: /usr/local/bin/Rscript
-  renv_project: ${paths.root_dir}/experiments/renv/zinbwave
+  conda_env: lightning
   use_celltype: true
   K: 2
   n_cores: 1
@@ -152,7 +151,7 @@ scdiffusion:
   # Use cpu only as a fallback if upstream scDiffusion hits an unsupported op.
   device: auto
   source_path: ${paths.root_dir}/experiments/external/scDiffusion
-  clone_url: git@github.com:EperLuo/scDiffusion.git
+  clone_url: https://github.com/EperLuo/scDiffusion.git
   sample_path: null
   output_space: normalized_log1p
   command: []
