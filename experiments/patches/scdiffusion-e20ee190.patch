@@ -1,0 +1,677 @@
+From 1d14c0019f4d3dfcef1dc367d2d9b72e87e8dc15 Mon Sep 17 00:00:00 2001
+From: LangtianM <malt2020@mail.sustech.edu.cn>
+Date: Sun, 7 Jun 2026 00:31:12 +0800
+Subject: [PATCH] modify the code to run on mps without distributed training
+
+---
+ VAE/VAE_model.py                         | 12 +++-
+ VAE/VAE_train.py                         | 26 +++++--
+ cell_sample.py                           | 25 ++++---
+ cell_train.py                            | 19 +++--
+ guided_diffusion/cell_datasets_loader.py | 34 ++++++---
+ guided_diffusion/dist_util.py            | 89 +++++++++++++++---------
+ guided_diffusion/gaussian_diffusion.py   |  4 +-
+ guided_diffusion/resample.py             |  6 ++
+ guided_diffusion/script_util.py          | 15 ++++
+ guided_diffusion/train_util.py           | 37 +++-------
+ 10 files changed, 171 insertions(+), 96 deletions(-)
+
+diff --git a/VAE/VAE_model.py b/VAE/VAE_model.py
+index 6690ab9..ee4cc27 100644
+--- a/VAE/VAE_model.py
++++ b/VAE/VAE_model.py
+@@ -8,6 +8,14 @@ import scanpy as sc
+ from typing import List
+ 
+ 
++def default_device():
++    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
++        return "mps"
++    if torch.cuda.is_available():
++        return "cuda"
++    return "cpu"
++
++
+ class Encoder(nn.Module):
+     """A class that encapsulates the encoder."""
+     def __init__(
+@@ -216,7 +224,7 @@ class VAE(torch.nn.Module):
+     def __init__(
+         self,
+         num_genes,
+-        device="cuda",
++        device=None,
+         seed=0,
+         loss_ae="gauss",
+         decoder_activation="linear",
+@@ -225,7 +233,7 @@ class VAE(torch.nn.Module):
+         super(VAE, self).__init__()
+         # set generic attributes
+         self.num_genes = num_genes
+-        self.device = device
++        self.device = device or default_device()
+         self.seed = seed
+         self.loss_ae = loss_ae
+         # early-stopping
+diff --git a/VAE/VAE_train.py b/VAE/VAE_train.py
+index 310a99f..f2efa68 100644
+--- a/VAE/VAE_train.py
++++ b/VAE/VAE_train.py
+@@ -16,12 +16,24 @@ from guided_diffusion.cell_datasets_loader import load_data
+ torch.autograd.set_detect_anomaly(True)
+ import random
+ 
++def str2bool(value):
++    if isinstance(value, bool):
++        return value
++    value = value.lower()
++    if value in {"1", "true", "yes", "y"}:
++        return True
++    if value in {"0", "false", "no", "n"}:
++        return False
++    raise argparse.ArgumentTypeError("boolean value expected")
++
++
+ def seed_everything(seed):
+     random.seed(seed)
+     np.random.seed(seed)
+     torch.manual_seed(seed)
+-    torch.cuda.manual_seed_all(seed)
+-    torch.backends.cudnn.deterministic = True
++    if torch.cuda.is_available():
++        torch.cuda.manual_seed_all(seed)
++        torch.backends.cudnn.deterministic = True
+ 
+ 
+ def prepare_vae(args, state_dict=None):
+@@ -35,6 +47,8 @@ def prepare_vae(args, state_dict=None):
+         data_dir=args["data_dir"],
+         batch_size=args["batch_size"],
+         train_vae=True,
++        num_workers=args["num_workers"],
++        filter_data=args["filter_data"],
+     )
+ 
+     autoencoder = VAE(
+@@ -42,7 +56,7 @@ def prepare_vae(args, state_dict=None):
+         device=device,
+         seed=args["seed"],
+         loss_ae=args["loss_ae"],
+-        hidden_dim=128,
++        hidden_dim=args["hidden_dim"],
+         decoder_activation=args["decoder_activation"],
+     )
+     if state_dict is not None:
+@@ -135,8 +149,10 @@ def parse_arguments():
+     parser.add_argument("--max_minutes", type=int, default=3000)
+     parser.add_argument("--checkpoint_freq", type=int, default=50000)
+     parser.add_argument("--batch_size", type=int, default=128)
+-    parser.add_argument("--state_dict", type=str, default="/data1/lep/Workspace/guided-diffusion/scimilarity-main/models/annotation_model_v1")  # if pretrain
+-    # parser.add_argument("--state_dict", type=str, default=None)   # if not pretrain
++    parser.add_argument("--state_dict", type=str, default=None)  # optional pretrained encoder/decoder directory
++    parser.add_argument("--hidden_dim", type=int, default=128)
++    parser.add_argument("--num_workers", type=int, default=0)
++    parser.add_argument("--filter_data", type=str2bool, default=True)
+ 
+     parser.add_argument("--save_dir", type=str, default='../output/ae_checkpoint/muris_AE')
+     parser.add_argument("--sweep_seeds", type=int, default=200)
+diff --git a/cell_sample.py b/cell_sample.py
+index 4ed3ddf..a27225e 100644
+--- a/cell_sample.py
++++ b/cell_sample.py
+@@ -3,10 +3,10 @@ Generate a large batch of image samples from a model and save them as a large
+ numpy array. This can be used to produce samples for FID evaluation.
+ """
+ import argparse
++import os
+ 
+ import numpy as np
+ import torch as th
+-import torch.distributed as dist
+ import random
+ 
+ from guided_diffusion import dist_util, logger
+@@ -21,7 +21,10 @@ from guided_diffusion.script_util import (
+ 
+ def save_data(all_cells, traj, data_dir):
+     cell_gen = all_cells
+-    np.savez(data_dir, cell_gen=cell_gen)
++    parent = os.path.dirname(data_dir)
++    if parent:
++        os.makedirs(parent, exist_ok=True)
++    np.savez(data_dir, cell_gen=cell_gen, samples=cell_gen)
+     return
+ 
+ def main():
+@@ -29,7 +32,7 @@ def main():
+     args = create_argparser().parse_args()
+ 
+     dist_util.setup_dist()
+-    logger.configure(dir='output/checkpoint/sample_logs')
++    logger.configure(dir=args.log_dir or 'output/checkpoint/sample_logs')
+ 
+     logger.log("creating model and diffusion...")
+     model, diffusion = create_model_and_diffusion(
+@@ -56,15 +59,13 @@ def main():
+             start_time=diffusion.betas.shape[0],
+         )
+ 
+-        gathered_samples = [th.zeros_like(sample) for _ in range(dist.get_world_size())]
+-        dist.all_gather(gathered_samples, sample)  # gather not supported with NCCL
+-        all_cells.extend([sample.cpu().numpy() for sample in gathered_samples])
++        all_cells.append(sample.cpu().numpy())
+         logger.log(f"created {len(all_cells) * args.batch_size} samples")
+ 
+-    arr = np.concatenate(all_cells, axis=0)
++    arr = np.concatenate(all_cells, axis=0)[: args.num_samples]
+     save_data(arr, traj, args.sample_dir)
+ 
+-    dist.barrier()
++    dist_util.barrier()
+     logger.log("sampling complete")
+ 
+ 
+@@ -75,7 +76,8 @@ def create_argparser():
+         batch_size=3000,
+         use_ddim=False,
+         model_path="output/checkpoint/backbone/open_problem/model800000.pt",
+-        sample_dir="output/simulated_samples/open_problem"
++        sample_dir="output/simulated_samples/open_problem",
++        log_dir="",
+     )
+     defaults.update(model_and_diffusion_defaults())
+     parser = argparse.ArgumentParser()
+@@ -84,10 +86,11 @@ def create_argparser():
+ 
+ def setup_seed(seed):
+     th.manual_seed(seed)
+-    th.cuda.manual_seed_all(seed)
++    if th.cuda.is_available():
++        th.cuda.manual_seed_all(seed)
++        th.backends.cudnn.deterministic = True # 设置随机数种子
+     np.random.seed(seed)
+     random.seed(seed)
+-    th.backends.cudnn.deterministic = True # 设置随机数种子
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/cell_train.py b/cell_train.py
+index 2f20318..e9f7875 100644
+--- a/cell_train.py
++++ b/cell_train.py
+@@ -24,13 +24,15 @@ def main():
+     args = create_argparser().parse_args()
+ 
+     dist_util.setup_dist()
+-    logger.configure(dir='../output/logs/'+args.model_name)  # log file
++    logger.configure(dir=args.log_dir or '../output/logs/'+args.model_name)  # log file
+ 
+     logger.log("creating model and diffusion...")
+     model, diffusion = create_model_and_diffusion(
+         **args_to_dict(args, model_and_diffusion_defaults().keys())
+     )
+-    model.to(dist_util.dev())
++    device = dist_util.dev()
++    logger.log(f"Using device: {device}")
++    model.to(device)
+     schedule_sampler = create_named_schedule_sampler(args.schedule_sampler, diffusion)
+ 
+     logger.log("creating data loader...")
+@@ -39,6 +41,9 @@ def main():
+         batch_size=args.batch_size,
+         vae_path=args.vae_path,
+         train_vae=False,
++        hidden_dim=args.input_dim,
++        num_workers=args.num_workers,
++        filter_data=args.filter_data,
+     )
+ 
+     logger.log("training...")
+@@ -80,7 +85,10 @@ def create_argparser():
+         fp16_scale_growth=1e-3,
+         vae_path = 'output/Autoencoder_checkpoint/muris_AE/model_seed=0_step=0.pt',
+         model_name="muris_diffusion",
+-        save_dir='output/diffusion_checkpoint'
++        save_dir='output/diffusion_checkpoint',
++        log_dir='',
++        num_workers=0,
++        filter_data=True,
+     )
+     defaults.update(model_and_diffusion_defaults())
+     parser = argparse.ArgumentParser()
+@@ -90,10 +98,11 @@ def create_argparser():
+ 
+ def setup_seed(seed):
+     torch.manual_seed(seed)
+-    torch.cuda.manual_seed_all(seed)
++    if torch.cuda.is_available():
++        torch.cuda.manual_seed_all(seed)
++        torch.backends.cudnn.deterministic = True
+     np.random.seed(seed)
+     random.seed(seed)
+-    torch.backends.cudnn.deterministic = True
+ 
+ if __name__ == "__main__":
+     main()
+diff --git a/guided_diffusion/cell_datasets_loader.py b/guided_diffusion/cell_datasets_loader.py
+index c91ceb6..523567b 100644
+--- a/guided_diffusion/cell_datasets_loader.py
++++ b/guided_diffusion/cell_datasets_loader.py
+@@ -10,6 +10,7 @@ import scanpy as sc
+ import torch
+ import sys
+ sys.path.append('..')
++from guided_diffusion import dist_util
+ from VAE.VAE_model import VAE
+ from sklearn.preprocessing import LabelEncoder
+ 
+@@ -24,18 +25,24 @@ def stabilize(expression_matrix):
+     return np.log(expression_matrix + 1. / (2 * phi_hat[0]))
+ 
+ def load_VAE(vae_path, num_gene, hidden_dim):
++    device = dist_util.dev()
+     autoencoder = VAE(
+         num_genes=num_gene,
+-        device='cuda',
++        device=str(device),
+         seed=0,
+         loss_ae='mse',
+         hidden_dim=hidden_dim,
+         decoder_activation='ReLU',
+     )
+-    autoencoder.load_state_dict(torch.load(vae_path))
++    autoencoder.load_state_dict(torch.load(vae_path, map_location=device))
++    autoencoder.eval()
+     return autoencoder
+ 
+ 
++def as_dense(x):
++    return x.toarray() if hasattr(x, "toarray") else np.asarray(x)
++
++
+ def load_data(
+     *,
+     data_dir,
+@@ -44,6 +51,8 @@ def load_data(
+     deterministic=False,
+     train_vae=False,
+     hidden_dim=128,
++    num_workers=0,
++    filter_data=True,
+ ):
+     """
+     For a dataset, create a generator over (cells, kwargs) pairs.
+@@ -54,6 +63,8 @@ def load_data(
+     :param deterministic: if True, yield results in a deterministic order.
+     :param train_vae: train the autoencoder or use the autoencoder.
+     :param hidden_dim: the dimensions of latent space. If use pretrained weight, set 128
++    :param num_workers: DataLoader worker count.
++    :param filter_data: apply upstream cell/gene filters before normalization.
+     """
+     if not data_dir:
+         raise ValueError("unspecified data directory")
+@@ -61,8 +72,9 @@ def load_data(
+     adata = sc.read_h5ad(data_dir)
+     
+     # preporcess the data. modify this part if use your own dataset. the gene expression must first norm1e4 then log1p
+-    sc.pp.filter_genes(adata, min_cells=3)
+-    sc.pp.filter_cells(adata, min_genes=10)
++    if filter_data:
++        sc.pp.filter_genes(adata, min_cells=3)
++        sc.pp.filter_cells(adata, min_genes=10)
+     adata.var_names_make_unique()
+ 
+     # if generate ood data, left this as the ood data
+@@ -78,13 +90,18 @@ def load_data(
+     sc.pp.normalize_total(adata, target_sum=1e4)
+     sc.pp.log1p(adata)
+ 
+-    cell_data = adata.X.toarray()
++    cell_data = as_dense(adata.X).astype(np.float32)
+ 
+     # turn the gene expression into latent space. use this if training the diffusion backbone.
+     if not train_vae:
+         num_gene = cell_data.shape[1]
+         autoencoder = load_VAE(vae_path,num_gene,hidden_dim)
+-        cell_data = autoencoder(torch.tensor(cell_data).cuda(),return_latent=True)
++        device = autoencoder.device
++        with torch.no_grad():
++            cell_data = autoencoder(
++                torch.tensor(cell_data, dtype=torch.float32).to(device),
++                return_latent=True,
++            )
+         cell_data = cell_data.cpu().detach().numpy()
+     
+     dataset = CellDataset(
+@@ -93,11 +110,11 @@ def load_data(
+     )
+     if deterministic:
+         loader = DataLoader(
+-            dataset, batch_size=batch_size, shuffle=False, num_workers=1, drop_last=True
++            dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, drop_last=False
+         )
+     else:
+         loader = DataLoader(
+-            dataset, batch_size=batch_size, shuffle=True, num_workers=1, drop_last=True
++            dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers, drop_last=False
+         )
+     while True:
+         yield from loader
+@@ -122,4 +139,3 @@ class CellDataset(Dataset):
+         if self.class_name is not None:
+             out_dict["y"] = np.array(self.class_name[idx], dtype=np.int64)
+         return arr, out_dict
+-
+diff --git a/guided_diffusion/dist_util.py b/guided_diffusion/dist_util.py
+index 64790ae..8a60750 100644
+--- a/guided_diffusion/dist_util.py
++++ b/guided_diffusion/dist_util.py
+@@ -7,7 +7,6 @@ import os
+ import socket
+ 
+ import blobfile as bf
+-from mpi4py import MPI
+ import torch as th
+ import torch.distributed as dist
+ 
+@@ -21,24 +20,25 @@ SETUP_RETRY_COUNT = 3
+ def setup_dist():
+     """
+     Setup a distributed process group.
++
++    simulation fidelity uses scDiffusion as a single-process baseline. The original
++    upstream code initialized MPI here, which fails in restricted local
++    environments and is unnecessary for the benchmark path.
+     """
+-    if dist.is_initialized():
++    if os.environ.get("SCDIFFUSION_ENABLE_DISTRIBUTED", "").lower() not in {
++        "1",
++        "true",
++        "yes",
++    }:
++        return
++    if not dist.is_available() or dist.is_initialized():
+         return
+-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+-
+-    comm = MPI.COMM_WORLD
+-    backend = "gloo" if not th.cuda.is_available() else "nccl"
+-
+-    if backend == "gloo":
+-        hostname = "localhost"
+-    else:
+-        hostname = socket.gethostbyname(socket.getfqdn())
+-    os.environ["MASTER_ADDR"] = comm.bcast(hostname, root=0)
+-    os.environ["RANK"] = str(comm.rank)
+-    os.environ["WORLD_SIZE"] = str(comm.size)
+ 
+-    port = comm.bcast(_find_free_port(), root=0)
+-    os.environ["MASTER_PORT"] = str(port)
++    backend = "nccl" if th.cuda.is_available() else "gloo"
++    os.environ.setdefault("MASTER_ADDR", "localhost")
++    os.environ.setdefault("RANK", "0")
++    os.environ.setdefault("WORLD_SIZE", "1")
++    os.environ.setdefault("MASTER_PORT", str(_find_free_port()))
+     dist.init_process_group(backend=backend, init_method="env://")
+ 
+ 
+@@ -46,31 +46,33 @@ def dev():
+     """
+     Get the device to use for torch.distributed.
+     """
++    requested = os.environ.get("SCDIFFUSION_TORCH_DEVICE", "auto").lower()
++    if requested == "cpu":
++        return th.device("cpu")
++    if requested == "cuda":
++        if not th.cuda.is_available():
++            raise RuntimeError("SCDIFFUSION_TORCH_DEVICE=cuda, but CUDA is unavailable.")
++        return th.device("cuda")
++    if requested == "mps":
++        if not (hasattr(th.backends, "mps") and th.backends.mps.is_available()):
++            raise RuntimeError("SCDIFFUSION_TORCH_DEVICE=mps, but MPS is unavailable.")
++        return th.device("mps")
++    if requested != "auto":
++        raise ValueError(f"Unknown SCDIFFUSION_TORCH_DEVICE={requested!r}")
++    if hasattr(th.backends, "mps") and th.backends.mps.is_available():
++        return th.device("mps")
+     if th.cuda.is_available():
+-        return th.device(f"cuda")
++        return th.device("cuda")
+     return th.device("cpu")
+ 
+ 
+ def load_state_dict(path, **kwargs):
+     """
+-    Load a PyTorch file without redundant fetches across MPI ranks.
++    Load a PyTorch file.
+     """
+-    chunk_size = 2 ** 30  # MPI has a relatively small size limit
+-    if MPI.COMM_WORLD.Get_rank() == 0:
+-        with bf.BlobFile(path, "rb") as f:
+-            data = f.read()
+-        num_chunks = len(data) // chunk_size
+-        if len(data) % chunk_size:
+-            num_chunks += 1
+-        MPI.COMM_WORLD.bcast(num_chunks)
+-        for i in range(0, len(data), chunk_size):
+-            MPI.COMM_WORLD.bcast(data[i : i + chunk_size])
+-    else:
+-        num_chunks = MPI.COMM_WORLD.bcast(None)
+-        data = bytes()
+-        for _ in range(num_chunks):
+-            data += MPI.COMM_WORLD.bcast(None)
+-
++    kwargs.setdefault("map_location", dev())
++    with bf.BlobFile(path, "rb") as f:
++        data = f.read()
+     return th.load(io.BytesIO(data), **kwargs)
+ 
+ 
+@@ -78,11 +80,30 @@ def sync_params(params):
+     """
+     Synchronize a sequence of Tensors across ranks from rank 0.
+     """
++    if not is_distributed():
++        return
+     for p in params:
+         with th.no_grad():
+             dist.broadcast(p, 0)
+ 
+ 
++def is_distributed():
++    return dist.is_available() and dist.is_initialized()
++
++
++def get_rank():
++    return dist.get_rank() if is_distributed() else 0
++
++
++def get_world_size():
++    return dist.get_world_size() if is_distributed() else 1
++
++
++def barrier():
++    if is_distributed():
++        dist.barrier()
++
++
+ def _find_free_port():
+     try:
+         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+diff --git a/guided_diffusion/gaussian_diffusion.py b/guided_diffusion/gaussian_diffusion.py
+index c852520..ad5ed6c 100644
+--- a/guided_diffusion/gaussian_diffusion.py
++++ b/guided_diffusion/gaussian_diffusion.py
+@@ -776,7 +776,7 @@ class GaussianDiffusion:
+         if model_kwargs is None:
+             model_kwargs = {}
+         if noise is None:
+-            noise = th.randn_like(x_start,dtype=th.float64)#*(0.5**0.5)
++            noise = th.randn_like(x_start)
+             # noise = np.random.negative_binomial(r, p, x_start.size())
+         x_t = self.q_sample(x_start, t, noise=noise)
+ 
+@@ -926,7 +926,7 @@ def _extract_into_tensor(arr, timesteps, broadcast_shape):
+                             dimension equal to the length of timesteps.
+     :return: a tensor of shape [batch_size, 1, ...] where the shape has K dims.
+     """
+-    res = th.from_numpy(arr).to(device=timesteps.device)[timesteps].float()
++    res = th.from_numpy(arr).float().to(device=timesteps.device)[timesteps]
+     while len(res.shape) < len(broadcast_shape):
+         res = res[..., None]
+     return res.expand(broadcast_shape)
+diff --git a/guided_diffusion/resample.py b/guided_diffusion/resample.py
+index 08099e6..385faa0 100644
+--- a/guided_diffusion/resample.py
++++ b/guided_diffusion/resample.py
+@@ -80,6 +80,12 @@ class LossAwareSampler(ScheduleSampler):
+         :param local_ts: an integer Tensor of timesteps.
+         :param local_losses: a 1D Tensor of losses.
+         """
++        if not (dist.is_available() and dist.is_initialized()):
++            self.update_with_all_losses(
++                local_ts.detach().cpu().numpy().tolist(),
++                local_losses.detach().cpu().numpy().tolist(),
++            )
++            return
+         batch_sizes = [
+             th.tensor([0], dtype=th.int32, device=local_ts.device)
+             for _ in range(dist.get_world_size())
+diff --git a/guided_diffusion/script_util.py b/guided_diffusion/script_util.py
+index 7876e86..892b312 100644
+--- a/guided_diffusion/script_util.py
++++ b/guided_diffusion/script_util.py
+@@ -1,4 +1,5 @@
+ import argparse
++import ast
+ import inspect
+ 
+ from . import gaussian_diffusion as gd
+@@ -192,6 +193,8 @@ def add_dict_to_argparser(parser, default_dict):
+             v_type = str
+         elif isinstance(v, bool):
+             v_type = str2bool
++        elif isinstance(v, list):
++            v_type = str2list
+         parser.add_argument(f"--{k}", default=v, type=v_type)
+ 
+ 
+@@ -211,3 +214,15 @@ def str2bool(v):
+         return False
+     else:
+         raise argparse.ArgumentTypeError("boolean value expected")
++
++
++def str2list(v):
++    if isinstance(v, list):
++        return v
++    try:
++        parsed = ast.literal_eval(v)
++    except (ValueError, SyntaxError):
++        parsed = v.split(",")
++    if not isinstance(parsed, (list, tuple)):
++        raise argparse.ArgumentTypeError("list value expected")
++    return [int(x) for x in parsed]
+diff --git a/guided_diffusion/train_util.py b/guided_diffusion/train_util.py
+index cbb48d6..1e2bb89 100644
+--- a/guided_diffusion/train_util.py
++++ b/guided_diffusion/train_util.py
+@@ -4,8 +4,6 @@ import os
+ 
+ import blobfile as bf
+ import torch as th
+-import torch.distributed as dist
+-from torch.nn.parallel.distributed import DistributedDataParallel as DDP
+ from torch.optim import AdamW
+ 
+ from . import dist_util, logger
+@@ -63,7 +61,7 @@ class TrainLoop:
+ 
+         self.step = 0
+         self.resume_step = 0
+-        self.global_batch = self.batch_size * dist.get_world_size()
++        self.global_batch = self.batch_size * dist_util.get_world_size()
+ 
+         self.sync_cuda = th.cuda.is_available()
+ 
+@@ -90,24 +88,8 @@ class TrainLoop:
+                 for _ in range(len(self.ema_rate))
+             ]
+ 
+-        if th.cuda.is_available():
+-            self.use_ddp = True
+-            self.ddp_model = DDP(
+-                self.model,
+-                device_ids=[dist_util.dev()],
+-                output_device=dist_util.dev(),
+-                broadcast_buffers=False,
+-                bucket_cap_mb=128,
+-                find_unused_parameters=False,
+-            )
+-        else:
+-            if dist.get_world_size() > 1:
+-                logger.warn(
+-                    "Distributed training requires CUDA. "
+-                    "Gradients will not be synchronized properly!"
+-                )
+-            self.use_ddp = False
+-            self.ddp_model = self.model
++        self.use_ddp = False
++        self.ddp_model = self.model
+         self.timestamp = model_name #time.strftime("%m-%d-%H:%M",time.gmtime())
+         self.save_dir = save_dir
+ 
+@@ -116,7 +98,7 @@ class TrainLoop:
+ 
+         if resume_checkpoint:
+             self.resume_step = parse_resume_step_from_filename(resume_checkpoint)
+-            if dist.get_rank() == 0:
++            if dist_util.get_rank() == 0:
+                 logger.log(f"loading model from checkpoint: {resume_checkpoint}...")
+                 self.model.load_state_dict(
+                     dist_util.load_state_dict(
+@@ -132,7 +114,7 @@ class TrainLoop:
+         main_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
+         ema_checkpoint = find_ema_checkpoint(main_checkpoint, self.resume_step, rate)
+         if ema_checkpoint:
+-            if dist.get_rank() == 0:
++            if dist_util.get_rank() == 0:
+                 logger.log(f"loading EMA from checkpoint: {ema_checkpoint}...")
+                 state_dict = dist_util.load_state_dict(
+                     ema_checkpoint, map_location=dist_util.dev()
+@@ -236,7 +218,7 @@ class TrainLoop:
+     def save(self):
+         def save_checkpoint(rate, params):
+             state_dict = self.mp_trainer.master_params_to_state_dict(params)
+-            if dist.get_rank() == 0:
++            if dist_util.get_rank() == 0:
+                 logger.log(f"saving model {rate}...")
+                 if not rate:
+                     filename = f"model{(self.step+self.resume_step):06d}.pt"
+@@ -244,20 +226,19 @@ class TrainLoop:
+                     filename = f"ema_{rate}_{(self.step+self.resume_step):06d}.pt"
+                 with bf.BlobFile(bf.join(self.save_dir, self.timestamp, filename), "wb") as f:
+                     th.save(state_dict, f)
+-        if not os.path.exists(os.path.join(self.save_dir, self.timestamp)):
+-            os.mkdir(os.path.join(self.save_dir, self.timestamp))
++        os.makedirs(os.path.join(self.save_dir, self.timestamp), exist_ok=True)
+         save_checkpoint(0, self.mp_trainer.master_params)
+         for rate, params in zip(self.ema_rate, self.ema_params):
+             save_checkpoint(rate, params)
+ 
+-        if dist.get_rank() == 0:
++        if dist_util.get_rank() == 0:
+             with bf.BlobFile(
+                 bf.join(self.save_dir, self.timestamp, f"opt{(self.step+self.resume_step):06d}.pt"),
+                 "wb",
+             ) as f:
+                 th.save(self.opt.state_dict(), f)
+ 
+-        dist.barrier()
++        dist_util.barrier()
+ 
+ 
+ def parse_resume_step_from_filename(filename):
+-- 
+2.48.1
+
