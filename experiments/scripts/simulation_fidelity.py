@@ -109,8 +109,6 @@ from experiments.src.simulation_fidelity.methods import (  # noqa: E402
     train_vae,
     write_r_baseline_inputs,
     write_scdiffusion_input,
-    zinbwave_renv_env,
-    zinbwave_renv_project,
 )
 from experiments.src.simulation_fidelity.plots import (  # noqa: E402
     compute_umap_embeddings,

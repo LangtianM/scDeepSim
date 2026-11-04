@@ -47,7 +47,6 @@ from .common import (
     include_vae_reconstruction_in_figures,
     preferred_torch_device,
     require_conda,
-    require_executable,
     resolve_path,
     root,
     run_logged_subprocess,
@@ -549,36 +548,6 @@ def read_r_count_output(
     return x_sim, labels
 
 
-def zinbwave_renv_project(cfg: DictConfig) -> Path:
-    """Return the project-local renv used for the ZINB-WaVE baseline."""
-    configured = cfg.zinbwave.get("renv_project", None)
-    project = resolve_path(configured) or Path(root) / "experiments" / "renv" / "zinbwave"
-    activate = project / "renv" / "activate.R"
-    if not activate.exists():
-        raise RuntimeError(
-            f"ZINB-WaVE renv project is not initialized at {project}; "
-            f"missing {activate}."
-        )
-    return project
-
-
-def zinbwave_renv_env() -> dict[str, str]:
-    """Build an R environment that is isolated from the Python conda env."""
-    env = os.environ.copy()
-    for key in ("R_HOME", "R_LIBS", "R_LIBS_USER", "R_LIBS_SITE"):
-        env.pop(key, None)
-
-    renv_root = Path(root) / "experiments" / "renv"
-    env.update(
-        {
-            "RENV_PATHS_CACHE": str(renv_root / "cache"),
-            "RENV_PATHS_ROOT": str(renv_root / "root"),
-            "RENV_PATHS_SANDBOX": str(renv_root / "sandbox"),
-        }
-    )
-    return env
-
-
 def run_scdesign3(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
     """Run the R-backed scDesign3 baseline.
 
@@ -666,12 +635,10 @@ def run_scdesign3(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> M
 def run_zinbwave(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> MethodOutput:
     """Run the R-backed ZINB-WaVE baseline.
 
-    The baseline is run from its configured ``renv`` project to avoid mixing R
-    packages with the Python conda environment.
+    Use the same Conda R environment as the other experiment comparators.
     """
     start = time.time()
-    rscript = require_executable(cfg.zinbwave.rscript, "ZINB-WaVE")
-    renv_project = zinbwave_renv_project(cfg)
+    conda = require_conda("ZINB-WaVE")
     run_dir = output_dir / "baseline_runs" / "zinbwave"
     results_dir = run_dir / "outputs"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -683,7 +650,11 @@ def run_zinbwave(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> Me
     output_metadata = results_dir / "zinbwave_metadata.csv"
     script_path = Path(root) / "experiments" / "scripts" / "zinbwave" / "run_zinbwave.R"
     cmd = [
-        rscript,
+        conda,
+        "run",
+        "-n",
+        str(cfg.zinbwave.conda_env),
+        "Rscript",
         str(script_path),
         str(counts_path),
         str(metadata_path),
@@ -700,25 +671,18 @@ def run_zinbwave(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> Me
         str(cfg.zinbwave.nb_repeat_initialize),
         str(cfg.zinbwave.maxiter_optimize),
     ]
-    renv_env = zinbwave_renv_env()
     proc = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
-        cwd=renv_project,
-        env=renv_env,
+        cwd=run_dir,
     )
     log_path = results_dir / "zinbwave.log"
     log_path.write_text(
         "COMMAND\n=======\n"
         + " ".join(cmd)
         + "\n\nCWD\n===\n"
-        + str(renv_project)
-        + "\n\nRENV\n====\n"
-        + "\n".join(
-            f"{key}={renv_env[key]}"
-            for key in ("RENV_PATHS_CACHE", "RENV_PATHS_ROOT", "RENV_PATHS_SANDBOX")
-        )
+        + str(run_dir)
         + "\n\nSTDOUT\n======\n"
         + proc.stdout
         + "\n\nSTDERR\n======\n"
@@ -734,8 +698,7 @@ def run_zinbwave(adata_raw: ad.AnnData, cfg: DictConfig, output_dir: Path) -> Me
         labels=labels,
         runtime_seconds=time.time() - start,
         metadata={
-            "rscript": rscript,
-            "renv_project": str(renv_project),
+            "conda_env": str(cfg.zinbwave.conda_env),
             "log_path": str(log_path),
             "K": int(cfg.zinbwave.K),
             "use_celltype": bool(cfg.zinbwave.use_celltype),
