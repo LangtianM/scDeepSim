@@ -2,7 +2,7 @@
 
 Run commands from the repository root. Start with environment setup and the
 input data below, then follow the main experiments or [additional experiments](#additional-experiments).
-Scripts resolve paths through `PROJECT_ROOT`.
+Scripts automatically locate the repository root and use it to resolve data and output paths.
 
 ## Environments
 

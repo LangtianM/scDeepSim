@@ -21,13 +21,13 @@ and vary batch effects and trajectory structure for method benchmarking.
 
 Start with the **[experiment guide](experiments/README.md)**. It provides
 environment setup, dataset sources, commands, and output locations for the
-four main workflows and the [additional experiments](experiments/README.md#additional-experiments):
+four main experiments and the [additional experiments](experiments/README.md#additional-experiments):
 
 | Experiment | Workflow |
 |---|---|
 | Simulation fidelity (Figure 2) | `simulation_fidelity.py` with the lung, pancreas, or immune config |
 | Structured latent representations and batch interventions (Figure 3) | `latent_predictability.py` → `eval_batch_dose_response.py` |
-| Batch integration (Figure 4) | `benchmark_batch_integration.py`, using the dose-response run |
+| Batch integration (Figure 4) | `benchmark_batch_integration.py` |
 | Trajectory inference (Figure 5) | `prepare_ti_artifacts.py` → `prepare_ti_direction_artifacts.py` → `benchmark_ti.py` with the direction config |
 
 Scripts are under `experiments/scripts/`; trajectory scripts are in its
@@ -45,8 +45,6 @@ With Python 3.10 or newer, install from the repository root:
 ```bash
 python -m pip install -e ./scdeepsim
 ```
-
-The experiment guide lists additional dependencies for each workflow.
 
 ## License and attribution
 
