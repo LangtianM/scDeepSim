@@ -126,10 +126,6 @@ python experiments/scripts/plot_structured_batch_datasets.py \
 
 The experiments use seeds 42/43/44. Tables are in each stage's `results/`;
 plots are in `$SERIES_DIR/figures/`, including `structured_batch_intervention.pdf`.
-To resume step 1 or 2, repeat its command with
-`run.resume_dir="$SERIES_DIR/latent_predictability"` or
-`run.resume_dir="$SERIES_DIR/dose_response"`, respectively, keeping the other
-settings unchanged. Completed fits are reused; interrupted fits restart.
 
 For the immune and lung experiments (Appendix C.4), use the same three steps
 with these dataset-specific settings:
@@ -219,9 +215,8 @@ python experiments/scripts/ti_benchmarking/benchmark_ti.py \
 Results are saved under
 `experiments/outputs/reproduction/ti_direction/results/<run-id>/`, including
 `run_status.csv`, `metrics.csv`, `metrics_summary.csv`, datasets, and figures.
-See the [TI guide](scripts/ti_benchmarking/README.md) for running a subset of
-settings and checking dependencies before a full run. These commands reproduce
-the direction benchmark; the endpoint benchmark is separate.
+These commands reproduce the direction benchmark; the endpoint benchmark is
+separate.
 
 ## Additional experiments
 
