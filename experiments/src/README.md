@@ -91,7 +91,7 @@ python experiments/scripts/benchmark_batch_integration.py \
   inputs.dose_response_run_dir="$PWD/experiments/outputs/structured_batch_intervention_unified_20260915/dose_response"
 ```
 
-See the [experiment run guide](../docs/structured_batch_experiments.md) for the
+See the [experiment run guide](../README.md#2-structured-latent-representations-and-batch-interventions-figure-3) for the
 three-stage workflow and output conventions.
 
 ## Trajectory-Inference Benchmarking
